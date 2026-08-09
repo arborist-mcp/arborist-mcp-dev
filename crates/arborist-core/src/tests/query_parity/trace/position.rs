@@ -20652,6 +20652,114 @@ fn kotlin_class_receiver_diamond_interface_chain_member_calls_fail_closed_for_un
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_class_receiver_generic_superclass_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base<T> {\n    fun baseHelper(value: Int): Int = value\n    val entry: Entry = Entry()\n}\nclass Derived : Base<Entry>()\n\nfun memberCaller(derived: Derived): Int {\n    return derived.baseHelper(1)\n}\n\nfun hopCaller(derived: Derived): Int {\n    return derived.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A generic superclass specifier such as `Base<Entry>()` normalizes to the
+    // raw base type, so a class-typed receiver dispatches members declared on
+    // the generic superclass and walks property hops through it.
+    let base_helper_path = "com::example::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, base_helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::memberCaller");
+
+    let entry_helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, entry_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::hopCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::memberCaller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, entry_helper_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::hopCaller");
+}
+
+#[test]
+fn traces_kotlin_class_receiver_generic_interface_chain_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\ninterface IBox<T> {\n    fun render(value: Int): Int = value\n}\nclass Impl : IBox<String>\n\nfun caller(impl: Impl): Int {\n    return impl.render(1)\n}\n";
+    let target = "com::example::IBox::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_class_receiver_generic_hierarchy_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface IBox<T> {\n    fun helper(value: Int): Int = value\n}\ninterface Resolvable {\n    fun helper(value: Int): Int = value\n}\nclass GenericMissing : MissingBox<String>\nclass SuperMissing : MissingBase<String>()\nclass RawImpl : IBox<String>\nclass Control : Resolvable\n\nfun genericMissingCaller(impl: GenericMissing): Int {\n    return impl.helper(1)\n}\n\nfun superMissingCaller(impl: SuperMissing): Int {\n    return impl.helper(1)\n}\n\nfun rawCaller(impl: RawImpl): Int {\n    return impl.helper(1)\n}\n\nfun control(control: Control): Int {\n    return control.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A generic interface spelling whose raw base type is unresolvable and a
+    // generic superclass whose raw base type is unresolvable both fail closed,
+    // so neither `genericMissingCaller` nor `superMissingCaller` traces to
+    // `IBox::helper`; the resolvable raw generic interface and the control
+    // chain still dispatch exactly once.
+    let helper_path = "com::example::IBox::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::rawCaller");
+
+    let resolvable_path = "com::example::Resolvable::helper";
+    let live = trace_symbol_graph(&dir, resolvable_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::rawCaller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, resolvable_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+#[test]
 fn traces_kotlin_typealias_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
