@@ -22618,6 +22618,95 @@ fn kotlin_var_qualified_factory_returned_array_receiver_calls_fail_closed_for_un
 }
 
 #[test]
+fn traces_kotlin_var_parenthesized_initializer_receivers_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n}\n\nclass Caller {\n    fun run(group: Group): Int {\n        val constructed = (Helper())\n        val factory = (makeItems())\n        val element = (group.fieldItems[0])\n        val nested = (((Helper())))\n        return constructed.helper(1) + factory.helper(2) + element.helper(3) + nested.helper(4)\n    }\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a parenthesized constructor, factory-call, or
+    // qualified element-access initializer dispatches the final member on the
+    // same receiver type or terminal array element component type as the
+    // unparenthesized form; nested parentheses unwrap fully.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_kotlin_var_parenthesized_initializer_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n\nfun caller(): Int {\n    val items = (makeItems())\n    return items[0].helper(1)\n}\n";
+    let helper_path = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_var_parenthesized_initializer_receivers_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromCounts = (counts[0])\n        val fromMatrix = (matrix[0][0])\n        val fromThis = (this.fieldItems[0])\n        val fromUnknown = (unknownFactory())\n        val fromUnknownType = (Missing.makeItems())\n        return fromCounts.helper(1) + fromMatrix.helper(2) + fromThis.helper(3) + fromUnknown.helper(4) + fromUnknownType.helper(5)\n    }\n}\n\nfun control(): Int {\n    val items = (makeItems())\n    return items[0].helper(1)\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n",
+    )
+    .unwrap();
+
+    // Parenthesized initializers whose inner form would fail closed stay
+    // unbound: primitive-array and multi-dimensional element accesses,
+    // `this`-rooted bases, unknown factories, and unknown qualified callees.
+    // Only the resolvable parenthesized factory initializer in `control`
+    // traces.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");

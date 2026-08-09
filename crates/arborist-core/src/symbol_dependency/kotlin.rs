@@ -320,6 +320,20 @@ fn collect_kotlin_body_property_bindings(
     Ok(())
 }
 
+/// Returns the inner expression of a parenthesized initializer such as
+/// `(Other())`, `(makeItems())`, or `(items[0])`, so `val` locals with
+/// parenthesized initializers bind the same receiver type as the
+/// unparenthesized form. Malformed or empty parentheses return `None` and
+/// fail closed.
+fn kotlin_parenthesized_initializer_expression(mut initializer: Node<'_>) -> Option<Node<'_>> {
+    loop {
+        if initializer.kind() != "parenthesized_expression" {
+            return Some(initializer);
+        }
+        initializer = initializer.named_child(0)?;
+    }
+}
+
 fn kotlin_property_binding(
     property: Node<'_>,
     source: &str,
@@ -355,35 +369,48 @@ fn kotlin_property_binding(
         return Ok(Some((name, type_name, None)));
     }
     // Fall back to a constructor-call initializer such as `val x = Other()` or
-    // `val x = Outer.Inner()`; qualified callees must be pure identifier chains.
+    // `val x = Outer.Inner()`, or an element-access initializer such as
+    // `val x = items[0]`; a parenthesized initializer such as `(Other())`,
+    // `(makeItems())`, or `(items[0])` unwraps to the same inner expression so
+    // `val` locals bind the same receiver type as the unparenthesized form.
+    // Qualified callees must be pure identifier chains, and element-access
+    // bases follow the plain/qualified/factory rules below.
     let initializer = children
         .iter()
-        .find(|child| child.kind() == "call_expression")
+        .find(|child| {
+            matches!(
+                child.kind(),
+                "call_expression" | "index_expression" | "parenthesized_expression"
+            )
+        })
         .copied();
-    if let Some(expression) = initializer
-        && let Some(callee) = expression.named_child(0)
+    let Some(initializer) = initializer else {
+        return Ok(None);
+    };
+    let Some(initializer) = kotlin_parenthesized_initializer_expression(initializer) else {
+        return Ok(None);
+    };
+    if initializer.kind() == "call_expression"
+        && let Some(callee) = initializer.named_child(0)
         && let Some(type_name) = kotlin_constructor_callee_name(callee, source)?
         && !type_name.is_empty()
     {
         return Ok(Some((name, type_name, None)));
     }
-    // Fall back to an element-access initializer such as `val x = items[0]`:
-    // a plain-identifier base already bound to a single-level generic array
-    // binds the property to the base array's element component type, a
-    // qualified base such as `group.holder.fieldItems` records the base
-    // spelling so trace-time resolution can walk the property chain to the
-    // terminal array field's component type, a `super`-rooted base such as
-    // `super.inheritedItems` records the spelling so trace-time resolution can
-    // walk the direct superclass's property chain, and a factory-call base
-    // such as `makeItems()` records the callee with a trailing `()` marker so
+    // An element-access initializer: a plain-identifier base already bound to
+    // a single-level generic array binds the property to the base array's
+    // element component type, a qualified base such as
+    // `group.holder.fieldItems` records the base spelling so trace-time
+    // resolution can walk the property chain to the terminal array field's
+    // component type, a `super`-rooted base such as `super.inheritedItems`
+    // records the spelling so trace-time resolution can walk the direct
+    // superclass's property chain, and a factory-call base such as
+    // `makeItems()` records the callee with a trailing `()` marker so
     // trace-time resolution can walk the factory's declared return array.
     // Multi-dimensional element access, function-call subscripts,
     // `this` roots, qualified call callees, and bases without a usable array
     // component fail closed.
-    if let Some(initializer) = children
-        .iter()
-        .find(|child| child.kind() == "index_expression")
-        .copied()
+    if initializer.kind() == "index_expression"
         && let Some(base_name) = kotlin_element_access_base(initializer, source)?
     {
         if let Some(component_type) = bindings.array_component_for(&base_name) {
@@ -993,6 +1020,42 @@ mod tests {
         assert_eq!(run_bindings.type_for("fromSuper"), None);
         assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
         assert!(!run_bindings.contains("fromThis"));
+    }
+
+    #[test]
+    fn var_locals_unwrap_parenthesized_initializers() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val fieldItems: Array<Helper> = arrayOf()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n}\n\nclass Caller {\n    fun run(items: Array<Helper>, group: Group): Int {\n        val constructed = (Helper())\n        val factory = (makeItems())\n        val element = (items[0])\n        val qualified = (group.holder.fieldItems[0])\n        val nested = (((Helper())))\n        return constructed.helper(1)\n    }\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("constructed") == Some("Helper".to_string()))
+            .unwrap();
+        // Parenthesized constructor, factory, element-access, and qualified
+        // element-access initializers bind the same receiver type or base
+        // spelling as their unparenthesized forms; nested parentheses unwrap
+        // fully.
+        assert_eq!(
+            run_bindings.type_for("constructed"),
+            Some("Helper".to_string())
+        );
+        assert_eq!(
+            run_bindings.type_for("factory"),
+            Some("makeItems".to_string())
+        );
+        assert_eq!(run_bindings.type_for("element"), Some("Helper".to_string()));
+        assert_eq!(
+            run_bindings.element_access_base_for("qualified"),
+            Some("group.holder.fieldItems".to_string())
+        );
+        assert_eq!(run_bindings.type_for("nested"), Some("Helper".to_string()));
     }
 
     #[test]
