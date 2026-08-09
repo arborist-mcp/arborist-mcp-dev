@@ -22797,6 +22797,198 @@ fn kotlin_parenthesized_receiver_member_calls_fail_closed_for_unsupported_refere
 }
 
 #[test]
+fn traces_kotlin_this_rooted_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Caller {\n    val entry: Entry = Entry()\n    fun helper(value: Int): Int = value\n    fun run(): Int {\n        return this.entry.helper(1) + this.helper(2) + this.makeGroup().entry.helper(3)\n    }\n    fun makeGroup(): Group = Group()\n}\nclass Group {\n    val entry: Entry = Entry()\n}\n",
+    )
+    .unwrap();
+
+    // A `this.`-rooted chain dispatches each property hop and the final member
+    // on the enclosing type, and a plain `this.method()` call or an
+    // intermediate `this.makeGroup()` hop resolve on the enclosing type too.
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Caller::helper",
+        "com::example::Caller::makeGroup",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Caller::helper",
+        "com::example::Caller::makeGroup",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+    }
+}
+
+#[test]
+fn traces_kotlin_this_rooted_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Caller {\n    val entry: Entry = Entry()\n    fun helper(value: Int): Int = value\n    fun run(): Int {\n        return this.entry.helper(1) + this.helper(2)\n    }\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn kotlin_this_rooted_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nclass Caller {\n    val entry: Entry = Entry()\n    fun run(): Int {\n        return this.unknown.helper(1) + this.entry.unknownHelper(2) + this.makeGroup().entry.helper(3)\n    }\n    fun makeGroup(): Group = Group()\n}\n\nfun control(group: Group): Int {\n    return group.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown `this`-rooted hop, a missing final member, and a method-call
+    // hop inside a `this`-rooted chain all fail closed; only the resolvable
+    // bound receiver in `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
+fn traces_kotlin_super_rooted_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n    fun baseHelper(value: Int): Int = value\n}\nclass Caller : Base() {\n    fun run(): Int {\n        return super.entry.helper(1) + super.baseHelper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `super.`-rooted chain dispatches property hops and the final member on
+    // the direct superclass path, and a plain `super.method()` call resolves a
+    // direct superclass member.
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Base::baseHelper",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Base::baseHelper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+    }
+}
+
+#[test]
+fn traces_kotlin_super_rooted_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n}\nclass Caller : Base() {\n    fun run(): Int {\n        return super.entry.helper(1)\n    }\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn kotlin_super_rooted_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n}\nclass Caller : Base() {\n    fun run(): Int {\n        return super.unknown.helper(1) + super.entry.unknownHelper(2)\n    }\n}\nclass NoSuper {\n    fun run(): Int {\n        return super.entry.helper(1)\n    }\n}\n\nfun control(group: Group): Int {\n    return group.entry.helper(1)\n}\nclass Group {\n    val entry: Entry = Entry()\n}\n",
+    )
+    .unwrap();
+
+    // An unknown `super`-rooted hop, a missing final member, and a class
+    // without a resolvable superclass all fail closed; only the resolvable
+    // bound receiver in `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");

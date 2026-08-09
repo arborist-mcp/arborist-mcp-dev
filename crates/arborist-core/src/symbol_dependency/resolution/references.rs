@@ -10326,6 +10326,72 @@ fn resolve_kotlin_reference_with_deadline(
     if reference_name.is_empty() {
         return Ok(None);
     }
+    // A `this`-rooted receiver such as `this.entry.helper(...)` dispatches on
+    // the enclosing type path through the same member-chain rules as bound
+    // receivers; a `super`-rooted receiver such as `super.entry.helper(...)`
+    // or `super.baseHelper(...)` dispatches on the direct superclass path.
+    // Unknown or unresolvable roots and hops fail closed instead of falling
+    // through to static type calls, and callers outside a type (top-level
+    // functions, extension functions) fail closed because `this`/`super` have
+    // no enclosing type to dispatch on.
+    if let Some(chain) = reference_name.strip_prefix("this.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        // `this` inside a companion member refers to the companion object, so
+        // a companion scope such as `Type::Companion` is accepted alongside
+        // declared type scopes; package-level and extension-function scopes
+        // fail closed.
+        let this_root = if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+            scope_path
+        } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+            && kotlin_path_is_type_declaration(parent, raw_symbols)
+        {
+            scope_path
+        } else {
+            return Ok(None);
+        };
+        return resolve_kotlin_type_rooted_member_chain(
+            source_symbol,
+            this_root,
+            chain,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if let Some(chain) = reference_name.strip_prefix("super.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(superclass_path) = resolve_kotlin_superclass_path(
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_kotlin_type_rooted_member_chain(
+            source_symbol,
+            &superclass_path,
+            chain,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // A constructor-call receiver such as `Outer.Inner().helper(...)` or
     // `Group().member.helper(...)` resolves the constructed type path first and
     // then dispatches the member chain like any other instance receiver. The
@@ -11621,6 +11687,65 @@ fn resolve_kotlin_chained_receiver_call(
     resolve_kotlin_member_or_extension(
         source_symbol,
         &type_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Walks `chain` as a member chain rooted at `root_type_path`, resolving each
+/// intermediate hop as a uniquely declared property whose declared type pins
+/// the next receiver and dispatching the final member or extension on the
+/// terminal type. A chain with no intermediate hops dispatches the final
+/// member directly on the root type. Unknown or unresolvable hops and missing
+/// members fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_type_rooted_member_chain(
+    source_symbol: &IndexedSymbol,
+    root_type_path: &str,
+    chain: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let mut receiver_path = root_type_path.to_string();
+    for property_name in hops.iter().take(hops.len() - 1) {
+        let Some(next_path) = kotlin_property_type_path(
+            &receiver_path,
+            property_name,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        receiver_path = next_path;
+    }
+    let method = hops[hops.len() - 1];
+    let type_name = receiver_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(method)
+        .to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &receiver_path,
         &type_name,
         method,
         call_arity,

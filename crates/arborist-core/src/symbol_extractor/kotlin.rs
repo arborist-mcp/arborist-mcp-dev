@@ -155,10 +155,11 @@ fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>
 }
 
 /// Collects the dotted segments of a navigation chain such as `other.helper`,
-/// `group.member.helper`, `Outer.Inner().helper`, `Group().member.helper`, or
-/// `items[0].helper`. The base may be a plain identifier, a pure identifier
-/// navigation chain, a call expression over either, or an element access over
-/// either; a call base marks its last segment with `()` so resolution can
+/// `group.member.helper`, `Outer.Inner().helper`, `Group().member.helper`,
+/// `this.entry.helper`, `super.entry.helper`, or `items[0].helper`. The base
+/// may be a plain identifier, `this`, `super`, a pure identifier navigation
+/// chain, a call expression over either, or an element access over either; a
+/// call base marks its last segment with `()` so resolution can
 /// distinguish a constructor-call receiver from a class-name receiver, and an
 /// element-access base merges its bracket onto the accessed element's segment
 /// so resolution dispatches on the element component type. A parenthesized
@@ -173,6 +174,18 @@ fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec
     if node.kind() == "identifier" {
         let segment = node_text(node, source)?.trim().to_string();
         return Ok((!segment.is_empty()).then(|| vec![segment]));
+    }
+    // A `this` or `super` receiver root such as `this.entry` or `super.entry`
+    // records the keyword as the leading segment so resolution can dispatch on
+    // the enclosing type (for `this`) or the direct superclass (for `super`).
+    // Labeled (`this@Outer`) and type-argument (`super<Type>`) forms fail
+    // closed because they change the dispatch target.
+    if matches!(node.kind(), "this_expression" | "super_expression") {
+        let text = node_text(node, source)?.trim();
+        if matches!(text, "this" | "super") {
+            return Ok(Some(vec![text.to_string()]));
+        }
+        return Ok(None);
     }
     // A call base such as `Group()` in `Group().member.helper(...)` or
     // `Outer.Inner()` in `Outer.Inner().helper(...)` records the constructed
