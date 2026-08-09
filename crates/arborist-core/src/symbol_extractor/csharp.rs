@@ -748,11 +748,23 @@ fn collect_typed_local_bindings(
                         // A `var` local infers its receiver type from a
                         // constructor initializer such as
                         // `var helper = new Helper()`, from a factory call
-                        // initializer such as `var helper = MakeHelper()`, or
+                        // initializer such as `var helper = MakeHelper()`,
                         // from a field/property-access initializer such as
-                        // `var helper = this.holder.helper`; other
+                        // `var helper = this.holder.helper`, or from an
+                        // element-access initializer such as
+                        // `var first = items[0]` whose base array's element
+                        // component type pins the receiver; other
                         // initializers bind an empty type and fail closed.
-                        None => csharp_var_initializer_type_binding(node, source, bindings)?,
+                        None => {
+                            if let Some(type_name) =
+                                csharp_var_initializer_type_binding(node, source, bindings)?
+                            {
+                                Some(type_name)
+                            } else {
+                                csharp_initializer_element_access_from_declarator(node, source)?
+                                    .map(|base_name| format!("@element:{base_name}"))
+                            }
+                        }
                     }
                 }
                 _ => None,
@@ -819,6 +831,43 @@ fn csharp_var_initializer_type_binding(
         return Ok(None);
     };
     csharp_initializer_type_binding(initializer, source, bindings)
+}
+
+/// Records a `var` local whose initializer is an element access such as
+/// `var first = items[0]`, returning the array-typed base identifier so the
+/// local resolves to the base array's element component type. Qualified or
+/// parenthesized bases, multi-dimensional element access, and other
+/// initializer shapes record nothing and fail closed.
+fn csharp_initializer_element_access_from_declarator(
+    declarator: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = csharp_declarator_initializer(declarator) else {
+        return Ok(None);
+    };
+    let initializer = match initializer.kind() {
+        "parenthesized_expression" => {
+            let Some(inner) = csharp_parenthesized_inner_expression(initializer) else {
+                return Ok(None);
+            };
+            inner
+        }
+        _ => initializer,
+    };
+    if initializer.kind() != "element_access_expression" {
+        return Ok(None);
+    }
+    let Some(array) = initializer.child_by_field_name("expression") else {
+        return Ok(None);
+    };
+    if array.kind() != "identifier" {
+        return Ok(None);
+    }
+    let base_name = crate::language::node_text(array, source)?.trim();
+    if base_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(base_name.to_string()))
 }
 
 /// Infers a receiver type binding from an initializer expression, unwrapping

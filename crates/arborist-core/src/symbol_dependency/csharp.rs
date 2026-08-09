@@ -40,6 +40,12 @@ pub(in crate::symbol_dependency) struct CSharpReceiverTypeBindings {
     /// jagged, and malformed array spellings leave the map empty and fail
     /// closed.
     array_component_types: BTreeMap<String, String>,
+    /// `var` locals bound from an element-access initializer such as
+    /// `var first = items[0]` record the base array identifier so the local
+    /// resolves to the base's element component type; multi-dimensional and
+    /// other unsupported initializer shapes leave the map empty and fail
+    /// closed.
+    element_access_initializers_by_name: BTreeMap<String, String>,
     /// Names of members declared `static` on a type. Only member bindings
     /// (per-type fields, properties, and events) populate this set; local
     /// receiver bindings leave it empty so instance dispatch never consults
@@ -53,6 +59,7 @@ impl CSharpReceiverTypeBindings {
     /// instead) from "bound but unusable" (fail closed).
     pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
         self.types_by_name.contains_key(name)
+            || self.element_access_initializers_by_name.contains_key(name)
     }
 
     /// Returns the raw binding value for a bound name, including empty values
@@ -82,6 +89,20 @@ impl CSharpReceiverTypeBindings {
         self.array_component_types
             .get(name)
             .filter(|type_name| !type_name.is_empty())
+            .cloned()
+    }
+
+    /// Returns the array-typed base identifier for a `var` local bound from
+    /// an element-access initializer such as `var first = items[0]`, which
+    /// resolves to the base array's element component type. Names without an
+    /// element-access initializer return `None`.
+    pub(in crate::symbol_dependency) fn element_access_base_for(
+        &self,
+        name: &str,
+    ) -> Option<String> {
+        self.element_access_initializers_by_name
+            .get(name)
+            .filter(|base_name| !base_name.is_empty())
             .cloned()
     }
 
@@ -667,11 +688,27 @@ fn collect_csharp_function_bindings(
                         // A `var` local infers its receiver type from a
                         // constructor initializer such as
                         // `var helper = new Helper()`, from a factory call
-                        // initializer such as `var helper = MakeHelper()`, or
+                        // initializer such as `var helper = MakeHelper()`,
                         // from a field/property-access initializer such as
-                        // `var helper = this.holder.helper`; other
+                        // `var helper = this.holder.helper`, or from an
+                        // element-access initializer such as
+                        // `var first = items[0]` whose base array's element
+                        // component type pins the receiver; other
                         // initializers bind an empty type and fail closed.
-                        None => csharp_var_initializer_type_binding(node, source, bindings)?,
+                        None => {
+                            if let Some(type_name) =
+                                csharp_var_initializer_type_binding(node, source, bindings)?
+                            {
+                                Some(type_name)
+                            } else if let Some(base_name) =
+                                csharp_initializer_element_access_from_declarator(node, source)?
+                            {
+                                insert_csharp_element_access_initializer(bindings, name, base_name);
+                                None
+                            } else {
+                                None
+                            }
+                        }
                     }
                 }
                 _ => None,
@@ -741,6 +778,44 @@ fn csharp_var_initializer_type_binding(
         return Ok(None);
     };
     csharp_initializer_type_binding(initializer, source, bindings)
+}
+
+/// Records a `var` local whose initializer is an element access such as
+/// `var first = items[0]`, returning the array-typed base identifier so the
+/// local resolves to the base array's element component type. Qualified or
+/// parenthesized bases, multi-dimensional element access, and other
+/// initializer shapes record nothing and fail closed. Mirrors the
+/// extractor's element-access binding rules.
+fn csharp_initializer_element_access_from_declarator(
+    declarator: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = csharp_declarator_initializer(declarator) else {
+        return Ok(None);
+    };
+    let initializer = match initializer.kind() {
+        "parenthesized_expression" => {
+            let Some(inner) = csharp_parenthesized_inner_expression(initializer) else {
+                return Ok(None);
+            };
+            inner
+        }
+        _ => initializer,
+    };
+    if initializer.kind() != "element_access_expression" {
+        return Ok(None);
+    }
+    let Some(array) = initializer.child_by_field_name("expression") else {
+        return Ok(None);
+    };
+    if array.kind() != "identifier" {
+        return Ok(None);
+    }
+    let base_name = node_text(array, source)?.trim();
+    if base_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(base_name.to_string()))
 }
 
 /// Infers a receiver type binding from an initializer expression, unwrapping
@@ -1081,6 +1156,23 @@ fn csharp_insert_receiver_binding(
             bindings.types_by_name.insert(name, String::new());
         }
     }
+}
+
+/// Records the element-access initializer base for a `var` local bound from
+/// an element access such as `var first = items[0]`. Repeated declarations
+/// overwrite the recorded base so the latest binding wins, matching the
+/// other C# local-binding rules.
+fn insert_csharp_element_access_initializer(
+    bindings: &mut CSharpReceiverTypeBindings,
+    name: &str,
+    base_name: String,
+) {
+    if name.is_empty() {
+        return;
+    }
+    bindings
+        .element_access_initializers_by_name
+        .insert(name.to_string(), base_name);
 }
 
 /// Extracts the element component type from a single-level array spelling

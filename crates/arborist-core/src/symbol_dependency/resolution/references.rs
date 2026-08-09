@@ -1873,6 +1873,24 @@ fn resolve_csharp_instance_receiver_call(
             csharp_import_contexts_by_file,
             deadline,
         )?
+    } else if let Some(base_name) = bindings.element_access_base_for(receiver_name) {
+        // A `var` local bound from an element access such as
+        // `var first = items[0]` resolves to the base array's element
+        // component type; an unbound or non-array base fails closed.
+        let Some(component_type) = bindings.array_component_for(&base_name) else {
+            return Ok(CSharpInstanceReceiverResolution::Blocked);
+        };
+        resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if raw_binding.is_empty() {
         None
     } else {
