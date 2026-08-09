@@ -26,6 +26,10 @@ pub(in crate::symbol_dependency) struct KotlinImportContext {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
+    /// Element component types for names bound from a single-level generic
+    /// array spelling such as `Array<Helper>`; an element-access receiver such
+    /// as `items[0]` dispatches on the recorded component type.
+    array_component_types: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
 }
 
@@ -34,7 +38,9 @@ impl KotlinReceiverTypeBindings {
     /// binding. Callers use this to distinguish "not bound" (a receiver may be
     /// a named object or type instead) from "bound but ambiguous" (fail closed).
     pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
-        self.types_by_name.contains_key(name) || self.ambiguous_names.contains(name)
+        self.types_by_name.contains_key(name)
+            || self.array_component_types.contains_key(name)
+            || self.ambiguous_names.contains(name)
     }
 
     pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
@@ -42,6 +48,21 @@ impl KotlinReceiverTypeBindings {
             return None;
         }
         self.types_by_name.get(name).cloned()
+    }
+
+    /// Returns the recorded element component type for a uniquely bound
+    /// array-typed name such as `items` in `items: Array<Helper>`, which
+    /// resolves to the element type `Helper` when the chain accesses an
+    /// element. Ambiguous bindings and names without a usable single-level
+    /// array component return `None`.
+    pub(in crate::symbol_dependency) fn array_component_for(&self, name: &str) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.array_component_types
+            .get(name)
+            .filter(|type_name| !type_name.is_empty())
+            .cloned()
     }
 }
 
@@ -295,7 +316,7 @@ fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(S
     if let Some(type_node) = variable_children
         .iter()
         .find(|child| kotlin_is_type_node_kind(child.kind()))
-        && let Some(type_name) = kotlin_dotted_type_name(node_text(*type_node, source)?)
+        && let Some(type_name) = kotlin_declared_type_name(node_text(*type_node, source)?)
     {
         return Ok(Some((name, type_name)));
     }
@@ -328,7 +349,7 @@ fn kotlin_parameter_binding(parameter: Node<'_>, source: &str) -> Result<Option<
         return Ok(None);
     };
     let name = node_text(*name_node, source)?.trim().to_string();
-    let Some(type_name) = kotlin_dotted_type_name(node_text(*type_node, source)?) else {
+    let Some(type_name) = kotlin_declared_type_name(node_text(*type_node, source)?) else {
         return Ok(None);
     };
     if name.is_empty() {
@@ -356,12 +377,72 @@ pub(in crate::symbol_dependency) fn kotlin_dotted_type_name(text: &str) -> Optio
     Some(name.to_string())
 }
 
+/// Returns a receiver type spelling for a declared-type node: plain dotted
+/// names normalize through `kotlin_dotted_type_name`, and generic array
+/// spellings such as `Array<Helper>` or `Array<Array<Helper>>` are kept as
+/// their raw spelling so the binding can record the element component type or
+/// mark the receiver unusable. Other complex and malformed spellings return
+/// `None` and fail closed.
+fn kotlin_declared_type_name(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if let Some(normalized) = kotlin_dotted_type_name(trimmed) {
+        return Some(normalized);
+    }
+    if trimmed.starts_with("Array<") && trimmed.ends_with('>') {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+/// Extracts the element component type name from a single-level Kotlin generic
+/// array spelling such as `Array<Helper>` or `Array<Outer.Inner>`, normalizing
+/// the component through `kotlin_dotted_type_name`. Nested generic arrays such
+/// as `Array<Array<Helper>>`, primitive arrays such as `IntArray`, malformed
+/// spellings, and non-`Array<...>` spellings return `None` and fail closed.
+fn kotlin_array_type_component_name(text: &str) -> Option<String> {
+    let name = text.trim();
+    let rest = name.strip_prefix("Array<")?;
+    let close = rest.rfind('>')?;
+    if !rest[close + 1..].trim().is_empty() {
+        return None;
+    }
+    let component = rest[..close].trim();
+    if component.is_empty() {
+        return None;
+    }
+    kotlin_dotted_type_name(component)
+}
+
 fn insert_kotlin_receiver_binding(
     bindings: &mut KotlinReceiverTypeBindings,
     name: String,
     type_name: String,
 ) {
     if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    // A generic array spelling such as `Array<Helper>` binds the element
+    // component type so an element-access receiver such as `items[0]` can
+    // dispatch on the element type; nested generic arrays such as
+    // `Array<Array<Helper>>` have no usable component and bind as an empty
+    // (unusable) type instead of falling through to a same-named object or
+    // type.
+    if type_name.starts_with("Array<") {
+        match kotlin_array_type_component_name(&type_name) {
+            Some(component) => match bindings.array_component_types.get(&name) {
+                Some(existing) if *existing != component => {
+                    bindings.array_component_types.remove(&name);
+                    bindings.ambiguous_names.insert(name);
+                }
+                Some(_) => {}
+                None => {
+                    bindings.array_component_types.insert(name, component);
+                }
+            },
+            None => {
+                bindings.types_by_name.insert(name, String::new());
+            }
+        }
         return;
     }
     if bindings
@@ -597,6 +678,48 @@ mod tests {
         assert_eq!(
             run_bindings.type_for("constructed"),
             Some("Other".to_string())
+        );
+    }
+
+    #[test]
+    fn array_typed_receivers_bind_element_component_types() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run() {\n        fieldItems[0].helper(1)\n    }\n}\n\nfun process(items: Array<Helper>, matrix: Array<Array<Helper>>, counts: IntArray) {\n    items[0].helper(1)\n    matrix[0][0]\n    counts[0]\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let process_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.array_component_for("items") == Some("Helper".to_string()))
+            .unwrap();
+        assert_eq!(
+            process_bindings.array_component_for("items"),
+            Some("Helper".to_string())
+        );
+        assert_eq!(process_bindings.type_for("items"), None);
+        // A nested generic array has no usable component but still shadows
+        // same-named objects and types; primitive arrays bind as an unusable
+        // type with no component.
+        assert!(process_bindings.contains("matrix"));
+        assert_eq!(process_bindings.array_component_for("matrix"), None);
+        assert!(process_bindings.contains("counts"));
+        assert_eq!(process_bindings.array_component_for("counts"), None);
+        // Enclosing-class array-typed properties bind the component too.
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| {
+                bindings.array_component_for("fieldItems") == Some("Helper".to_string())
+            })
+            .unwrap();
+        assert_eq!(
+            run_bindings.array_component_for("fieldItems"),
+            Some("Helper".to_string())
         );
     }
 

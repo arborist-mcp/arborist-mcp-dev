@@ -155,13 +155,16 @@ fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>
 }
 
 /// Collects the dotted segments of a navigation chain such as `other.helper`,
-/// `group.member.helper`, `Outer.Inner().helper`, or `Group().member.helper`.
-/// The base may be a plain identifier, a pure identifier navigation chain, or a
-/// call expression over either; a call base marks its last segment with `()` so
-/// resolution can distinguish a constructor-call receiver from a class-name
-/// receiver. Nullable (`?.`), callable-reference (`::`), indexing, and
-/// parenthesized receivers still fail closed and produce no direct-call fact so
-/// resolution never guesses a target.
+/// `group.member.helper`, `Outer.Inner().helper`, `Group().member.helper`, or
+/// `items[0].helper`. The base may be a plain identifier, a pure identifier
+/// navigation chain, a call expression over either, or an element access over
+/// either; a call base marks its last segment with `()` so resolution can
+/// distinguish a constructor-call receiver from a class-name receiver, and an
+/// element-access base merges its bracket onto the accessed element's segment
+/// so resolution dispatches on the element component type. Nullable (`?.`),
+/// callable-reference (`::`), parenthesized, complex-index, and
+/// multi-dimensional receivers still fail closed and produce no direct-call
+/// fact so resolution never guesses a target.
 fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
     if node.kind() == "identifier" {
         let segment = node_text(node, source)?.trim().to_string();
@@ -183,6 +186,32 @@ fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec
             return Ok(None);
         };
         last.push_str("()");
+        return Ok(Some(segments));
+    }
+    // An element-access base such as `items[0]` in `items[0].helper(...)`
+    // merges its bracket onto the accessed element's segment so resolution can
+    // dispatch on the base array's element component type. Only a simple
+    // single subscript (an identifier or literal) is recorded; nested,
+    // multi-index, function-call, and nullable indices fail closed.
+    if node.kind() == "index_expression" {
+        let mut cursor = node.walk();
+        let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+        if children.len() != 2 {
+            return Ok(None);
+        }
+        let Some(mut segments) = kotlin_navigation_segments(children[0], source)? else {
+            return Ok(None);
+        };
+        let subscript = node_text(children[1], source)?.trim();
+        if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
+            return Ok(None);
+        }
+        let Some(last) = segments.last_mut() else {
+            return Ok(None);
+        };
+        last.push('[');
+        last.push_str(subscript);
+        last.push(']');
         return Ok(Some(segments));
     }
     if node.kind() != "navigation_expression" {
@@ -435,6 +464,61 @@ fun caller(): Int {
         assert_eq!(
             caller.call_arities_by_name.get("Outer.Inner"),
             Some(&[0usize].into_iter().collect())
+        );
+    }
+
+    #[test]
+    fn records_kotlin_element_access_receiver_calls_and_skips_complex_indices() {
+        let source = r#"
+package com.example
+
+class Helper {
+    fun helper(value: Int): Int = value
+}
+
+fun caller(items: Array<Helper>, index: Int): Int {
+    items[0].helper(1)
+    items[index].helper(2)
+    items[0][0].helper(3)
+    items[getIndex()].helper(4)
+    items?.helper(5)
+    return 0
+}
+
+fun getIndex(): Int = 0
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::caller")
+            .unwrap();
+        // An element-access base merges its bracket onto the accessed element's
+        // segment so resolution dispatches on the array's element component
+        // type; a simple identifier index records the same way. A
+        // multi-dimensional element access records its full spelling and fails
+        // closed in resolution, while function-call and nullable indices
+        // produce no direct-call fact.
+        assert!(caller.references_by_name.contains("items[0].helper"));
+        assert!(caller.references_by_name.contains("items[index].helper"));
+        assert!(caller.references_by_name.contains("items[0][0].helper"));
+        assert!(
+            !caller
+                .references_by_name
+                .contains("items[getIndex()].helper")
+        );
+        assert!(!caller.references_by_name.contains("items?.helper"));
+        assert_eq!(
+            caller.call_arities_by_name.get("items[0].helper"),
+            Some(&[1usize].into_iter().collect())
+        );
+        assert_eq!(
+            caller.call_arities_by_name.get("items[index].helper"),
+            Some(&[1usize].into_iter().collect())
         );
     }
 

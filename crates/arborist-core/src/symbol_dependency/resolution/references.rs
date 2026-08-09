@@ -10509,6 +10509,25 @@ fn resolve_kotlin_reference_with_deadline(
     Ok(None)
 }
 
+/// Splits an element-access receiver or hop such as `items[0]` into its base
+/// name and bracket text. Multi-dimensional element access such as
+/// `matrix[0][0]`, empty bases, and malformed brackets return `None` so
+/// element-access resolution fails closed.
+fn kotlin_array_access_spelling(segment: &str) -> Option<(&str, &str)> {
+    let open = segment.find('[')?;
+    if !segment.ends_with(']') {
+        return None;
+    }
+    let base = &segment[..open];
+    let bracket = &segment[open..];
+    // The bracket slice includes its own leading `[`; only a second bracket
+    // marks multi-dimensional element access such as `matrix[0][0]`.
+    if base.is_empty() || bracket[1..].contains('[') {
+        return None;
+    }
+    Some((base, bracket))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_qualified_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -10528,18 +10547,43 @@ fn resolve_kotlin_qualified_receiver_call(
         kotlin_import_contexts_by_file,
         deadline,
     )?;
+    // An element-access receiver such as `items[0]` strips the bracket and
+    // dispatches on the base array's element component type; the base must be
+    // bound with a usable single-level array component, and
+    // multi-dimensional element access such as `matrix[0][0]` fails closed.
+    let (receiver_name, array_access) =
+        if let Some((base, _)) = kotlin_array_access_spelling(receiver) {
+            (base, true)
+        } else if receiver.contains('[') {
+            return Ok(None);
+        } else {
+            (receiver, false)
+        };
     // A locally bound receiver (parameter, local property, or enclosing-class
     // property) resolves first; an ambiguous local binding fails closed instead
-    // of falling through to a same-named object or type.
+    // of falling through to a same-named object or type. A direct member call
+    // on an array-typed receiver fails closed; only element-access receivers
+    // dispatch on the array's element component type.
     if bindings
         .as_ref()
-        .is_some_and(|bindings| bindings.contains(receiver))
+        .is_some_and(|bindings| bindings.contains(receiver_name))
     {
-        let Some(type_name) = bindings
-            .as_ref()
-            .and_then(|bindings| bindings.type_for(receiver))
-        else {
-            return Ok(None);
+        let type_name = if array_access {
+            let Some(component_type) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.array_component_for(receiver_name))
+            else {
+                return Ok(None);
+            };
+            component_type
+        } else {
+            let Some(type_name) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.type_for(receiver_name))
+            else {
+                return Ok(None);
+            };
+            type_name
         };
         let Some(type_path) = resolve_kotlin_initializer_type_path(
             source_symbol,
@@ -10569,6 +10613,11 @@ fn resolve_kotlin_qualified_receiver_call(
             kotlin_import_contexts_by_file,
             deadline,
         );
+    }
+    if array_access {
+        // An unbound element-access base fails closed instead of falling
+        // through to a same-named object or type.
+        return Ok(None);
     }
     // An unbound receiver can still be a named object declaration such as
     // `Config.helper(...)`. Object names resolve from the same package or an
@@ -10846,9 +10895,11 @@ fn resolve_kotlin_chained_receiver_call(
             deadline,
         );
     }
-    // The first hop is either a locally bound receiver or a named object
-    // declaration such as `Config` in `Config.holder.run()`. An ambiguous local
-    // binding fails closed instead of falling through to a same-named object.
+    // The first hop is either a locally bound receiver, an element-access
+    // receiver whose base is bound with a single-level array component type, or
+    // a named object declaration such as `Config` in `Config.holder.run()`. An
+    // ambiguous local binding fails closed instead of falling through to a
+    // same-named object.
     let mut type_path = if bindings
         .as_ref()
         .is_some_and(|bindings| bindings.contains(hops[0]))
@@ -10870,6 +10921,20 @@ fn resolve_kotlin_chained_receiver_call(
         else {
             return Ok(None);
         };
+        path
+    } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(component_type) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.array_component_for(base_name))
+        && let Some(path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
         path
     } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
