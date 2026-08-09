@@ -6426,22 +6426,43 @@ fn resolve_java_instance_receiver_call(
     // call on the array itself fails closed.
     let array_component = bindings.array_component_for(receiver_name);
     let (type_path, member_chain) = if array_access {
-        let Some(component_type) = array_component else {
+        if let Some(component_type) = array_component {
+            let Some(component_path) = resolve_java_receiver_type_path(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(JavaInstanceReceiverResolution::Blocked);
+            };
+            (component_path, member_chain)
+        } else if let Some((function_name, initializer_arity)) =
+            bindings.initializer_call_for(receiver_name)
+            && !function_name.contains('.')
+            && let Some(component_path) = java_factory_array_component_type_path(
+                source_symbol,
+                &function_name,
+                initializer_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            // A `var` local initialized from a bare factory call such as
+            // `var items = makeItems()` whose declared return type is a
+            // single-level array dispatches an element access on the array's
+            // element component type; direct member calls on the array and
+            // unknown or non-array-returning factories fail closed.
+            (component_path, member_chain)
+        } else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
-        };
-        let Some(component_path) = resolve_java_receiver_type_path(
-            source_symbol,
-            &component_type,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            java_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(JavaInstanceReceiverResolution::Blocked);
-        };
-        (component_path, member_chain)
+        }
     } else if array_component.is_some() {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     } else if let Some(type_name) = bindings.type_for(receiver_name) {
@@ -6813,6 +6834,60 @@ fn java_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)> {
     Some((method_name.to_string(), arity))
 }
 
+/// Resolves the element component type path of a bare factory call whose
+/// declared return type is a single-level array, such as `Helper[] makeItems()`.
+/// The factory resolves through the same rules as a `var` initializer (a
+/// unique same-type method or explicit static-method import with matching
+/// non-varargs arity); the component resolves in the factory's own file and
+/// enclosing scope. Unknown or arity-mismatched factories and primitive or
+/// multi-dimensional return arrays fail closed.
+#[allow(clippy::too_many_arguments)]
+fn java_factory_array_component_type_path(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    function_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(factory_path) = resolve_java_initializer_function_path(
+        source_symbol,
+        function_name,
+        function_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == factory_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = factory.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = java_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        factory,
+        &component_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Resolves a bare factory-call root with an element-access suffix such as
 /// `makeItems()[0]` in `makeItems()[0].helper(...)`: the leading call resolves
 /// through the same factory rules as a `var` initializer (a unique same-type
@@ -6846,34 +6921,10 @@ fn resolve_java_bare_factory_array_member_chain(
     else {
         return Ok(None);
     };
-    let Some(factory_path) = resolve_java_initializer_function_path(
+    let Some(component_path) = java_factory_array_component_type_path(
         source_symbol,
         &function_name,
         function_arity,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    let Some(factory) = raw_symbols
-        .iter()
-        .find(|candidate| candidate.symbol_id == factory_path)
-    else {
-        return Ok(None);
-    };
-    let Some(return_type) = factory.return_type.as_deref() else {
-        return Ok(None);
-    };
-    let Some(component_name) = java_array_type_component_name(return_type) else {
-        return Ok(None);
-    };
-    let Some(component_path) = resolve_java_receiver_type_path(
-        factory,
-        &component_name,
         raw_symbols,
         semantic_path_index,
         file_overrides,

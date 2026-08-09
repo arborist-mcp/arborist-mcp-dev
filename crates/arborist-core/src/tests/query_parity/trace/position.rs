@@ -25948,17 +25948,28 @@ class Caller {
     int[] makeCounts() { return new int[2]; }
     Helper[][] makeMatrix() { return new Helper[2][2]; }
     int run(Helper[] items, int[] counts, Helper[][] matrix) {
+        var countsVar = makeCounts();
+        var matrixVar = makeMatrix();
+        var unknownVar = unknownFactory();
+        var qualifiedVar = Util.makeItems();
         return items.helper(1)
             + counts[0].helper(2)
             + matrix[0][0].helper(3)
             + makeCounts()[0].helper(4)
             + makeMatrix()[0].helper(5)
-            + makeItems()[0][0].helper(6);
+            + makeItems()[0][0].helper(6)
+            + countsVar[0].helper(7)
+            + matrixVar[0].helper(8)
+            + unknownVar[0].helper(9)
+            + qualifiedVar[0].helper(10);
     }
     int control() {
         Helper[] items = new Helper[2];
         return items[0].helper(1);
     }
+}
+class Util {
+    static Helper[] makeItems() { return new Helper[2]; }
 }
 ",
     )
@@ -25966,9 +25977,10 @@ class Caller {
 
     // A direct member call on an array, a primitive-component array, a
     // multi-dimensional array, a primitive- or multi-dimensional-returning
-    // factory array, and multi-dimensional element access on a
-    // factory-returned array all fail closed; only the resolvable
-    // element-access receiver in `control` traces.
+    // factory array, multi-dimensional element access on a factory-returned
+    // array, and `var` locals bound from primitive-, multi-dimensional-,
+    // unknown-, or qualified-factory arrays all fail closed; only the
+    // resolvable element-access receiver in `control` traces.
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -26179,6 +26191,102 @@ class Caller {
     int run(Helper[] items) {
         var first = items[0];
         return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Group {
+    int helper(int value) { return value; }
+    Group inner() { return this; }
+}
+class Caller {
+    Helper[] makeItems() { return new Helper[2]; }
+    Group[] makeGroups() { return new Group[1]; }
+    int run() {
+        var items = makeItems();
+        var groups = makeGroups();
+        return items[0].helper(1)
+            + groups[0].inner().helper(2);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare factory call whose declared return
+    // type is a single-level array dispatches an element access on the array's
+    // element component type, with member chains after the element hop
+    // resolving through the same chain rules.
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+
+    let group_helper_symbol = "com::example::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_factory_returned_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    Helper[] makeItems() { return new Helper[2]; }
+    int run() {
+        var items = makeItems();
+        return items[0].helper(1);
     }
 }
 ";
