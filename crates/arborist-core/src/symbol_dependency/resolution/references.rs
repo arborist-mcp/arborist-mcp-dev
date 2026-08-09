@@ -1211,6 +1211,25 @@ fn resolve_reference_path_with_deadline<'a>(
         {
             return Ok(Some(symbol_id));
         }
+        // A bare factory-call root with an element-access suffix such as
+        // `makeItems()[0].helper(...)` resolves the leading call through the
+        // same factory rules as a `var` initializer and dispatches the
+        // trailing member chain on the factory return array's element
+        // component type; unknown or arity-mismatched factories, primitive or
+        // multi-dimensional return arrays, and multi-dimensional element
+        // access fail closed.
+        if let Some(symbol_id) = resolve_java_bare_factory_array_member_chain(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         if let Some(symbol_id) = resolve_java_nested_static_method_reference(
             source_symbol,
             reference_name,
@@ -6748,6 +6767,114 @@ fn java_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
     Some((method_name.to_string(), arity))
 }
 
+/// Parses a bare factory-call root with a trailing element-access suffix such
+/// as `makeItems()` in `makeItems()[0].helper(...)` into the factory name and
+/// its call arity. The root must be exactly one call followed by one bracket
+/// pair; multi-dimensional element access such as `makeItems()[0][0]`,
+/// malformed brackets, and dotted factory names fail closed.
+fn java_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)> {
+    let open = hop.find('(')?;
+    let (method_name, rest) = hop.split_at(open);
+    if method_name.is_empty() || method_name.contains('.') {
+        return None;
+    }
+    let bracket_open = rest.find('[')?;
+    let call_part = &rest[..bracket_open];
+    let arguments = call_part.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    let bracket = &rest[bracket_open..];
+    if !bracket.ends_with(']') || bracket[1..].contains('[') {
+        return None;
+    }
+    Some((method_name.to_string(), arity))
+}
+
+/// Resolves a bare factory-call root with an element-access suffix such as
+/// `makeItems()[0]` in `makeItems()[0].helper(...)`: the leading call resolves
+/// through the same factory rules as a `var` initializer (a unique same-type
+/// method or explicit static-method import with matching non-varargs arity)
+/// whose declared return type is a single-level array, and the trailing member
+/// chain dispatches on the array's element component type in the factory's own
+/// file and enclosing scope. Unknown or arity-mismatched factories, primitive
+/// or multi-dimensional return arrays, and unresolvable hops fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java factory array root resolution inputs explicit"
+)]
+fn resolve_java_bare_factory_array_member_chain(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((root_spelling, member_chain)) = reference_name.split_once('.') else {
+        return Ok(None);
+    };
+    if root_spelling.is_empty() || member_chain.is_empty() {
+        return Ok(None);
+    }
+    let Some((function_name, function_arity)) =
+        java_array_factory_call_root_spelling(root_spelling)
+    else {
+        return Ok(None);
+    };
+    let Some(factory_path) = resolve_java_initializer_function_path(
+        source_symbol,
+        &function_name,
+        function_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == factory_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = factory.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = java_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    let Some(component_path) = resolve_java_receiver_type_path(
+        factory,
+        &component_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_java_member_chain_from_type_path(
+        &component_path,
+        member_chain,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
 /// Resolves the declared return type of an arity-matched non-static
 /// method-call hop such as `inner()` or `inner(1)` in
 /// `group.inner().helper(...)`. The hop method dispatches like any other
@@ -7230,7 +7357,9 @@ fn resolve_java_initializer_type_path(
 /// `var value = makeFoo()` to a unique factory method symbol path. Same-file
 /// same-type methods with a declared return type and matching non-varargs
 /// arity shadow static-method imports; otherwise a unique explicit static
-/// method import is eligible. Unknown or ambiguous callees fail closed.
+/// method import is eligible. A single-level array return type is eligible
+/// the same way so factory-returned array receivers can dispatch on the
+/// element component type. Unknown or ambiguous callees fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java initializer function resolution inputs explicit"
@@ -7259,10 +7388,10 @@ fn resolve_java_initializer_function_path(
                     let candidate = &raw_symbols[*index];
                     candidate.file_path == source_symbol.file_path
                         && candidate.node_kind == "method_declaration"
-                        && candidate
-                            .return_type
-                            .as_deref()
-                            .is_some_and(|return_type| java_dotted_type_name(return_type).is_some())
+                        && candidate.return_type.as_deref().is_some_and(|return_type| {
+                            java_dotted_type_name(return_type).is_some()
+                                || java_array_type_component_name(return_type).is_some()
+                        })
                         && candidate.parameters.len() == call_arity
                         && !candidate
                             .parameters
@@ -10709,6 +10838,41 @@ mod tests {
             error
                 .to_string()
                 .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn java_array_factory_call_root_spelling_parses_single_element_access() {
+        use super::java_array_factory_call_root_spelling;
+        assert_eq!(
+            java_array_factory_call_root_spelling("makeItems()[0]"),
+            Some(("makeItems".to_string(), 0))
+        );
+        assert_eq!(
+            java_array_factory_call_root_spelling("makeItems(1)[2]"),
+            Some(("makeItems".to_string(), 1))
+        );
+        assert_eq!(
+            java_array_factory_call_root_spelling("makeItems()[]"),
+            Some(("makeItems".to_string(), 0))
+        );
+        // Multi-dimensional element access, dotted roots, and malformed
+        // spellings fail closed.
+        assert_eq!(
+            java_array_factory_call_root_spelling("makeItems()[0][0]"),
+            None
+        );
+        assert_eq!(
+            java_array_factory_call_root_spelling("Util.makeItems()[0]"),
+            None
+        );
+        assert_eq!(java_array_factory_call_root_spelling("makeItems()"), None);
+        assert_eq!(java_array_factory_call_root_spelling("makeItems[0]"), None);
+        assert_eq!(java_array_factory_call_root_spelling("[0]"), None);
+        assert_eq!(java_array_factory_call_root_spelling("()"), None);
+        assert_eq!(
+            java_array_factory_call_root_spelling("makeItems()[0]x"),
+            None
         );
     }
 }
