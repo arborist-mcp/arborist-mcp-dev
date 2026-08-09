@@ -425,11 +425,14 @@ fn csharp_direct_invocation_name(
         // `MakeHelper().entry.Run(1)` spells the full chain with the call as
         // the leading segment so the resolver can dispatch the leading
         // arity-matched factory method on the enclosing type or a
-        // static-imported type; bare-call roots are only kept when static
-        // type-qualified roots are allowed.
+        // static-imported type; a factory-call root with an element-access
+        // suffix such as `makeItems()[0].Run(1)` keeps the same chain
+        // spelling so the resolver can dispatch the trailing member on the
+        // factory return array's element component type. Bare-call roots are
+        // only kept when static type-qualified roots are allowed.
         if matches!(
             receiver.kind(),
-            "invocation_expression" | "parenthesized_expression"
+            "invocation_expression" | "parenthesized_expression" | "element_access_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, true)?
             && spelling.contains('(')
@@ -1298,11 +1301,12 @@ class Caller {
                 .references_by_name
                 .contains("fieldItems[0].helper")
         );
-        // A factory-rooted element access records the inner bare call but no
-        // element-access chain fact, and fails closed at trace time until
-        // factory-returned array receivers are traced.
+        // A factory-rooted element access records the full element-access
+        // chain so the resolver can dispatch the trailing member on the
+        // factory return array's element component type; the inner bare call
+        // is recorded too.
         assert!(
-            !symbol("factoryRoot")
+            symbol("factoryRoot")
                 .references_by_name
                 .contains("makeItems()[0].helper")
         );

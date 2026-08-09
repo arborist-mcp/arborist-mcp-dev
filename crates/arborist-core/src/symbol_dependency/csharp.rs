@@ -1089,7 +1089,7 @@ fn csharp_insert_receiver_binding(
 /// receiver's own scope. Multi-dimensional (`Helper[,]`), jagged
 /// (`Helper[][]`), primitive, `var`, `void`, `global::`-qualified, and
 /// malformed spellings return `None` and fail closed.
-fn csharp_array_type_component_name(text: &str) -> Option<String> {
+pub(in crate::symbol_dependency) fn csharp_array_type_component_name(text: &str) -> Option<String> {
     let name = text.trim();
     let open = name.find('[')?;
     if open == 0 || !name[open..].trim_end().ends_with(']') {

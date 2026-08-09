@@ -7,9 +7,10 @@ use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides
 use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
-    CSharpTypeAliasBinding, csharp_global_type_alias_name_is_ambiguous,
-    csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
-    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
+    CSharpTypeAliasBinding, csharp_array_type_component_name,
+    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
+    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
+    csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -623,6 +624,27 @@ fn resolve_reference_path_with_deadline<'a>(
             }
             CSharpInstanceReceiverResolution::Blocked => return Ok(None),
             CSharpInstanceReceiverResolution::NoBinding => {}
+        }
+        // A bare factory-call root with an element-access suffix such as
+        // `makeItems()[0].helper(...)` resolves the leading call through the
+        // same factory rules as a `var` initializer and dispatches the
+        // trailing member chain on the factory return array's element
+        // component type; unknown or arity-mismatched factories, primitive or
+        // multi-dimensional return arrays, and multi-dimensional element
+        // access fail closed.
+        if let Some(symbol_id) = resolve_csharp_bare_factory_array_member_chain(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
         }
         // A dotted call rooted at a static type-qualified member such as
         // `Util.STATIC_HELPER.entry.Run(1)`,
@@ -3523,6 +3545,119 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
     )
 }
 
+/// Resolves a bare factory-call root with an element-access suffix such as
+/// `makeItems()[0]` in `makeItems()[0].helper(...)`: the leading call
+/// resolves through the same factory rules as a `var` initializer (a unique
+/// same-type method, base-type method, static-imported method, or
+/// type-qualified static method with matching arity) whose declared return
+/// type is a single-level array, and the trailing member chain dispatches on
+/// the array's element component type in the factory's own file and
+/// enclosing scope. Unknown or arity-mismatched factories, primitive or
+/// multi-dimensional return arrays, multi-dimensional element access, and
+/// unresolvable hops fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# factory array root resolution inputs explicit"
+)]
+fn resolve_csharp_bare_factory_array_member_chain(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((root_spelling, member_chain)) = reference_name.split_once('.') else {
+        return Ok(None);
+    };
+    if root_spelling.is_empty() || member_chain.is_empty() {
+        return Ok(None);
+    }
+    let Some((function_name, function_arity)) =
+        csharp_array_factory_call_root_spelling(root_spelling)
+    else {
+        return Ok(None);
+    };
+    let Some(method) = resolve_csharp_var_factory_method(
+        source_symbol,
+        &function_name,
+        function_arity,
+        &CSharpReceiverTypeBindings::default(),
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = csharp_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    let Some(component_binding) = resolve_csharp_receiver_type_binding(
+        method,
+        &component_name,
+        raw_symbols,
+        semantic_path_index,
+        csharp_source_namespace_path(method, raw_symbols).flatten(),
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(component_binding) =
+        canonicalize_csharp_type_binding(method, &component_binding, raw_symbols)
+    else {
+        return Ok(None);
+    };
+    let mut hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let Some(final_member) = hops.pop() else {
+        return Ok(None);
+    };
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        source_symbol,
+        component_binding,
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        dispatch_source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
 /// Resolves a static initializer type spelling such as `Util`,
 /// `Outer.Util`, or `global::Demo.Util` to the unique semantic type path of
 /// its type declaration. A `global::`-qualified spelling resolves exactly at
@@ -4049,6 +4184,32 @@ fn csharp_array_access_member_name(hop: &str) -> Option<&str> {
         return None;
     }
     Some(base)
+}
+
+/// Parses a bare factory-call root with a trailing element-access suffix such
+/// as `makeItems()` in `makeItems()[0].helper(...)` into the factory name and
+/// its call arity. The root must be exactly one call followed by one bracket
+/// pair; multi-dimensional element access such as `makeItems()[0][0]`,
+/// malformed brackets, and dotted factory names fail closed.
+fn csharp_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)> {
+    let open = hop.find('(')?;
+    let (method_name, rest) = hop.split_at(open);
+    if method_name.is_empty() || method_name.contains('.') {
+        return None;
+    }
+    let bracket_open = rest.find('[')?;
+    let call_part = &rest[..bracket_open];
+    let arguments = call_part.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    let bracket = &rest[bracket_open..];
+    if !bracket.ends_with(']') || bracket[1..].contains('[') {
+        return None;
+    }
+    Some((method_name.to_string(), arity))
 }
 
 /// Resolves an arity-matched non-static method-call hop such as `inner()` or
@@ -11181,6 +11342,44 @@ mod tests {
         assert_eq!(java_array_factory_call_root_spelling("()"), None);
         assert_eq!(
             java_array_factory_call_root_spelling("makeItems()[0]x"),
+            None
+        );
+    }
+
+    #[test]
+    fn csharp_array_factory_call_root_spelling_parses_single_element_access() {
+        use super::csharp_array_factory_call_root_spelling;
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems()[0]"),
+            Some(("makeItems".to_string(), 0))
+        );
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems(1)[2]"),
+            Some(("makeItems".to_string(), 1))
+        );
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems()[]"),
+            Some(("makeItems".to_string(), 0))
+        );
+        // Multi-dimensional element access, dotted roots, and malformed
+        // spellings fail closed.
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems()[0][0]"),
+            None
+        );
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("Util.makeItems()[0]"),
+            None
+        );
+        assert_eq!(csharp_array_factory_call_root_spelling("makeItems()"), None);
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems[0]"),
+            None
+        );
+        assert_eq!(csharp_array_factory_call_root_spelling("[0]"), None);
+        assert_eq!(csharp_array_factory_call_root_spelling("()"), None);
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeItems()[0]x"),
             None
         );
     }

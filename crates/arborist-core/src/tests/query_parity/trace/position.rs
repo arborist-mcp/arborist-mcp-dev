@@ -16480,20 +16480,167 @@ class Caller {
         return items.helper(1)
             + counts[0].helper(2)
             + matrix[0][0].helper(3)
-            + matrix[0, 1].helper(4)
-            + makeItems()[0].helper(5);
+            + matrix[0, 1].helper(4);
     }
     int control(Helper[] items) => items[0].helper(1);
-    Helper[] makeItems() => new Helper[2];
 }
 ",
     )
     .unwrap();
 
-    // A direct member call on an array, a primitive-component array, a
-    // jagged or multi-dimensional array, and a factory-returned array all
-    // fail closed; only the resolvable element-access receiver in `control`
-    // traces.
+    // A direct member call on an array, a primitive-component array, and a
+    // jagged or multi-dimensional array all fail closed; only the resolvable
+    // element-access receiver in `control` traces (factory-returned array
+    // receivers are covered by their own slice's tests).
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::control");
+}
+
+#[test]
+fn traces_csharp_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    Group[] makeGroups() => new Group[1];
+    int run() {
+        return makeItems()[0].helper(1)
+            + makeGroups()[0].inner().helper(2);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A factory-returned array receiver such as `makeItems()[0].helper(...)`
+    // dispatches on the array's element component type, with member chains
+    // after the element hop resolving through the same chain rules.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(group_persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn traces_csharp_factory_returned_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int run() {
+        return makeItems()[0].helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn csharp_factory_returned_array_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int[] makeCounts() => new int[2];
+    Helper[][] makeMatrix() => new Helper[2][];
+    int run() {
+        return makeItems()[0][0].helper(1)
+            + makeCounts()[0].helper(2)
+            + makeMatrix()[0].helper(3)
+            + unknownFactory()[0].helper(4)
+            + Util.makeCounts()[0].helper(5);
+    }
+    int control() => makeItems()[0].helper(1);
+}
+class Util {
+    public static int[] makeCounts() => new int[2];
+}
+",
+    )
+    .unwrap();
+
+    // Multi-dimensional element access on a factory-returned array, a
+    // primitive-component return array, a jagged return array, an unknown
+    // factory, and a type-qualified primitive-returning factory all fail
+    // closed; only the resolvable factory-returned array receiver in
+    // `control` traces.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
