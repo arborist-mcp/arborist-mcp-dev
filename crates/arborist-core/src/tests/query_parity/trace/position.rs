@@ -20096,6 +20096,114 @@ fn traces_kotlin_cross_file_imported_interface_receiver_member_calls_in_live_wor
 }
 
 #[test]
+fn traces_kotlin_interface_method_hop_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Builder {\n    fun inner(): Entry\n}\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val builder: Builder = object : Builder {\n        override fun inner(): Entry = Entry()\n    }\n}\n\nfun caller(builder: Builder): Int {\n    return builder.inner().helper(1)\n}\n\nfun chained(group: Group): Int {\n    return group.builder.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A method-call hop on an interface-typed receiver dispatches on the
+    // interface method's declared return type, both from a bound parameter and
+    // from a property hop that pins an interface type, so the trailing member
+    // dispatches on the returned concrete declaration.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::chained"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::chained"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_imported_interface_method_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Builder.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Builder\n\nfun caller(builder: Builder): Int {\n    return builder.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\ninterface Builder {\n    fun inner(): Entry\n}\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // The method-call hop return type resolves in the interface's own file and
+    // package scope, so a caller in another package dispatches the trailing
+    // member on the canonical declared type once the interface is imported.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_interface_method_hop_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Base {\n    fun inner(): Entry\n}\ninterface Derived : Base\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface GoodBuilder {\n    fun inner(): Entry\n}\ninterface Builder {\n    fun inner(): Unknown\n}\nfun makeUnknownBuilder(): Builder = TODO()\n\nfun caller(builder: Builder): Int {\n    return builder.inner().helper(1)\n}\n\nfun unknownHop(builder: Builder): Int {\n    return builder.unknown().helper(1)\n}\n\nfun inheritedHop(derived: Derived): Int {\n    return derived.inner().helper(1)\n}\n\nfun factoryRoot(): Int {\n    return makeUnknownBuilder().inner().helper(1)\n}\n\nfun control(good: GoodBuilder): Int {\n    return good.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A method-call hop whose interface method returns an unknown type, an
+    // unknown method hop, a method hop declared only on a parent interface
+    // (interface extends chains are not walked), and a factory root whose
+    // interface-typed return resolves to a method returning an unknown type
+    // all fail closed; only the resolvable interface method hop in `control`
+    // traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_typealias_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
