@@ -11507,10 +11507,10 @@ fn resolve_kotlin_chained_receiver_call(
     if let Some((companion_root, consumed)) = companion_chain {
         let companion_scope = format!("{companion_root}::Companion");
         let mut receiver_path = companion_scope.clone();
-        for property_name in hops.iter().skip(consumed).take(hops.len() - consumed - 1) {
-            let Some(next_path) = kotlin_property_type_path(
+        for hop in hops.iter().skip(consumed).take(hops.len() - consumed - 1) {
+            let Some(next_path) = kotlin_chain_hop_type_path(
                 &receiver_path,
-                property_name,
+                hop,
                 source_symbol,
                 raw_symbols,
                 semantic_path_index,
@@ -11574,10 +11574,10 @@ fn resolve_kotlin_chained_receiver_call(
             kotlin_path_nested_object(&class_path, hops[1], raw_symbols)
     {
         let mut receiver_path = nested_object_path;
-        for property_name in hops.iter().skip(2).take(hops.len() - 3) {
-            let Some(next_path) = kotlin_property_type_path(
+        for hop in hops.iter().skip(2).take(hops.len() - 3) {
+            let Some(next_path) = kotlin_chain_hop_type_path(
                 &receiver_path,
-                property_name,
+                hop,
                 source_symbol,
                 raw_symbols,
                 semantic_path_index,
@@ -11663,13 +11663,15 @@ fn resolve_kotlin_chained_receiver_call(
         return Ok(None);
     };
     // Each intermediate hop must resolve to a uniquely declared property whose
-    // explicit type pins the next receiver; a bare constructor initializer such
-    // as `val member = Other()` also pins the type, while generic, nullable,
-    // function-call-inferred, and missing property types fail closed.
-    for property_name in hops.iter().skip(1).take(hops.len() - 2) {
-        let Some(next_path) = kotlin_property_type_path(
+    // explicit type pins the next receiver, or to a method-call hop such as
+    // `inner()` whose declared return type continues the chain; a bare
+    // constructor initializer such as `val member = Other()` also pins the
+    // type, while generic, nullable, function-call-inferred, ambiguous, and
+    // missing hops fail closed.
+    for hop in hops.iter().skip(1).take(hops.len() - 2) {
+        let Some(next_path) = kotlin_chain_hop_type_path(
             &type_path,
-            property_name,
+            hop,
             source_symbol,
             raw_symbols,
             semantic_path_index,
@@ -11700,10 +11702,11 @@ fn resolve_kotlin_chained_receiver_call(
 
 /// Walks `chain` as a member chain rooted at `root_type_path`, resolving each
 /// intermediate hop as a uniquely declared property whose declared type pins
-/// the next receiver and dispatching the final member or extension on the
-/// terminal type. A chain with no intermediate hops dispatches the final
-/// member directly on the root type. Unknown or unresolvable hops and missing
-/// members fail closed.
+/// the next receiver, or as a method-call hop such as `inner()` whose declared
+/// return type continues the chain, and dispatching the final member or
+/// extension on the terminal type. A chain with no intermediate hops
+/// dispatches the final member directly on the root type. Unknown or
+/// unresolvable hops and missing members fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_type_rooted_member_chain(
     source_symbol: &IndexedSymbol,
@@ -11721,10 +11724,10 @@ fn resolve_kotlin_type_rooted_member_chain(
         return Ok(None);
     }
     let mut receiver_path = root_type_path.to_string();
-    for property_name in hops.iter().take(hops.len() - 1) {
-        let Some(next_path) = kotlin_property_type_path(
+    for hop in hops.iter().take(hops.len() - 1) {
+        let Some(next_path) = kotlin_chain_hop_type_path(
             &receiver_path,
-            property_name,
+            hop,
             source_symbol,
             raw_symbols,
             semantic_path_index,
@@ -11755,6 +11758,258 @@ fn resolve_kotlin_type_rooted_member_chain(
         kotlin_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Parses a method-call hop spelling such as `inner()` into the method name.
+/// Property hops, element-access hops, and malformed spellings return `None`
+/// so they fall through to property resolution and fail closed when no such
+/// property exists.
+fn kotlin_method_call_hop_spelling(hop: &str) -> Option<String> {
+    let open = hop.find('(')?;
+    let (method_name, rest) = hop.split_at(open);
+    if method_name.is_empty() || method_name.contains('.') || rest != "()" {
+        return None;
+    }
+    Some(method_name.to_string())
+}
+
+/// Resolves the declared return type path of a method-call hop such as
+/// `inner()` in `group.inner().entry.helper(...)`. The hop dispatches as a
+/// unique member or extension function on the receiver type with a declared
+/// return type (member functions shadow extensions, and an ambiguous overload
+/// or extension set fails closed); the declared return type then resolves in
+/// the method's own file and enclosing scope. Unknown, ambiguous, or
+/// undeclared-return hops fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_method_call_hop_type_path(
+    owner_type_path: &str,
+    method_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if method_name.is_empty() {
+        return Ok(None);
+    }
+    let target_path = format!("{owner_type_path}::{method_name}");
+    let member_candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "function_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+                && candidate.return_type.is_some()
+        })
+        .collect::<Vec<_>>();
+    let method_path = if member_candidates.len() == 1 {
+        Some(raw_symbols[member_candidates[0]].symbol_id.clone())
+    } else if member_candidates.is_empty() {
+        // An extension fallback requires a unique top-level extension function
+        // for the receiver type with a declared return type, resolved in the
+        // caller's file, package, or explicit imports like any other extension;
+        // ambiguous extension sets fail closed.
+        let owner_type_name = owner_type_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(owner_type_path);
+        let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+        let imported_binding = resolve_kotlin_import_binding_for_reference(
+            &source_symbol.file_path,
+            method_name,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?;
+        let extension_candidates = raw_symbols
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| {
+                candidate.node_kind == "function_declaration"
+                    && candidate.extension_receiver.as_deref() == Some(owner_type_name)
+                    && candidate.base_name == method_name
+                    && candidate.return_type.is_some()
+                    && kotlin_symbol_is_top_level(candidate, raw_symbols)
+                    && (candidate.file_path == source_symbol.file_path
+                        || package_scope
+                            .is_some_and(|scope| candidate.scope_path.as_deref() == Some(scope))
+                        || imported_binding.as_ref().is_some_and(|binding| {
+                            binding.semantic_path == candidate.semantic_path
+                        }))
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if extension_candidates.len() == 1 {
+            Some(raw_symbols[extension_candidates[0]].symbol_id.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let Some(method_path) = method_path else {
+        return Ok(None);
+    };
+    let Some(method) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == method_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method
+        .return_type
+        .as_deref()
+        .and_then(kotlin_dotted_type_name)
+    else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        method,
+        &return_type,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the next receiver type path for one chain hop. A method-call hop
+/// such as `inner()` dispatches on the declared return type of a unique member
+/// or extension function; any other hop must resolve as a uniquely declared
+/// property whose declared type or bare constructor initializer pins the next
+/// receiver. Unknown or ambiguous hops fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_chain_hop_type_path(
+    owner_type_path: &str,
+    hop: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(method_name) = kotlin_method_call_hop_spelling(hop) {
+        return kotlin_method_call_hop_type_path(
+            owner_type_path,
+            &method_name,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    kotlin_property_type_path(
+        owner_type_path,
+        hop,
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves a dotted receiver prefix such as `group`, `group.holder`, or
+/// `items[0]` to the terminal receiver type path. The first hop resolves
+/// through the local bindings (parameter, local property, enclosing-class
+/// property, or element-access base) or a named object declaration; each
+/// following hop must resolve as a property or method-call hop. Unknown or
+/// ambiguous receivers and hops fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_receiver_chain_type_path(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let bindings = kotlin_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let mut type_path = if bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        let Some(type_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(hops[0]))
+        else {
+            return Ok(None);
+        };
+        let Some(path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        path
+    } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(component_type) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.array_component_for(base_name))
+        && let Some(path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        path
+    } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        object_path
+    } else {
+        return Ok(None);
+    };
+    for hop in hops.iter().skip(1) {
+        let Some(next_path) = kotlin_chain_hop_type_path(
+            &type_path,
+            hop,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path = next_path;
+    }
+    Ok(Some(type_path))
 }
 
 /// Resolves the declared type path of `property_name` on `owner_type_path`. A
@@ -12238,15 +12493,18 @@ fn kotlin_path_nested_class_path(
     (class_count == 1 && other_declaration_count == 0).then_some(nested_path)
 }
 
-/// Resolves a constructor-call receiver chain such as
-/// `Outer.Inner().helper(...)` or `Group().member.helper(...)`. The `()` marker
-/// in `reference_name` names a type path that must resolve to exactly one
-/// constructible class declaration; the remaining hops resolve each
-/// intermediate property's declared type and then dispatch the final member or
-/// extension exactly like an instance receiver. Function-call bases such as
-/// `makeOther().helper(...)`, unknown names, and non-constructible declarations
-/// (interfaces, enums, sealed, abstract, annotation, and inner classes) fail
-/// closed.
+/// Resolves a `()`-marked receiver chain such as
+/// `Outer.Inner().helper(...)`, `Group().member.helper(...)`,
+/// `makeGroup().entry.helper(...)`, or `group.inner().entry.helper(...)`. The
+/// `()` marker names either a type path that must resolve to exactly one
+/// constructible class declaration, a bare factory call whose declared return
+/// type pins the receiver, or a receiver chain ending in a method-call hop
+/// whose declared return type continues the chain; the remaining hops resolve
+/// each intermediate property's declared type or method-call hop and then
+/// dispatch the final member or extension exactly like an instance receiver.
+/// Unknown names, non-constructible declarations (interfaces, enums, sealed,
+/// abstract, annotation, and inner classes), unresolvable factory callees, and
+/// unresolvable receiver chains and hops fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_constructor_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -12309,16 +12567,60 @@ fn resolve_kotlin_constructor_receiver_call(
     )? {
         factory_type_path
     } else {
-        return Ok(None);
+        // A `()`-marked prefix with a dotted receiver such as `group.inner`
+        // may be a receiver chain ending in a method-call hop. The receiver
+        // chain resolves through the same binding/object rules, the method-call
+        // hop dispatches on its declared return type, and the trailing chain
+        // continues from that type; a bare `inner().helper(...)` with no
+        // receiver, unknown receiver chains, and unresolvable hops fail closed.
+        if !type_path_text.contains('.') {
+            return Ok(None);
+        }
+        let Some((receiver_chain, method_hop)) = type_path_text.rsplit_once('.') else {
+            return Ok(None);
+        };
+        // The `()` marker was stripped with the type-path split, so rebuild the
+        // hop spelling before parsing the method name.
+        let hop_spelling = format!("{method_hop}()");
+        let Some(method_name) = kotlin_method_call_hop_spelling(&hop_spelling) else {
+            return Ok(None);
+        };
+        let Some(receiver_path) = resolve_kotlin_receiver_chain_type_path(
+            source_symbol,
+            receiver_chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(hop_path) = kotlin_method_call_hop_type_path(
+            &receiver_path,
+            &method_name,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        hop_path
     };
     // Each intermediate hop must resolve to a uniquely declared property whose
-    // explicit type or bare constructor initializer pins the next receiver;
-    // missing and ambiguous property types fail closed.
+    // explicit type or bare constructor initializer pins the next receiver, or
+    // to a method-call hop whose declared return type continues the chain;
+    // missing, ambiguous, and unresolvable hops fail closed.
     let mut receiver_path = type_path;
-    for property_name in hops.iter().take(hops.len() - 1) {
-        let Some(next_path) = kotlin_property_type_path(
+    for hop in hops.iter().take(hops.len() - 1) {
+        let Some(next_path) = kotlin_chain_hop_type_path(
             &receiver_path,
-            property_name,
+            hop,
             source_symbol,
             raw_symbols,
             semantic_path_index,

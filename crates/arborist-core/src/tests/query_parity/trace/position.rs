@@ -22873,13 +22873,13 @@ fn kotlin_this_rooted_member_calls_fail_closed_for_unsupported_references() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nclass Caller {\n    val entry: Entry = Entry()\n    fun run(): Int {\n        return this.unknown.helper(1) + this.entry.unknownHelper(2) + this.makeGroup().entry.helper(3)\n    }\n    fun makeGroup(): Group = Group()\n}\n\nfun control(group: Group): Int {\n    return group.entry.helper(1)\n}\n",
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nclass Caller {\n    val entry: Entry = Entry()\n    fun run(): Int {\n        return this.unknown.helper(1) + this.entry.unknownHelper(2) + this.makeUnknown().entry.helper(3)\n    }\n    fun makeUnknown(): Unknown = TODO()\n}\n\nfun control(group: Group): Int {\n    return group.entry.helper(1)\n}\n",
     )
     .unwrap();
 
     // An unknown `this`-rooted hop, a missing final member, and a method-call
-    // hop inside a `this`-rooted chain all fail closed; only the resolvable
-    // bound receiver in `control` traces.
+    // hop with an unresolvable return type inside a `this`-rooted chain all
+    // fail closed; only the resolvable bound receiver in `control` traces.
     let helper_path = "com::example::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -23071,6 +23071,185 @@ fn kotlin_factory_root_member_calls_fail_closed_for_unsupported_references() {
     // An unknown factory, an ambiguous overload set, a dotted factory root,
     // and a factory whose declared return type does not resolve all fail
     // closed; only the resolvable factory root in `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
+fn traces_kotlin_method_hop_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n    fun inner(): Group = this\n    fun deeper(): Entry = Entry()\n}\nfun makeGroup(): Group = Group()\n\nfun caller(group: Group): Int {\n    return group.inner().entry.helper(1) + group.inner().inner().deeper().helper(2) + makeGroup().inner().entry.helper(3) + Group().inner().entry.helper(4)\n}\n",
+    )
+    .unwrap();
+
+    // A method-call hop such as `inner()` in `group.inner().entry.helper(...)`
+    // dispatches on the method's declared return type and continues the chain,
+    // including double method hops, factory-call roots, and constructed roots;
+    // the standalone intermediate invocations also trace to their own methods.
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Group::inner",
+        "com::example::Group::deeper",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Group::inner",
+        "com::example::Group::deeper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn traces_kotlin_method_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    fun inner(): Entry = Entry()\n}\n\nfun caller(group: Group): Int {\n    return group.inner().helper(1)\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_method_hop_receiver_calls_across_files_with_imports() {
+    let dir = temporary_dir();
+    let caller_path = dir
+        .join("src")
+        .join("com")
+        .join("example")
+        .join("Caller.kt");
+    let group_path = dir.join("src").join("org").join("util").join("Group.kt");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(group_path.parent().unwrap()).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Group\n\nfun caller(group: Group): Int {\n    return group.inner().entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &group_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n    fun inner(): Group = this\n}\n",
+    )
+    .unwrap();
+
+    // A method-call hop resolves its declared return type in the hop method's
+    // own file and package, so cross-file chains with explicit imports trace
+    // exactly like same-file chains.
+    for target in ["org::util::Entry::helper", "org::util::Group::inner"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn traces_kotlin_this_and_super_rooted_method_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nopen class Base {\n    fun inner(): Group = Group()\n}\nclass Caller : Base() {\n    fun makeInner(): Group = Group()\n    fun run(): Int {\n        return this.makeInner().entry.helper(1) + super.inner().entry.helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A method-call hop inside a `this.`-rooted chain dispatches on the
+    // enclosing type, and inside a `super.`-rooted chain on the direct
+    // superclass; both continue on the hop's declared return type.
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Caller::makeInner",
+        "com::example::Base::inner",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Caller::makeInner",
+        "com::example::Base::inner",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+    }
+}
+
+#[test]
+fn kotlin_method_hop_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n    fun inner(): Group = this\n    fun inner(count: Int): Entry = Entry()\n    fun tag(): Int = 1\n    fun solo(): Group = this\n}\n\nfun caller(group: Group): Int {\n    return group.unknown().entry.helper(1) + group.inner(1).entry.helper(2) + group.tag().entry.helper(3) + unbound.inner().entry.helper(4) + group.entry.unknownHelper(5)\n}\n\nfun control(group: Group): Int {\n    return group.solo().entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown method-call hop, an ambiguous overload set, a primitive
+    // return type, an unbound receiver root, and a missing final member all
+    // fail closed; only the resolvable method-call hop in `control` traces.
     let helper_path = "com::example::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
