@@ -1827,10 +1827,12 @@ fn resolve_csharp_instance_receiver_call(
         // single-level array-typed receiver dispatches on the array's element
         // component type; indexing a non-array, primitive-array, or
         // multi-dimensional-array receiver fails closed. A `var` local
-        // initialized from a bare factory call whose declared return type is
-        // a single-level array (`var items = makeItems()`) dispatches the
-        // element access through the factory's element component type too;
-        // qualified factory callees are the qualified-factory slice.
+        // initialized from a factory call whose declared return type is a
+        // single-level array (`var items = makeItems()` or
+        // `var items = Util.makeItems()`) dispatches the element access
+        // through the factory's element component type too, with bare and
+        // qualified callees resolving through the same factory rules as other
+        // `var` initializers.
         if let Some(component_type) = array_component {
             resolve_csharp_receiver_type_binding(
                 source_symbol,
@@ -1844,7 +1846,6 @@ fn resolve_csharp_instance_receiver_call(
                 deadline,
             )?
         } else if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding)
-            && !factory_name.contains('.')
             && let Some(binding) = csharp_factory_array_component_binding(
                 source_symbol,
                 &factory_name,
