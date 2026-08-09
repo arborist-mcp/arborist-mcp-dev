@@ -21009,6 +21009,152 @@ fn kotlin_class_receiver_superclass_member_calls_fail_closed_for_unsupported_ref
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
+#[test]
+fn traces_kotlin_chain_receiver_superclass_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n    fun inner(): Entry = Entry()\n}\nclass Derived : Base()\n\nfun propertyCaller(derived: Derived): Int {\n    return derived.entry.helper(1)\n}\n\nfun methodCaller(derived: Derived): Int {\n    return derived.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A property hop and a method-call hop declared on a parent class resolve
+    // through the direct superclass chain of a class-typed receiver, so the
+    // trailing member dispatches on the inherited declared type.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_chain_receiver_interface_hop_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Base {\n    val entry: Entry\n    fun inner(): Entry\n}\nclass Impl : Base\n\nfun propertyCaller(impl: Impl): Int {\n    return impl.entry.helper(1)\n}\n\nfun methodCaller(impl: Impl): Int {\n    return impl.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A property hop and a method-call hop declared on an implemented
+    // interface resolve through the class-receiver interface fallback, so the
+    // trailing member dispatches on the interface-declared hop type.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_chain_receiver_superclass_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n}\nclass Derived : Base()\n\nfun caller(derived: Derived): Int {\n    return derived.entry.helper(1)\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_chain_receiver_superclass_hop_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n}\nclass Derived : Base()\n\nfun unknownProperty(derived: Derived): Int {\n    return derived.missing.helper(1)\n}\n\nfun unknownMethod(derived: Derived): Int {\n    return derived.unknown().helper(1)\n}\n\nfun control(derived: Derived): Int {\n    return derived.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown property hop and an unknown method-call hop on a class-typed
+    // receiver both fail closed; only the resolvable inherited property hop in
+    // `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
 
 #[test]
 fn does_not_trace_kotlin_typealias_receiver_calls_with_generic_or_cyclic_targets() {
