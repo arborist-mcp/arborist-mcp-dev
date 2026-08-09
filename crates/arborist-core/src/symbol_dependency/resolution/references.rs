@@ -6442,7 +6442,6 @@ fn resolve_java_instance_receiver_call(
             (component_path, member_chain)
         } else if let Some((function_name, initializer_arity)) =
             bindings.initializer_call_for(receiver_name)
-            && !function_name.contains('.')
             && let Some(component_path) = java_factory_array_component_type_path(
                 source_symbol,
                 &function_name,
@@ -6454,11 +6453,12 @@ fn resolve_java_instance_receiver_call(
                 deadline,
             )?
         {
-            // A `var` local initialized from a bare factory call such as
-            // `var items = makeItems()` whose declared return type is a
-            // single-level array dispatches an element access on the array's
-            // element component type; direct member calls on the array and
-            // unknown or non-array-returning factories fail closed.
+            // A `var` local initialized from a factory call such as
+            // `var items = makeItems()` or `var items = Util.makeItems()`
+            // whose declared return type is a single-level array dispatches
+            // an element access on the array's element component type; direct
+            // member calls on the array and unknown or non-array-returning
+            // factories fail closed.
             (component_path, member_chain)
         } else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
@@ -6834,35 +6834,51 @@ fn java_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)> {
     Some((method_name.to_string(), arity))
 }
 
-/// Resolves the element component type path of a bare factory call whose
-/// declared return type is a single-level array, such as `Helper[] makeItems()`.
-/// The factory resolves through the same rules as a `var` initializer (a
-/// unique same-type method or explicit static-method import with matching
-/// non-varargs arity); the component resolves in the factory's own file and
-/// enclosing scope. Unknown or arity-mismatched factories and primitive or
-/// multi-dimensional return arrays fail closed.
+/// Resolves the element component type path of a factory call whose declared
+/// return type is a single-level array, such as `Helper[] makeItems()`, for a
+/// `var` local's initializer callee. Bare callees such as `makeItems` resolve
+/// through the same rules as a `var` initializer (a unique same-type method or
+/// explicit static-method import with matching non-varargs arity); qualified
+/// callees such as `Util.makeItems` resolve through the qualified initializer
+/// rules (static type receivers, `this`/`super`-rooted callees, constructed
+/// types, and bound-receiver chains). The component resolves in the factory's
+/// own file and enclosing scope. Unknown or arity-mismatched factories and
+/// primitive or multi-dimensional return arrays fail closed.
 #[allow(clippy::too_many_arguments)]
 fn java_factory_array_component_type_path(
     source_symbol: &IndexedSymbol,
-    function_name: &str,
-    function_arity: usize,
+    initializer_reference: &str,
+    initializer_arity: usize,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(factory_path) = resolve_java_initializer_function_path(
-        source_symbol,
-        function_name,
-        function_arity,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    let factory_path = if initializer_reference.contains('.') {
+        resolve_java_qualified_initializer_function_path(
+            source_symbol,
+            initializer_reference,
+            initializer_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        resolve_java_initializer_function_path(
+            source_symbol,
+            initializer_reference,
+            initializer_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(factory_path) = factory_path else {
         return Ok(None);
     };
     let Some(factory) = raw_symbols
