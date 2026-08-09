@@ -23400,6 +23400,173 @@ fn kotlin_generic_receiver_member_calls_fail_closed_for_unsupported_references()
 }
 
 #[test]
+fn traces_kotlin_nullable_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val member: Entry? = Entry()\n    fun inner(): Entry? = Entry()\n}\nfun makeBox(): Box<String>? = Box<String>()\nfun makeEntry(): Entry? = Entry()\n\nfun caller(box: Box?): Int {\n    return box.entry.helper(1) + box.helper(2)\n}\n\nfun genericCaller(box: Box<String>?): Int {\n    return box.entry.helper(1) + box.helper(2)\n}\n\nfun chain(group: Group): Int {\n    return group.member.helper(1) + group.inner().helper(2)\n}\n\nfun local(): Int {\n    val other = makeBox()\n    return other.helper(1)\n}\n\nfun localEntry(): Int {\n    val e = makeEntry()\n    return e.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Nullable declared spellings such as `Box?`, `Box<String>?`, and
+    // `Entry?` normalize to the underlying raw base type for bound parameters,
+    // property hops, method-return hops, factory returns, and factory-inferred
+    // local bindings, so the trailing member dispatches on the same raw class
+    // declaration as the non-nullable spelling.
+    for target in ["com::example::Entry::helper", "com::example::Box::helper"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        let expected = if target == "com::example::Entry::helper" {
+            vec![
+                "com::example::caller",
+                "com::example::chain",
+                "com::example::genericCaller",
+                "com::example::localEntry",
+            ]
+        } else {
+            vec![
+                "com::example::caller",
+                "com::example::genericCaller",
+                "com::example::local",
+            ]
+        };
+        assert_eq!(callers, expected, "{target} live");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["com::example::Entry::helper", "com::example::Box::helper"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        let expected = if target == "com::example::Entry::helper" {
+            vec![
+                "com::example::caller",
+                "com::example::chain",
+                "com::example::genericCaller",
+                "com::example::localEntry",
+            ]
+        } else {
+            vec![
+                "com::example::caller",
+                "com::example::genericCaller",
+                "com::example::local",
+            ]
+        };
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_kotlin_nullable_this_and_super_rooted_member_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry? = Entry()\n    fun baseHelper(value: Int): Int = value\n}\nclass Holder : Base() {\n    val member: Entry? = Entry()\n    fun run(): Int {\n        return this.member.helper(1) + super.entry.helper(2) + super.baseHelper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Nullable `this`-rooted property hops and nullable `super`-rooted property
+    // hops normalize to the underlying declared types, and direct
+    // `super.`-rooted calls dispatch on the direct superclass as usual.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    let base_helper = "com::example::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_nullable_receiver_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\n\nfun caller(box: Box?): Int {\n    return box.entry.helper(1)\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_nullable_receiver_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\nfun makeUnknown(): UnknownBox? = TODO()\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun nullableArray(items: Array<Entry>?): Int {\n    return items[0].helper(1)\n}\n\nfun valueType(count: Int?): Int {\n    return count.unknown(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown hop, a missing final member, an unresolvable nullable factory
+    // return type, a nullable generic array receiver, and a nullable value-type
+    // receiver all fail closed; only the resolvable nullable receiver in
+    // `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
