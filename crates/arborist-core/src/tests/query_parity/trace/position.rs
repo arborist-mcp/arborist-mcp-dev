@@ -25046,6 +25046,123 @@ fn kotlin_nullable_class_receiver_hierarchy_member_calls_fail_closed_for_unsuppo
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_imported_generic_class_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Box.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.IBox\n\nclass Impl : IBox<String>\n\nfun caller(impl: Impl): Int {\n    return impl.render(1) + impl.inner().helper(2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface IBox<T> {\n    fun render(value: Int): Int = value\n    fun inner(): Entry = Entry()\n}\n",
+    )
+    .unwrap();
+
+    // A generic implemented-interface spelling such as `IBox<String>`
+    // normalizes to its raw interface and resolves through the caller file's
+    // explicit import, so a class-typed receiver dispatches the interface
+    // member and continues method-call hops on the interface's declared
+    // return type across packages.
+    let render_path = "org::util::IBox::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    let entry_helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, entry_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, entry_helper_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_generic_class_receiver_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Box.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.IBox\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\ninterface IBox<T> {\n    fun render(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.IBox\n\nclass Impl : IBox<String>\n\nfun caller(impl: Impl): Int {\n    return impl.render(1)\n}\n";
+    let target = "org::util::IBox::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_generic_class_receiver_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\ninterface Resolvable {\n    fun helper(value: Int): Int = value\n}\nclass GenericMissing : MissingBox<String>\nclass Control : Resolvable\n\nfun genericMissingCaller(impl: GenericMissing): Int {\n    return impl.helper(1)\n}\n\nfun control(control: Control): Int {\n    return control.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A generic implemented-interface spelling whose raw base type is neither
+    // declared nor imported fails closed; only the uniquely resolvable
+    // interface member in `control` traces.
+    let resolvable_path = "com::example::Resolvable::helper";
+    let live = trace_symbol_graph(&dir, resolvable_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, resolvable_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
