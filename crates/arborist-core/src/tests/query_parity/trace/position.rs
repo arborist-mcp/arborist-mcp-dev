@@ -20820,6 +20820,195 @@ fn kotlin_class_receiver_interface_member_calls_fail_closed_for_unsupported_refe
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
+#[test]
+fn traces_kotlin_class_receiver_superclass_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun baseHelper(value: Int): Int = value\n}\nclass Derived : Base() {\n    fun own(value: Int): Int = value\n}\n\nfun caller(derived: Derived): Int {\n    return derived.baseHelper(1)\n}\n\nfun ownCaller(derived: Derived): Int {\n    return derived.own(1)\n}\n",
+    )
+    .unwrap();
+
+    // A class-typed receiver dispatches a member declared on its direct
+    // superclass when the class itself does not declare it, while a directly
+    // declared class member keeps its direct target.
+    let base_helper = "com::example::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, base_helper);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    let own_path = "com::example::Derived::own";
+    let live = trace_symbol_graph(&dir, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::ownCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::ownCaller");
+}
+
+#[test]
+fn traces_kotlin_class_receiver_deep_superclass_member_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Root {\n    fun rootHelper(value: Int): Int = value\n    fun helper(value: Int): Int = value\n}\nopen class Mid : Root() {\n    fun midHelper(value: Int): Int = value\n}\nclass Leaf : Mid() {\n    fun helper(value: Int): Int = value\n}\n\nfun deepCaller(leaf: Leaf): Int {\n    return leaf.rootHelper(1) + leaf.midHelper(1)\n}\n\nfun shadowCaller(leaf: Leaf): Int {\n    return leaf.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // The superclass chain resolves members through any number of intermediate
+    // classes, and a nearer declaration shadows an inherited one.
+    for target in [
+        "com::example::Root::rootHelper",
+        "com::example::Mid::midHelper",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::deepCaller");
+    }
+
+    let leaf_helper = "com::example::Leaf::helper";
+    let live = trace_symbol_graph(&dir, leaf_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::shadowCaller");
+
+    // The shadowed Root::helper is never reached through Leaf receivers.
+    let root_helper = "com::example::Root::helper";
+    let live = trace_symbol_graph(&dir, root_helper, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "shadowed superclass member must not trace"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Root::rootHelper",
+        "com::example::Mid::midHelper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::deepCaller");
+    }
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, leaf_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::shadowCaller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, root_helper, TraceDirection::Callers).unwrap();
+    assert!(
+        persisted.callers.is_empty(),
+        "shadowed superclass member must not trace"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_imported_class_receiver_superclass_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\n\nclass Derived : Base()\n\nfun caller(derived: Derived): Int {\n    return derived.baseHelper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nopen class Base {\n    fun baseHelper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // The class's direct superclass resolves in the class's own file and
+    // package scope, so an imported base class in another package dispatches
+    // the inherited member once the derived class is pinned by a parameter
+    // type.
+    let base_helper = "org::util::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_class_receiver_superclass_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nopen class Base {\n    fun baseHelper(value: Int): Int = value\n}\nclass Derived : Base()\n\nfun caller(derived: Derived): Int {\n    return derived.baseHelper(1)\n}\n";
+    let target = "com::example::Base::baseHelper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_class_receiver_superclass_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun baseHelper(value: Int): Int = value\n}\nclass Derived : Base()\nopen class CycleA : CycleB()\nopen class CycleB : CycleA()\nclass UnknownSuper : Missing()\n\nfun unknownCaller(derived: Derived): Int {\n    return derived.missing(1)\n}\n\nfun cycleCaller(cycle: CycleA): Int {\n    return cycle.helper(1)\n}\n\nfun unknownSuperCaller(unknown: UnknownSuper): Int {\n    return unknown.helper(1)\n}\n\nfun control(derived: Derived): Int {\n    return derived.baseHelper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown member, a cyclic superclass chain, and an unresolvable
+    // superclass all fail closed; only the uniquely resolvable inherited
+    // member in `control` traces.
+    let base_helper = "com::example::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
 
 #[test]
 fn does_not_trace_kotlin_typealias_receiver_calls_with_generic_or_cyclic_targets() {

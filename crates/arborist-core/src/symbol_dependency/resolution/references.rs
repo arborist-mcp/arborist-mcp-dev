@@ -12632,6 +12632,77 @@ fn kotlin_class_hierarchy_defines_method_from_type_path(
     }
 }
 
+/// Resolves a member function declared on a parent class in the direct
+/// superclass chain of `initial_type_path` with an exact arity match. The
+/// receiver class itself is excluded because direct members are resolved
+/// before this fallback. A uniquely declared member returns its symbol id; an
+/// ambiguous class, a cyclic or unresolvable superclass chain, or a competing
+/// overload set fails closed as `None`.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_superclass_chain_member(
+    initial_type_path: &str,
+    method_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut visited_type_paths = BTreeSet::new();
+    let mut current_type_path = initial_type_path.to_string();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Kotlin superclass chain member")?;
+        }
+        if !visited_type_paths.insert(current_type_path.clone()) {
+            return Ok(None);
+        }
+        let class_candidates = semantic_path_index
+            .get(&current_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "class_declaration" && !kotlin_type_is_interface(candidate)
+            })
+            .collect::<Vec<_>>();
+        let [class_index] = class_candidates.as_slice() else {
+            return Ok(None);
+        };
+        let Some(superclass_path) = kotlin_superclass_path_for_class(
+            &raw_symbols[*class_index],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let target_path = format!("{superclass_path}::{method_name}");
+        let candidates = semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.scope_path.as_deref() == Some(superclass_path.as_str())
+                    && candidate.parameters.len() == call_arity
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [candidate_index] => return Ok(Some(raw_symbols[*candidate_index].symbol_id.clone())),
+            [] => {}
+            _ => return Ok(None),
+        }
+        current_type_path = superclass_path;
+    }
+}
+
 /// Returns the direct implemented interface type spellings of a Kotlin class
 /// declaration, mirroring `kotlin_class_delegation_spellings`; non-class
 /// declarations and malformed specifiers fail closed as `None`.
@@ -12806,6 +12877,22 @@ fn resolve_kotlin_member_or_extension(
         }
         KotlinInheritedMemberResolution::Blocked => return Ok(None),
         KotlinInheritedMemberResolution::NoMember => {}
+    }
+    // A class-typed receiver dispatches a member declared on a parent class
+    // in its direct superclass chain when neither the class nor any nearer
+    // superclass declares it; inherited class members shadow extensions like
+    // direct members, and ambiguous or unresolvable chains fail closed.
+    if let Some(target) = resolve_kotlin_superclass_chain_member(
+        type_path,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some(target));
     }
     // A class-typed receiver dispatches a member declared on an implemented
     // interface when its class hierarchy does not declare the method; exactly
