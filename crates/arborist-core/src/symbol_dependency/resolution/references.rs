@@ -12464,6 +12464,293 @@ fn resolve_kotlin_inherited_member_index(
     )
 }
 
+/// Extracts the delegation specifier spellings of a Kotlin class declaration:
+/// the class supertype (a `constructor_invocation` specifier) and the direct
+/// implemented interface spellings (every other specifier). Classes without a
+/// supertype clause return `None` for the supertype, and classes without
+/// implemented interfaces return an empty interface list; non-class
+/// declarations and any specifier without a usable dotted spelling fail closed
+/// as `None`.
+fn kotlin_class_delegation_spellings(
+    class_symbol: &IndexedSymbol,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(Option<String>, Vec<String>)>> {
+    if class_symbol.node_kind != "class_declaration" || kotlin_type_is_interface(class_symbol) {
+        return Ok(None);
+    }
+    let path = Path::new(&class_symbol.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Kotlin class delegation specifiers")?;
+        }
+        if node.kind() == "class_declaration"
+            && (node.start_byte(), node.end_byte()) == class_symbol.byte_range
+        {
+            let mut cursor = node.walk();
+            let Some(specifiers) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "delegation_specifiers")
+            else {
+                return Ok(Some((None, Vec::new())));
+            };
+            let mut specifier_cursor = specifiers.walk();
+            let mut supertype = None;
+            let mut interfaces = Vec::new();
+            for specifier in specifiers.named_children(&mut specifier_cursor) {
+                let specifier = match specifier.kind() {
+                    "delegation_specifier" => {
+                        let mut unwrap_cursor = specifier.walk();
+                        specifier.named_children(&mut unwrap_cursor).next()
+                    }
+                    _ => Some(specifier),
+                };
+                let Some(specifier) = specifier else {
+                    return Ok(None);
+                };
+                if specifier.kind() == "constructor_invocation" {
+                    if supertype.is_some() {
+                        return Ok(None);
+                    }
+                    supertype = kotlin_delegation_specifier_type_name(specifier, &source)?;
+                } else {
+                    let Some(spelling) = kotlin_delegation_specifier_type_name(specifier, &source)?
+                    else {
+                        return Ok(None);
+                    };
+                    interfaces.push(spelling);
+                }
+            }
+            return Ok(Some((supertype, interfaces)));
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    Ok(None)
+}
+
+/// Resolves the direct superclass type path of a Kotlin class declaration.
+/// The superclass is the class's `constructor_invocation` delegation
+/// specifier; a class without one (including classes whose only delegation
+/// specifiers are interfaces) or whose supertype spelling does not resolve
+/// fails closed as `None` so a hierarchy walk can stop without guessing.
+fn kotlin_superclass_path_for_class(
+    class_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((superclass_reference, _)) =
+        kotlin_class_delegation_spellings(class_symbol, file_overrides, deadline)?
+    else {
+        return Ok(None);
+    };
+    let Some(superclass_reference) = superclass_reference else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        class_symbol,
+        &superclass_reference,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Returns whether `method_name` is declared anywhere in the class hierarchy
+/// rooted at `initial_type_path` (the class itself and each resolvable direct
+/// superclass). An ambiguous class, a cyclic hierarchy, or an unresolvable
+/// superclass chain fails closed as `None`; a chain that terminates without
+/// declaring the method returns `Some(false)`.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_class_hierarchy_defines_method_from_type_path(
+    initial_type_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<bool>> {
+    let mut visited_type_paths = BTreeSet::new();
+    let mut current_type_path = initial_type_path.to_string();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("checking Kotlin superclass methods")?;
+        }
+        if !visited_type_paths.insert(current_type_path.clone()) {
+            return Ok(None);
+        }
+        let target_path = format!("{current_type_path}::{method_name}");
+        if semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .any(|index| {
+                let candidate = &raw_symbols[index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.scope_path.as_deref() == Some(current_type_path.as_str())
+            })
+        {
+            return Ok(Some(true));
+        }
+        let class_candidates = semantic_path_index
+            .get(&current_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "class_declaration" && !kotlin_type_is_interface(candidate)
+            })
+            .collect::<Vec<_>>();
+        let [class_index] = class_candidates.as_slice() else {
+            return Ok(None);
+        };
+        let Some(superclass_path) = kotlin_superclass_path_for_class(
+            &raw_symbols[*class_index],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(Some(false));
+        };
+        current_type_path = superclass_path;
+    }
+}
+
+/// Returns the direct implemented interface type spellings of a Kotlin class
+/// declaration, mirroring `kotlin_class_delegation_spellings`; non-class
+/// declarations and malformed specifiers fail closed as `None`.
+fn kotlin_direct_interface_spellings_for_class(
+    class_symbol: &IndexedSymbol,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<String>>> {
+    let Some((_, interface_spellings)) =
+        kotlin_class_delegation_spellings(class_symbol, file_overrides, deadline)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(interface_spellings))
+}
+
+/// Dispatches an interface member for a class-typed instance receiver whose
+/// class and direct superclass chain do not declare the method. The receiver's
+/// direct interfaces resolve in its own file and enclosing scope; exactly one
+/// direct-interface chain must provide a uniquely arity-matched member and
+/// every other chain must prove it has no declaration. Any same-name method
+/// declared in the receiver class hierarchy, competing or unresolved interface
+/// chains, and ambiguous chains fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_class_receiver_interface_member(
+    receiver_class_path: &str,
+    method_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let class_candidates = semantic_path_index
+        .get(receiver_class_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "class_declaration" && !kotlin_type_is_interface(candidate)
+        })
+        .collect::<Vec<_>>();
+    let [class_index] = class_candidates.as_slice() else {
+        return Ok(None);
+    };
+    let receiver_class = &raw_symbols[*class_index];
+    if kotlin_class_hierarchy_defines_method_from_type_path(
+        receiver_class_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? != Some(false)
+    {
+        return Ok(None);
+    }
+    let Some(interface_spellings) =
+        kotlin_direct_interface_spellings_for_class(receiver_class, file_overrides, deadline)?
+    else {
+        return Ok(None);
+    };
+    let mut resolved_index = None;
+    for interface_spelling in interface_spellings {
+        let Some(interface_path) = resolve_kotlin_receiver_type_path(
+            receiver_class,
+            &interface_spelling,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let interface_is_unique = semantic_path_index
+            .get(&interface_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "class_declaration" && kotlin_type_is_interface(candidate)
+            })
+            .count()
+            == 1;
+        if !interface_is_unique {
+            return Ok(None);
+        }
+        match resolve_kotlin_inherited_member_index(
+            &interface_path,
+            method_name,
+            "function_declaration",
+            Some(call_arity),
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            KotlinInheritedMemberResolution::Resolved(index) => {
+                if resolved_index
+                    .as_ref()
+                    .is_some_and(|resolved| *resolved != index)
+                {
+                    return Ok(None);
+                }
+                resolved_index.get_or_insert(index);
+            }
+            KotlinInheritedMemberResolution::Blocked => return Ok(None),
+            KotlinInheritedMemberResolution::NoMember => {}
+        }
+    }
+    Ok(resolved_index.map(|index| raw_symbols[index].symbol_id.clone()))
+}
+
 /// Dispatches `method` on `type_path`: a unique member function shadows extensions,
 /// an ambiguous member overload set fails closed instead of guessing an extension
 /// target, and otherwise an unambiguous top-level extension resolves the call.
@@ -12519,6 +12806,22 @@ fn resolve_kotlin_member_or_extension(
         }
         KotlinInheritedMemberResolution::Blocked => return Ok(None),
         KotlinInheritedMemberResolution::NoMember => {}
+    }
+    // A class-typed receiver dispatches a member declared on an implemented
+    // interface when its class hierarchy does not declare the method; exactly
+    // one direct-interface chain must provide a uniquely arity-matched member,
+    // and inherited interface members shadow extensions like direct members.
+    if let Some(target) = resolve_kotlin_class_receiver_interface_member(
+        type_path,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some(target));
     }
     resolve_kotlin_extension_call(
         source_symbol,
