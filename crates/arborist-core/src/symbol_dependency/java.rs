@@ -31,6 +31,7 @@ pub(in crate::symbol_dependency) struct JavaReceiverTypeBindings {
     ambiguous_names: BTreeSet<String>,
     initializer_calls_by_name: BTreeMap<String, (String, usize)>,
     field_initializers_by_name: BTreeMap<String, String>,
+    element_access_initializers_by_name: BTreeMap<String, String>,
 }
 
 impl JavaReceiverTypeBindings {
@@ -40,6 +41,7 @@ impl JavaReceiverTypeBindings {
     pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
         self.types_by_name.contains_key(name)
             || self.array_component_types.contains_key(name)
+            || self.element_access_initializers_by_name.contains_key(name)
             || self.ambiguous_names.contains(name)
     }
 
@@ -94,6 +96,20 @@ impl JavaReceiverTypeBindings {
             return None;
         }
         self.field_initializers_by_name.get(name).cloned()
+    }
+
+    /// Returns the array-typed base name for a `var` local bound from an
+    /// element-access initializer such as `var first = items[0]`, which
+    /// resolves to the base array's element component type. Ambiguous bindings
+    /// and names without an element-access initializer return `None`.
+    pub(in crate::symbol_dependency) fn element_access_base_for(
+        &self,
+        name: &str,
+    ) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.element_access_initializers_by_name.get(name).cloned()
     }
 }
 
@@ -437,6 +453,11 @@ fn collect_java_body_bindings(
                             {
                                 insert_java_initializer_field(bindings, &name, reference);
                                 String::new()
+                            } else if let Some(base_name) =
+                                java_initializer_element_access_from_declarator(declarator, source)?
+                            {
+                                insert_java_element_access_initializer(bindings, &name, base_name);
+                                String::new()
                             } else {
                                 String::new()
                             }
@@ -664,6 +685,37 @@ fn java_initializer_field_access_from_declarator(
         _ => return Ok(None),
     };
     Ok(Some(reference))
+}
+
+/// Records a `var` local whose initializer is an element access such as
+/// `var first = items[0]`, returning the array-typed base identifier so the
+/// local resolves to the base array's element component type. Qualified or
+/// parenthesized bases, multi-dimensional element access, and other
+/// initializer shapes record nothing and fail closed.
+fn java_initializer_element_access_from_declarator(
+    declarator: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    let Some(initializer) = java_parenthesized_initializer_expression(initializer) else {
+        return Ok(None);
+    };
+    if initializer.kind() != "array_access" {
+        return Ok(None);
+    }
+    let Some(array) = initializer.child_by_field_name("array") else {
+        return Ok(None);
+    };
+    if array.kind() != "identifier" {
+        return Ok(None);
+    }
+    let base_name = node_text(array, source)?.trim();
+    if base_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(base_name.to_string()))
 }
 
 /// Walks a field-access or method-invocation chain down to its root object
@@ -996,6 +1048,32 @@ fn insert_java_initializer_field(
     }
 }
 
+/// Records the element-access initializer base for a `var` local bound from
+/// an element access such as `var first = items[0]`. Repeated declarations
+/// with different bases make the name ambiguous so trace-time resolution
+/// fails closed.
+fn insert_java_element_access_initializer(
+    bindings: &mut JavaReceiverTypeBindings,
+    name: &str,
+    base_name: String,
+) {
+    if name.is_empty() || bindings.ambiguous_names.contains(name) {
+        return;
+    }
+    match bindings.element_access_initializers_by_name.get(name) {
+        Some(existing) if *existing != base_name => {
+            bindings.element_access_initializers_by_name.remove(name);
+            bindings.ambiguous_names.insert(name.to_string());
+        }
+        Some(_) => {}
+        None => {
+            bindings
+                .element_access_initializers_by_name
+                .insert(name.to_string(), base_name);
+        }
+    }
+}
+
 fn insert_java_receiver_binding(
     bindings: &mut JavaReceiverTypeBindings,
     name: String,
@@ -1324,6 +1402,112 @@ class Caller {
         assert_eq!(run_bindings.array_component_for("counts"), None);
         assert!(!run_bindings.contains("counts"));
         assert_eq!(run_bindings.type_for("counts"), None);
+    }
+
+    #[test]
+    fn var_element_access_initializers_bind_array_bases() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    private Helper[] fieldItems;
+    int run(Helper[] items, int[] counts, Helper[][] matrix) {
+        Helper[] local = new Helper[3];
+        var first = items[0];
+        var second = local[1];
+        var third = fieldItems[0];
+        var unbound = counts[0];
+        var matrixAccess = matrix[0][0];
+        var qualified = this.fieldItems[0];
+        return first.helper(1) + second.helper(2) + third.helper(3);
+    }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.element_access_base_for("first") == Some("items".to_string()))
+            .unwrap();
+        // Plain-identifier element-access initializers record the base name,
+        // which resolves to the base array's element component type.
+        for (name, base) in [
+            ("first", "items"),
+            ("second", "local"),
+            ("third", "fieldItems"),
+        ] {
+            assert_eq!(
+                run_bindings.element_access_base_for(name),
+                Some(base.to_string()),
+                "{name} must record its element-access base"
+            );
+            assert!(run_bindings.contains(name), "{name} must be bound");
+            assert_eq!(
+                run_bindings.type_for(name),
+                None,
+                "{name} has no plain type"
+            );
+        }
+        // A primitive-array base records the spelling but has no resolvable
+        // component, so resolution fails closed at trace time.
+        assert_eq!(
+            run_bindings.element_access_base_for("unbound"),
+            Some("counts".to_string())
+        );
+        assert!(run_bindings.contains("unbound"));
+        assert_eq!(run_bindings.array_component_for("counts"), None);
+        // Multi-dimensional element access and qualified bases have no
+        // element-access initializer and stay bound as unusable types.
+        for name in ["matrixAccess", "qualified"] {
+            assert_eq!(run_bindings.element_access_base_for(name), None);
+            assert!(run_bindings.contains(name), "{name} must fail closed");
+            assert_eq!(run_bindings.type_for(name), None);
+        }
+    }
+
+    #[test]
+    fn var_element_access_initializers_reject_conflicting_bases() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Other { int helper(int value) { return value; } }
+class Caller {
+    int run() {
+        Helper[] first = new Helper[1];
+        Other[] second = new Other[1];
+        var shadowed = first[0];
+        var shadowed = second[0];
+        var plain = first[0];
+        return shadowed.helper(1) + plain.helper(2);
+    }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.element_access_base_for("plain") == Some("first".to_string()))
+            .unwrap();
+        assert_eq!(
+            run_bindings.element_access_base_for("plain"),
+            Some("first".to_string())
+        );
+        // Conflicting element-access initializers make the name ambiguous.
+        assert!(run_bindings.contains("shadowed"));
+        assert_eq!(run_bindings.element_access_base_for("shadowed"), None);
+        assert_eq!(run_bindings.type_for("shadowed"), None);
     }
 
     #[test]

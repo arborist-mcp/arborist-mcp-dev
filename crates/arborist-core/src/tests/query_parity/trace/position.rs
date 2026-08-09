@@ -25948,14 +25948,12 @@ class Caller {
     int[] makeCounts() { return new int[2]; }
     Helper[][] makeMatrix() { return new Helper[2][2]; }
     int run(Helper[] items, int[] counts, Helper[][] matrix) {
-        var first = items[0];
         return items.helper(1)
             + counts[0].helper(2)
             + matrix[0][0].helper(3)
-            + first.helper(4)
-            + makeCounts()[0].helper(5)
-            + makeMatrix()[0].helper(6)
-            + makeItems()[0][0].helper(7);
+            + makeCounts()[0].helper(4)
+            + makeMatrix()[0].helper(5)
+            + makeItems()[0][0].helper(6);
     }
     int control() {
         Helper[] items = new Helper[2];
@@ -25967,11 +25965,10 @@ class Caller {
     .unwrap();
 
     // A direct member call on an array, a primitive-component array, a
-    // multi-dimensional array, a `var` bound from an element access, a
-    // primitive- or multi-dimensional-returning factory array, and
-    // multi-dimensional element access on a factory-returned array all fail
-    // closed; only the resolvable element-access receiver in `control`
-    // traces.
+    // multi-dimensional array, a primitive- or multi-dimensional-returning
+    // factory array, and multi-dimensional element access on a
+    // factory-returned array all fail closed; only the resolvable
+    // element-access receiver in `control` traces.
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -26121,6 +26118,92 @@ class Caller {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_element_access_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    int run(Helper[] items) {
+        Helper[] local = new Helper[3];
+        var first = items[0];
+        var second = local[1];
+        var third = fieldItems[0];
+        return first.helper(1)
+            + second.helper(2)
+            + third.helper(3);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access such as `var first = items[0]`
+    // dispatches on the base array's element component type for parameters,
+    // locals, and enclosing-class fields.
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    int run(Helper[] items) {
+        var first = items[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
 }

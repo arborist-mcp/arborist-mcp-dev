@@ -6494,6 +6494,26 @@ fn resolve_java_instance_receiver_call(
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
         (type_path, member_chain)
+    } else if let Some(base_name) = bindings.element_access_base_for(receiver_name) {
+        // A `var` local bound from an element access such as
+        // `var first = items[0]` resolves to the base array's element
+        // component type; an unbound or non-array base fails closed.
+        let Some(component_type) = bindings.array_component_for(&base_name) else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        let Some(component_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        (component_path, member_chain)
     } else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
