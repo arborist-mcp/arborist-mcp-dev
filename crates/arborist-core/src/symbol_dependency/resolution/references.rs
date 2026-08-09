@@ -11127,10 +11127,11 @@ fn resolve_kotlin_superclass_path(
     )
 }
 
-/// Extracts the pure dotted type spelling of a class's first delegation
-/// specifier such as `Base` in `class Caller : Base()` or `Base` in
-/// `class Caller : Base`. Constructor invocations unwrap to their `type`
-/// child; delegation (`by`) specifiers and other shapes fail closed.
+/// Extracts the pure dotted type spelling of a delegation specifier such as
+/// `Base` in `class Caller : Base()`, `Base` in `class Caller : Base`, or
+/// `Base` in `interface Derived : Base`. Constructor invocations unwrap to
+/// their `type` child, and bare `type`/`user_type` spellings pass through;
+/// delegation (`by`) specifiers and other shapes fail closed.
 fn kotlin_delegation_specifier_type_name(
     specifier: tree_sitter::Node<'_>,
     source: &str,
@@ -11152,7 +11153,7 @@ fn kotlin_delegation_specifier_type_name(
             let mut cursor = specifier.walk();
             specifier.named_children(&mut cursor).next()
         }
-        "type" => Some(specifier),
+        "type" | "user_type" => Some(specifier),
         _ => None,
     };
     let Some(type_node) = type_node else {
@@ -11810,44 +11811,68 @@ fn kotlin_method_call_hop_type_path(
     let method_path = if member_candidates.len() == 1 {
         Some(raw_symbols[member_candidates[0]].symbol_id.clone())
     } else if member_candidates.is_empty() {
-        // An extension fallback requires a unique top-level extension function
-        // for the receiver type with a declared return type, resolved in the
-        // caller's file, package, or explicit imports like any other extension;
-        // ambiguous extension sets fail closed.
-        let owner_type_name = owner_type_path
-            .rsplit("::")
-            .next()
-            .unwrap_or(owner_type_path);
-        let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
-        let imported_binding = resolve_kotlin_import_binding_for_reference(
-            &source_symbol.file_path,
+        // An interface-typed owner dispatches a method-call hop declared on a
+        // parent interface in its extends chain before falling back to
+        // extensions; inherited interface methods shadow extensions, and
+        // blocked chains fail closed instead of guessing an extension target.
+        match resolve_kotlin_interface_chain_member_index(
+            owner_type_path,
             method_name,
+            "function_declaration",
+            None,
+            raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?;
-        let extension_candidates = raw_symbols
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| {
-                candidate.node_kind == "function_declaration"
-                    && candidate.extension_receiver.as_deref() == Some(owner_type_name)
-                    && candidate.base_name == method_name
-                    && candidate.return_type.is_some()
-                    && kotlin_symbol_is_top_level(candidate, raw_symbols)
-                    && (candidate.file_path == source_symbol.file_path
-                        || package_scope
-                            .is_some_and(|scope| candidate.scope_path.as_deref() == Some(scope))
-                        || imported_binding.as_ref().is_some_and(|binding| {
-                            binding.semantic_path == candidate.semantic_path
-                        }))
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if extension_candidates.len() == 1 {
-            Some(raw_symbols[extension_candidates[0]].symbol_id.clone())
-        } else {
-            None
+        )? {
+            KotlinInterfaceChainMemberResolution::Resolved(index) => {
+                Some(raw_symbols[index].symbol_id.clone())
+            }
+            KotlinInterfaceChainMemberResolution::Blocked => None,
+            KotlinInterfaceChainMemberResolution::NoMember => {
+                // An extension fallback requires a unique top-level extension
+                // function for the receiver type with a declared return type,
+                // resolved in the caller's file, package, or explicit imports
+                // like any other extension; ambiguous extension sets fail
+                // closed.
+                let owner_type_name = owner_type_path
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(owner_type_path);
+                let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+                let imported_binding = resolve_kotlin_import_binding_for_reference(
+                    &source_symbol.file_path,
+                    method_name,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?;
+                let extension_candidates = raw_symbols
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        candidate.node_kind == "function_declaration"
+                            && candidate.extension_receiver.as_deref() == Some(owner_type_name)
+                            && candidate.base_name == method_name
+                            && candidate.return_type.is_some()
+                            && kotlin_symbol_is_top_level(candidate, raw_symbols)
+                            && (candidate.file_path == source_symbol.file_path
+                                || package_scope.is_some_and(|scope| {
+                                    candidate.scope_path.as_deref() == Some(scope)
+                                })
+                                || imported_binding.as_ref().is_some_and(|binding| {
+                                    binding.semantic_path == candidate.semantic_path
+                                }))
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                if extension_candidates.len() == 1 {
+                    Some(raw_symbols[extension_candidates[0]].symbol_id.clone())
+                } else {
+                    None
+                }
+            }
         }
     } else {
         None
@@ -12041,6 +12066,40 @@ fn kotlin_property_type_path(
                 && candidate.scope_path.as_deref() == Some(owner_type_path)
         })
         .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        // An interface-typed owner dispatches a property hop declared on a
+        // parent interface in its extends chain; blocked chains fail closed.
+        match resolve_kotlin_interface_chain_member_index(
+            owner_type_path,
+            property_name,
+            "property_declaration",
+            None,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            KotlinInterfaceChainMemberResolution::Resolved(index) => {
+                let Some(return_type) = raw_symbols[index].return_type.as_deref() else {
+                    return Ok(None);
+                };
+                let Some(type_name) = kotlin_dotted_type_name(return_type) else {
+                    return Ok(None);
+                };
+                return resolve_kotlin_initializer_type_path(
+                    source_symbol,
+                    &type_name,
+                    raw_symbols,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            }
+            KotlinInterfaceChainMemberResolution::Blocked
+            | KotlinInterfaceChainMemberResolution::NoMember => return Ok(None),
+        }
+    }
     if candidates.len() != 1 {
         return Ok(None);
     }
@@ -12162,6 +12221,249 @@ fn resolve_kotlin_property_initializer_function_path(
     Ok((candidates.len() == 1).then(|| candidates[0].clone()))
 }
 
+/// Returns whether a Kotlin type declaration is an interface by inspecting its
+/// stored signature keyword (`interface`, including `fun interface`). Classes,
+/// objects, type aliases, and other declarations return `false`.
+fn kotlin_type_is_interface(symbol: &IndexedSymbol) -> bool {
+    if symbol.node_kind != "class_declaration" {
+        return false;
+    }
+    let Some(signature) = symbol.signature.as_deref() else {
+        return false;
+    };
+    let tokens = signature.split_whitespace().collect::<Vec<_>>();
+    let Some(keyword_position) = tokens
+        .iter()
+        .position(|token| *token == "class" || *token == "interface")
+    else {
+        return false;
+    };
+    tokens[keyword_position] == "interface"
+}
+
+/// Returns the directly extended super-interface type spellings of a Kotlin
+/// interface declaration by locating its `delegation_specifiers` clause and
+/// extracting each specifier's pure dotted type spelling. Interfaces without a
+/// supertype clause return `Some(empty)`; non-interface declarations and any
+/// specifier without a usable dotted spelling (delegation `by`, annotations,
+/// or otherwise complex shapes) fail closed as `None`.
+fn kotlin_direct_interface_parent_spellings(
+    source_interface: &IndexedSymbol,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<String>>> {
+    if !kotlin_type_is_interface(source_interface) {
+        return Ok(None);
+    }
+    let path = Path::new(&source_interface.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Kotlin parent interface")?;
+        }
+        if node.kind() == "class_declaration"
+            && (node.start_byte(), node.end_byte()) == source_interface.byte_range
+        {
+            let mut cursor = node.walk();
+            let Some(specifiers) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "delegation_specifiers")
+            else {
+                return Ok(Some(Vec::new()));
+            };
+            let mut specifier_cursor = specifiers.walk();
+            let mut spellings = Vec::new();
+            for specifier in specifiers.named_children(&mut specifier_cursor) {
+                let Some(spelling) = kotlin_delegation_specifier_type_name(specifier, &source)?
+                else {
+                    return Ok(None);
+                };
+                spellings.push(spelling);
+            }
+            return Ok(Some(spellings));
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    Ok(None)
+}
+
+#[derive(Debug)]
+enum KotlinInterfaceChainMemberResolution {
+    Resolved(usize),
+    NoMember,
+    Blocked,
+}
+
+/// Walks an interface's direct super-interface branches recursively to resolve
+/// `member_name` of the given node kind with an optional exact arity match.
+/// Exactly one branch must provide a uniquely matching declaration; the same
+/// declaration reached identically through multiple branches still resolves
+/// once. Competing, ambiguous, cyclic, and unresolvable branches fail closed as
+/// `Blocked`.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_interface_chain_member(
+    interface_path: &str,
+    member_name: &str,
+    member_kind: &str,
+    call_arity: Option<usize>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_interface_paths: &mut BTreeSet<String>,
+) -> Result<KotlinInterfaceChainMemberResolution> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving Kotlin interface chain member")?;
+    }
+    if !visited_interface_paths.insert(interface_path.to_string()) {
+        return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+    }
+    let target_path = format!("{interface_path}::{member_name}");
+    let declared_candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == member_kind
+                && candidate.scope_path.as_deref() == Some(interface_path)
+                && call_arity.is_none_or(|arity| candidate.parameters.len() == arity)
+        })
+        .collect::<Vec<_>>();
+    if !declared_candidates.is_empty() {
+        let resolution = match declared_candidates.as_slice() {
+            [candidate_index] => KotlinInterfaceChainMemberResolution::Resolved(*candidate_index),
+            _ => KotlinInterfaceChainMemberResolution::Blocked,
+        };
+        visited_interface_paths.remove(interface_path);
+        return Ok(resolution);
+    }
+    let interface_candidates = semantic_path_index
+        .get(interface_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "class_declaration" && kotlin_type_is_interface(candidate)
+        })
+        .collect::<Vec<_>>();
+    let [interface_index] = interface_candidates.as_slice() else {
+        visited_interface_paths.remove(interface_path);
+        return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+    };
+    let source_interface = &raw_symbols[*interface_index];
+    let Some(parent_spellings) =
+        kotlin_direct_interface_parent_spellings(source_interface, file_overrides, deadline)?
+    else {
+        visited_interface_paths.remove(interface_path);
+        return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+    };
+    let mut resolved_index = None;
+    for parent_spelling in parent_spellings {
+        let Some(parent_interface_path) = resolve_kotlin_receiver_type_path(
+            source_interface,
+            &parent_spelling,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            visited_interface_paths.remove(interface_path);
+            return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+        };
+        match resolve_kotlin_interface_chain_member(
+            &parent_interface_path,
+            member_name,
+            member_kind,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+            visited_interface_paths,
+        )? {
+            KotlinInterfaceChainMemberResolution::Resolved(index) => {
+                if resolved_index
+                    .as_ref()
+                    .is_some_and(|resolved| *resolved != index)
+                {
+                    visited_interface_paths.remove(interface_path);
+                    return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+                }
+                resolved_index.get_or_insert(index);
+            }
+            KotlinInterfaceChainMemberResolution::Blocked => {
+                visited_interface_paths.remove(interface_path);
+                return Ok(KotlinInterfaceChainMemberResolution::Blocked);
+            }
+            KotlinInterfaceChainMemberResolution::NoMember => {}
+        }
+    }
+    visited_interface_paths.remove(interface_path);
+    Ok(resolved_index
+        .map(KotlinInterfaceChainMemberResolution::Resolved)
+        .unwrap_or(KotlinInterfaceChainMemberResolution::NoMember))
+}
+
+/// Resolves a member declared directly on `receiver_type_path` or on a parent
+/// interface in its extends chain, when the receiver type is a uniquely
+/// declared interface. Non-interface receiver types resolve as `NoMember` so
+/// callers can fall back to extension resolution; blocked chains (ambiguous or
+/// unresolvable branches) resolve as `Blocked` and must fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_interface_chain_member_index(
+    receiver_type_path: &str,
+    member_name: &str,
+    member_kind: &str,
+    call_arity: Option<usize>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<KotlinInterfaceChainMemberResolution> {
+    let receiver_is_interface = semantic_path_index
+        .get(receiver_type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "class_declaration" && kotlin_type_is_interface(candidate)
+        })
+        .count()
+        == 1;
+    if !receiver_is_interface {
+        return Ok(KotlinInterfaceChainMemberResolution::NoMember);
+    }
+    let mut visited_interface_paths = BTreeSet::new();
+    resolve_kotlin_interface_chain_member(
+        receiver_type_path,
+        member_name,
+        member_kind,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+        &mut visited_interface_paths,
+    )
+}
+
 /// Dispatches `method` on `type_path`: a unique member function shadows extensions,
 /// an ambiguous member overload set fails closed instead of guessing an extension
 /// target, and otherwise an unambiguous top-level extension resolves the call.
@@ -12196,6 +12498,27 @@ fn resolve_kotlin_member_or_extension(
     }
     if !member_candidates.is_empty() {
         return Ok(None);
+    }
+    // An interface-typed receiver dispatches a member declared on a parent
+    // interface in its extends chain before falling back to extensions;
+    // inherited interface members shadow extensions like direct members, and
+    // blocked chains fail closed instead of guessing an extension target.
+    match resolve_kotlin_interface_chain_member_index(
+        type_path,
+        method,
+        "function_declaration",
+        Some(call_arity),
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        KotlinInterfaceChainMemberResolution::Resolved(index) => {
+            return Ok(Some(raw_symbols[index].symbol_id.clone()));
+        }
+        KotlinInterfaceChainMemberResolution::Blocked => return Ok(None),
+        KotlinInterfaceChainMemberResolution::NoMember => {}
     }
     resolve_kotlin_extension_call(
         source_symbol,
