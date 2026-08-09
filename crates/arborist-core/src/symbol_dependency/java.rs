@@ -688,10 +688,12 @@ fn java_initializer_field_access_from_declarator(
 }
 
 /// Records a `var` local whose initializer is an element access such as
-/// `var first = items[0]`, returning the array-typed base identifier so the
-/// local resolves to the base array's element component type. Qualified or
-/// parenthesized bases, multi-dimensional element access, and other
-/// initializer shapes record nothing and fail closed.
+/// `var first = items[0]`, returning the array-typed base spelling so the
+/// local resolves to the base array's element component type. Plain-identifier
+/// bases such as `items`, `local`, or a bare enclosing-class field name, and
+/// field-access bases such as `this.fieldItems` or `group.holder.fieldItems`
+/// are recorded; method-call bases, multi-dimensional element access, and
+/// other initializer shapes record nothing and fail closed.
 fn java_initializer_element_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
@@ -708,7 +710,7 @@ fn java_initializer_element_access_from_declarator(
     let Some(array) = initializer.child_by_field_name("array") else {
         return Ok(None);
     };
-    if array.kind() != "identifier" {
+    if !matches!(array.kind(), "identifier" | "field_access") {
         return Ok(None);
     }
     let base_name = node_text(array, source)?.trim();
@@ -1409,9 +1411,10 @@ class Caller {
         let file = write_test_file(
             "package com.example;
 class Helper { int helper(int value) { return value; } }
+class Group { Helper[] fieldItems; }
 class Caller {
     private Helper[] fieldItems;
-    int run(Helper[] items, int[] counts, Helper[][] matrix) {
+    int run(Helper[] items, int[] counts, Helper[][] matrix, Group holder) {
         Helper[] local = new Helper[3];
         var first = items[0];
         var second = local[1];
@@ -1419,6 +1422,7 @@ class Caller {
         var unbound = counts[0];
         var matrixAccess = matrix[0][0];
         var qualified = this.fieldItems[0];
+        var fifth = holder.fieldItems[0];
         return first.helper(1) + second.helper(2) + third.helper(3);
     }
 }
@@ -1462,13 +1466,25 @@ class Caller {
         );
         assert!(run_bindings.contains("unbound"));
         assert_eq!(run_bindings.array_component_for("counts"), None);
-        // Multi-dimensional element access and qualified bases have no
-        // element-access initializer and stay bound as unusable types.
-        for name in ["matrixAccess", "qualified"] {
-            assert_eq!(run_bindings.element_access_base_for(name), None);
-            assert!(run_bindings.contains(name), "{name} must fail closed");
+        // `this`-rooted and bound-receiver field-access bases record the full
+        // base spelling so trace-time resolution can walk the field chain.
+        for (name, base) in [
+            ("qualified", "this.fieldItems"),
+            ("fifth", "holder.fieldItems"),
+        ] {
+            assert_eq!(
+                run_bindings.element_access_base_for(name),
+                Some(base.to_string()),
+                "{name} must record its qualified element-access base"
+            );
+            assert!(run_bindings.contains(name), "{name} must be bound");
             assert_eq!(run_bindings.type_for(name), None);
         }
+        // Multi-dimensional element access has no element-access initializer
+        // and stays bound as an unusable type.
+        assert_eq!(run_bindings.element_access_base_for("matrixAccess"), None);
+        assert!(run_bindings.contains("matrixAccess"));
+        assert_eq!(run_bindings.type_for("matrixAccess"), None);
     }
 
     #[test]

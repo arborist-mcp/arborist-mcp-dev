@@ -26,8 +26,9 @@ use super::super::go::{
     GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
 };
 use super::super::java::{
-    JavaImportBinding, JavaImportContext, java_array_type_component_name, java_dotted_type_name,
-    java_receiver_type_bindings_for_function, resolve_java_import_binding_for_reference,
+    JavaImportBinding, JavaImportContext, JavaReceiverTypeBindings, java_array_type_component_name,
+    java_dotted_type_name, java_receiver_type_bindings_for_function,
+    resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
     resolve_java_type_import_binding_for_name,
 };
@@ -6515,23 +6516,38 @@ fn resolve_java_instance_receiver_call(
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
         (type_path, member_chain)
-    } else if let Some(base_name) = bindings.element_access_base_for(receiver_name) {
+    } else if let Some(base_reference) = bindings.element_access_base_for(receiver_name) {
         // A `var` local bound from an element access such as
         // `var first = items[0]` resolves to the base array's element
-        // component type; an unbound or non-array base fails closed.
-        let Some(component_type) = bindings.array_component_for(&base_name) else {
-            return Ok(JavaInstanceReceiverResolution::Blocked);
+        // component type; a qualified base such as `var fourth = this.fieldItems[0]`
+        // resolves the field chain's terminal array field the same way.
+        // An unbound or non-array base fails closed.
+        let component_path = if base_reference.contains('.') {
+            java_qualified_element_access_component_type_path(
+                source_symbol,
+                &base_reference,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            let Some(component_type) = bindings.array_component_for(&base_reference) else {
+                return Ok(JavaInstanceReceiverResolution::Blocked);
+            };
+            resolve_java_receiver_type_path(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
         };
-        let Some(component_path) = resolve_java_receiver_type_path(
-            source_symbol,
-            &component_type,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            java_import_contexts_by_file,
-            deadline,
-        )?
-        else {
+        let Some(component_path) = component_path else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
         (component_path, member_chain)
@@ -6693,6 +6709,94 @@ fn java_array_field_component_type_path(
         java_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Resolves the element component type path of a qualified element-access base
+/// such as `this.fieldItems` in `var fourth = this.fieldItems[0]` or
+/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`.
+/// `this`-rooted bases start on the enclosing type path; other receivers must
+/// be bound locals, parameters, or enclosing-class fields with a usable
+/// declared type. Intermediate hops resolve through the same inherited-field
+/// rules as field chains, and the terminal hop must be a uniquely declared
+/// single-level array field whose component resolves in the field's own file
+/// and enclosing scope. Unknown, ambiguous, or non-array terminal fields,
+/// unbound or non-array receivers, method-call hops, and static type
+/// receivers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn java_qualified_element_access_component_type_path(
+    source_symbol: &IndexedSymbol,
+    base_reference: &str,
+    bindings: &JavaReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((receiver, chain)) = base_reference.split_once('.') else {
+        return Ok(None);
+    };
+    if receiver.is_empty() || chain.is_empty() {
+        return Ok(None);
+    }
+    let initial_type_path = if receiver == "this" {
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        scope_path.to_string()
+    } else {
+        let Some(type_name) = bindings.type_for(receiver) else {
+            return Ok(None);
+        };
+        let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path
+    };
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let mut current_type_path = initial_type_path;
+    for (index, hop) in hops.iter().enumerate() {
+        let is_terminal = index + 1 == hops.len();
+        let next_path = if is_terminal {
+            java_array_field_component_type_path(
+                &current_type_path,
+                hop,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            java_inherited_field_type_path(
+                &current_type_path,
+                hop,
+                false,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        let Some(next_path) = next_path else {
+            return Ok(None);
+        };
+        current_type_path = next_path;
+    }
+    Ok(Some(current_type_path))
 }
 
 /// Dispatches a member chain such as `group.member.helper(...)`,
