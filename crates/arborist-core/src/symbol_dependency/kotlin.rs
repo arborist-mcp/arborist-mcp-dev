@@ -30,6 +30,12 @@ pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
     /// array spelling such as `Array<Helper>`; an element-access receiver such
     /// as `items[0]` dispatches on the recorded component type.
     array_component_types: BTreeMap<String, String>,
+    /// Qualified element-access bases for names bound from an initializer such
+    /// as `val x = group.holder.fieldItems[0]`, whose terminal array field's
+    /// element component type is resolved at trace time because it can span
+    /// type declarations. The name stays bound (shadowing objects and types)
+    /// but has no usable type until the chain is walked.
+    element_access_bases: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
 }
 
@@ -40,6 +46,7 @@ impl KotlinReceiverTypeBindings {
     pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
         self.types_by_name.contains_key(name)
             || self.array_component_types.contains_key(name)
+            || self.element_access_bases.contains_key(name)
             || self.ambiguous_names.contains(name)
     }
 
@@ -63,6 +70,19 @@ impl KotlinReceiverTypeBindings {
             .get(name)
             .filter(|type_name| !type_name.is_empty())
             .cloned()
+    }
+
+    /// Returns the recorded qualified element-access base spelling for a name
+    /// bound from an initializer such as `val x = group.holder.fieldItems[0]`.
+    /// Ambiguous bindings and names without a qualified base return `None`.
+    pub(in crate::symbol_dependency) fn element_access_base_for(
+        &self,
+        name: &str,
+    ) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.element_access_bases.get(name).cloned()
     }
 }
 
@@ -224,9 +244,14 @@ fn kotlin_receiver_type_bindings_for_node(
         let mut cursor = class_body.walk();
         for child in class_body.named_children(&mut cursor) {
             if child.kind() == "property_declaration"
-                && let Some((name, type_name)) = kotlin_property_binding(child, source, &bindings)?
+                && let Some((name, type_name, element_access_base)) =
+                    kotlin_property_binding(child, source, &bindings)?
             {
-                insert_kotlin_receiver_binding(&mut bindings, name, type_name);
+                if let Some(base) = element_access_base {
+                    insert_kotlin_element_access_base_binding(&mut bindings, name, base);
+                } else {
+                    insert_kotlin_receiver_binding(&mut bindings, name, type_name);
+                }
             }
         }
     }
@@ -279,9 +304,14 @@ fn collect_kotlin_body_property_bindings(
         return Ok(());
     }
     if node.kind() == "property_declaration"
-        && let Some((name, type_name)) = kotlin_property_binding(node, source, bindings)?
+        && let Some((name, type_name, element_access_base)) =
+            kotlin_property_binding(node, source, bindings)?
     {
-        insert_kotlin_receiver_binding(bindings, name, type_name);
+        if let Some(base) = element_access_base {
+            insert_kotlin_element_access_base_binding(bindings, name, base);
+        } else {
+            insert_kotlin_receiver_binding(bindings, name, type_name);
+        }
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -294,7 +324,7 @@ fn kotlin_property_binding(
     property: Node<'_>,
     source: &str,
     bindings: &KotlinReceiverTypeBindings,
-) -> Result<Option<(String, String)>> {
+) -> Result<Option<(String, String, Option<String>)>> {
     let mut cursor = property.walk();
     let children = property.named_children(&mut cursor).collect::<Vec<_>>();
     let Some(variable) = children
@@ -322,7 +352,7 @@ fn kotlin_property_binding(
         .find(|child| kotlin_is_type_node_kind(child.kind()))
         && let Some(type_name) = kotlin_declared_type_name(node_text(*type_node, source)?)
     {
-        return Ok(Some((name, type_name)));
+        return Ok(Some((name, type_name, None)));
     }
     // Fall back to a constructor-call initializer such as `val x = Other()` or
     // `val x = Outer.Inner()`; qualified callees must be pure identifier chains.
@@ -335,21 +365,28 @@ fn kotlin_property_binding(
         && let Some(type_name) = kotlin_constructor_callee_name(callee, source)?
         && !type_name.is_empty()
     {
-        return Ok(Some((name, type_name)));
+        return Ok(Some((name, type_name, None)));
     }
     // Fall back to an element-access initializer such as `val x = items[0]`:
-    // the base must be a plain identifier already bound to a single-level
-    // generic array whose element component type becomes the property's
-    // receiver type. Multi-dimensional element access, function-call
-    // subscripts, and bases without a usable array component fail closed.
+    // a plain-identifier base already bound to a single-level generic array
+    // binds the property to the base array's element component type, while a
+    // qualified base such as `group.holder.fieldItems` records the base
+    // spelling so trace-time resolution can walk the property chain to the
+    // terminal array field's component type. Multi-dimensional element access,
+    // function-call subscripts, `this`/`super` roots, and bases without a
+    // usable array component fail closed.
     if let Some(initializer) = children
         .iter()
         .find(|child| child.kind() == "index_expression")
         .copied()
         && let Some(base_name) = kotlin_element_access_base(initializer, source)?
-        && let Some(component_type) = bindings.array_component_for(&base_name)
     {
-        return Ok(Some((name, component_type)));
+        if let Some(component_type) = bindings.array_component_for(&base_name) {
+            return Ok(Some((name, component_type, None)));
+        }
+        if base_name.contains('.') {
+            return Ok(Some((name, String::new(), Some(base_name))));
+        }
     }
     Ok(None)
 }
@@ -368,7 +405,20 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
         return Ok(None);
     }
     let base = node_text(children[0], source)?.trim();
-    if base.is_empty() || base.contains(['.', '(', '[', ' ']) {
+    if base.is_empty()
+        || base.contains(['(', '[', ' ', '?'])
+        || base.contains("::")
+        || base.split('.').any(|segment| {
+            segment.is_empty()
+                || !segment
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
+        || base
+            .split('.')
+            .next()
+            .is_some_and(|first| matches!(first, "this" | "super"))
+    {
         return Ok(None);
     }
     let subscript = node_text(children[1], source)?.trim();
@@ -493,6 +543,32 @@ fn insert_kotlin_receiver_binding(
         .is_some()
     {
         bindings.types_by_name.remove(&name);
+        bindings.ambiguous_names.insert(name);
+    }
+}
+
+/// Records a name bound from a qualified element-access initializer such as
+/// `val x = group.holder.fieldItems[0]` under its base spelling. The name
+/// shadows same-named objects and types; a duplicate declaration of the same
+/// name fails closed as ambiguous.
+fn insert_kotlin_element_access_base_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    base: String,
+) {
+    if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    if bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings
+            .element_access_bases
+            .insert(name.clone(), base)
+            .is_some()
+    {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
         bindings.ambiguous_names.insert(name);
     }
 }
@@ -791,6 +867,43 @@ mod tests {
             Some("Helper".to_string())
         );
         assert!(!run_bindings.contains("fromCounts"));
+    }
+
+    #[test]
+    fn qualified_element_access_initializers_record_base_spellings() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val fieldItems: Array<Helper> = arrayOf()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n    fun run(group: Group, items: Array<Helper>) {\n        val first = group.fieldItems[0]\n        val multi = group.holder.fieldItems[0]\n        val plain = items[0]\n        val fromThis = this.fieldItems[0]\n        first.helper(1)\n    }\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| {
+                bindings.element_access_base_for("first") == Some("group.fieldItems".to_string())
+            })
+            .unwrap();
+        // A qualified element-access base records the base spelling with no
+        // usable type so trace-time resolution can walk the property chain; a
+        // plain base still binds the element component type directly. A
+        // `this`-rooted base is rejected and stays unbound.
+        assert_eq!(
+            run_bindings.element_access_base_for("first"),
+            Some("group.fieldItems".to_string())
+        );
+        assert_eq!(run_bindings.type_for("first"), None);
+        assert_eq!(
+            run_bindings.element_access_base_for("multi"),
+            Some("group.holder.fieldItems".to_string())
+        );
+        assert_eq!(run_bindings.type_for("multi"), None);
+        assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
+        assert_eq!(run_bindings.element_access_base_for("plain"), None);
+        assert!(!run_bindings.contains("fromThis"));
     }
 
     #[test]

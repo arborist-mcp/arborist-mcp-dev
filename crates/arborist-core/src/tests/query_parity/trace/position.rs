@@ -22106,6 +22106,118 @@ fn kotlin_var_element_access_receiver_calls_fail_closed_for_unsupported_referenc
 }
 
 #[test]
+fn traces_kotlin_var_qualified_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val fieldItems: Array<Helper> = arrayOf()\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n    val holder: Holder = Holder()\n}\n\nclass Caller {\n    fun run(group: Group): Int {\n        val first = group.fieldItems[0]\n        val second = group.holder.fieldItems[0]\n        return first.helper(1) + second.helper(2)\n    }\n}\n\nfun caller(group: Group): Int {\n    val first = group.fieldItems[0]\n    return first.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access with a qualified base such as
+    // `val first = group.fieldItems[0]` or a multi-hop field chain
+    // `val second = group.holder.fieldItems[0]` dispatches on the terminal
+    // array field's element component type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Caller::run")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Caller::run")
+    );
+}
+
+#[test]
+fn traces_kotlin_var_qualified_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n}\n\nfun caller(group: Group): Int {\n    val first = group.fieldItems[0]\n    return first.helper(1)\n}\n";
+    let helper_path = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_var_qualified_element_access_receiver_calls_fail_closed_for_unsupported_bases() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun makeItems(): Array<Helper> = arrayOf()\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(group: Group, counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromThis = this.fieldItems[0]\n        val fromMethod = group.makeItems()[0]\n        val fromUnknown = unknownProp.fieldItems[0]\n        val fromCounts = counts[0]\n        val fromMatrix = matrix[0][0]\n        return fromThis.helper(1) + fromMethod.helper(2) + fromUnknown.helper(3) + fromCounts.helper(4) + fromMatrix.helper(5)\n    }\n    fun control(group: Group): Int {\n        val ok = group.fieldItems[0]\n        return ok.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals bound from element accesses with `this`-rooted, method-call,
+    // unknown-receiver, primitive-array, or multi-dimensional bases all fail
+    // closed; only the resolvable qualified element-access base in `control`
+    // traces.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Caller::control"
+    );
+}
+
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");

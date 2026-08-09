@@ -37,8 +37,9 @@ use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
-    KotlinImportContext, kotlin_array_type_component_name, kotlin_dotted_type_name,
-    kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
+    KotlinImportContext, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
+    kotlin_dotted_type_name, kotlin_receiver_type_bindings_for_function,
+    resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
@@ -10593,14 +10594,28 @@ fn resolve_kotlin_qualified_receiver_call(
                 return Ok(None);
             };
             component_type
-        } else {
-            let Some(type_name) = bindings
-                .as_ref()
-                .and_then(|bindings| bindings.type_for(receiver_name))
-            else {
-                return Ok(None);
-            };
+        } else if let Some(type_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(receiver_name))
+        {
             type_name
+        } else {
+            // A `val` bound from a qualified element-access initializer such as
+            // `val x = group.holder.fieldItems[0]` has no usable type until
+            // the chain is walked; resolve the terminal array field's element
+            // component type here and dispatch the member on it.
+            return resolve_kotlin_qualified_element_access_receiver_call(
+                source_symbol,
+                receiver_name,
+                method,
+                call_arity,
+                bindings.as_ref(),
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
         };
         let Some(type_path) = resolve_kotlin_initializer_type_path(
             source_symbol,
@@ -10769,6 +10784,149 @@ fn resolve_kotlin_factory_array_element_member_call(
         call_arity,
         raw_symbols,
         semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Dispatches the terminal member of a receiver name bound from a qualified
+/// element-access initializer such as `val x = group.holder.fieldItems[0]`.
+/// The base's first hop must be a bound receiver with a usable declared type;
+/// intermediate hops walk the same property-type rules as chained receivers,
+/// and the terminal hop must be a uniquely declared single-level array property
+/// whose element component type receives the dispatch. Unbound or non-array
+/// first hops, unknown or non-array terminal properties, and unresolvable
+/// intermediate hops fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_qualified_element_access_receiver_call(
+    source_symbol: &IndexedSymbol,
+    receiver_name: &str,
+    method: &str,
+    call_arity: usize,
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(base) = bindings.and_then(|bindings| bindings.element_access_base_for(receiver_name))
+    else {
+        return Ok(None);
+    };
+    let Some((first_hop, chain)) = base.split_once('.') else {
+        return Ok(None);
+    };
+    if first_hop.is_empty() || chain.is_empty() {
+        return Ok(None);
+    }
+    let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop)) else {
+        return Ok(None);
+    };
+    let Some(mut current_path) = resolve_kotlin_initializer_type_path(
+        source_symbol,
+        &first_type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let hops = chain.split('.').collect::<Vec<_>>();
+    for (index, hop) in hops.iter().enumerate() {
+        let is_terminal = index + 1 == hops.len();
+        let next_path = if is_terminal {
+            kotlin_array_property_component_type_path(
+                &current_path,
+                hop,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            kotlin_property_type_path(
+                &current_path,
+                hop,
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        let Some(next_path) = next_path else {
+            return Ok(None);
+        };
+        current_path = next_path;
+    }
+    let type_name = current_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(method)
+        .to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &current_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the element component type path of a uniquely declared array
+/// property such as `fieldItems` on `owner_type_path` in
+/// `val x = group.holder.fieldItems[0]`. The property must be declared under
+/// the owner type with a single-level generic array type whose component
+/// resolves in the property's own file and enclosing scope. Unknown,
+/// ambiguous, non-array, or multi-dimensional property types fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_array_property_component_type_path(
+    owner_type_path: &str,
+    property_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if property_name.is_empty() {
+        return Ok(None);
+    }
+    let candidates = semantic_path_index
+        .get(&format!("{owner_type_path}::{property_name}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "property_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let Some(return_type) = raw_symbols[candidates[0]].return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = kotlin_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        &raw_symbols[candidates[0]],
+        &component_name,
+        raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
