@@ -21886,6 +21886,119 @@ fn kotlin_array_access_receiver_calls_fail_closed_for_unsupported_references() {
 }
 
 #[test]
+fn traces_kotlin_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n\nfun caller(): Int {\n    return makeItems()[0].helper(1)\n}\n\nfun crossCaller(): Int {\n    return makeItems()[0].helper(2)\n}\n",
+    )
+    .unwrap();
+
+    // A bare factory-call element-access receiver such as
+    // `makeItems()[0].helper(...)` resolves the leading call through the same
+    // factory rules as a property initializer and dispatches the final member
+    // on the factory return array's element component type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::crossCaller")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::crossCaller")
+    );
+}
+
+#[test]
+fn traces_kotlin_factory_returned_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n\nfun caller(): Int {\n    return makeItems()[0].helper(1)\n}\n";
+    let helper_path = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_factory_returned_array_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\nfun makeCounts(): IntArray = intArrayOf()\nfun makeMatrix(): Array<Array<Helper>> = arrayOf()\nfun makeOther(): Other = Other()\n\nfun caller(): Int {\n    return makeItems().helper(1) + makeCounts()[0].helper(2) + makeMatrix()[0].helper(3) + makeOther()[0].helper(4) + unknownFactory()[0].helper(5) + makeItems()[0][0].helper(6)\n}\n\nfun control(): Int {\n    return makeItems()[0].helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A direct member call on the factory-returned array, primitive-returning
+    // factories, multi-dimensional return arrays, non-array-returning
+    // factories, unknown factories, and multi-dimensional element access on a
+    // factory-returned array all fail closed; only the resolvable
+    // element-access receiver in `control` traces.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+}
+
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");

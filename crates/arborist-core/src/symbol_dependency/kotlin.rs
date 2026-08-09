@@ -399,7 +399,7 @@ fn kotlin_declared_type_name(text: &str) -> Option<String> {
 /// the component through `kotlin_dotted_type_name`. Nested generic arrays such
 /// as `Array<Array<Helper>>`, primitive arrays such as `IntArray`, malformed
 /// spellings, and non-`Array<...>` spellings return `None` and fail closed.
-fn kotlin_array_type_component_name(text: &str) -> Option<String> {
+pub(in crate::symbol_dependency) fn kotlin_array_type_component_name(text: &str) -> Option<String> {
     let name = text.trim();
     let rest = name.strip_prefix("Array<")?;
     let close = rest.rfind('>')?;

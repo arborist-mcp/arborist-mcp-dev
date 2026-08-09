@@ -37,8 +37,8 @@ use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
-    KotlinImportContext, kotlin_dotted_type_name, kotlin_receiver_type_bindings_for_function,
-    resolve_kotlin_import_binding_for_reference,
+    KotlinImportContext, kotlin_array_type_component_name, kotlin_dotted_type_name,
+    kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
@@ -10528,6 +10528,23 @@ fn kotlin_array_access_spelling(segment: &str) -> Option<(&str, &str)> {
     Some((base, bracket))
 }
 
+/// Parses a bare factory-call element-access base such as `makeItems()` in
+/// `makeItems()[0].helper(...)` into the factory function name. The base must
+/// be exactly one call; dotted callees and malformed spellings fail closed.
+/// Multi-dimensional element access is rejected earlier by
+/// `kotlin_array_access_spelling`.
+fn kotlin_array_factory_call_root_spelling(base: &str) -> Option<String> {
+    let open = base.find('(')?;
+    let (method_name, rest) = base.split_at(open);
+    if method_name.is_empty() || method_name.contains('.') {
+        return None;
+    }
+    if !rest.ends_with(')') {
+        return None;
+    }
+    Some(method_name.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_qualified_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -10615,6 +10632,25 @@ fn resolve_kotlin_qualified_receiver_call(
         );
     }
     if array_access {
+        // A bare factory-call base such as `makeItems()` in
+        // `makeItems()[0].helper(...)` resolves the leading call through the
+        // same factory rules as a property initializer and dispatches the
+        // final member on the factory return array's element component type;
+        // unknown factories, primitive or multi-dimensional return arrays, and
+        // other unbound element-access bases fail closed.
+        if let Some(function_name) = kotlin_array_factory_call_root_spelling(receiver_name) {
+            return resolve_kotlin_factory_array_element_member_call(
+                source_symbol,
+                &function_name,
+                method,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
+        }
         // An unbound element-access base fails closed instead of falling
         // through to a same-named object or type.
         return Ok(None);
@@ -10664,6 +10700,79 @@ fn resolve_kotlin_qualified_receiver_call(
         return Ok(Some(target));
     }
     Ok(None)
+}
+
+/// Resolves the terminal member of a bare factory-call element-access receiver
+/// such as `makeItems()[0].helper(...)`: the leading call resolves through the
+/// same factory rules as a property initializer (a unique same-file,
+/// same-package, or explicitly imported top-level function with a declared
+/// return type), the declared return type must be a single-level generic array,
+/// and the final member dispatches on the array's element component type.
+/// Unknown or ambiguous factories, missing return types, primitive or
+/// multi-dimensional return arrays, and unresolved component types fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_factory_array_element_member_call(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(factory_path) = resolve_kotlin_property_initializer_function_path(
+        source_symbol,
+        function_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == factory_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = factory.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = kotlin_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    let Some(component_path) = resolve_kotlin_receiver_type_path(
+        factory,
+        &component_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let type_name = component_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(&component_name)
+        .to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &component_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
 }
 
 /// Maps the second hop of a companion chain such as `Config.Factory.member(...)`
@@ -11810,6 +11919,31 @@ mod tests {
         assert_eq!(java_array_factory_call_root_spelling("()"), None);
         assert_eq!(
             java_array_factory_call_root_spelling("makeItems()[0]x"),
+            None
+        );
+    }
+
+    #[test]
+    fn kotlin_array_factory_call_root_spelling_parses_single_element_access() {
+        use super::kotlin_array_factory_call_root_spelling;
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("makeItems()"),
+            Some("makeItems".to_string())
+        );
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("makeItems(1)"),
+            Some("makeItems".to_string())
+        );
+        // Dotted callees, non-call bases, empty names, and malformed spellings
+        // fail closed.
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("Util.makeItems()"),
+            None
+        );
+        assert_eq!(kotlin_array_factory_call_root_spelling("makeItems"), None);
+        assert_eq!(kotlin_array_factory_call_root_spelling("()"), None);
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("makeItems()x"),
             None
         );
     }
