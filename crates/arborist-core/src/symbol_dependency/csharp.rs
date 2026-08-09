@@ -34,6 +34,12 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
+    /// Single-level array-typed receivers such as `Helper[] items` record the
+    /// element component type so an element access (`items[0].helper(...)`)
+    /// can dispatch on the element type; primitive, multi-dimensional,
+    /// jagged, and malformed array spellings leave the map empty and fail
+    /// closed.
+    array_component_types: BTreeMap<String, String>,
     /// Names of members declared `static` on a type. Only member bindings
     /// (per-type fields, properties, and events) populate this set; local
     /// receiver bindings leave it empty so instance dispatch never consults
@@ -64,6 +70,18 @@ impl CSharpReceiverTypeBindings {
         self.types_by_name
             .get(name)
             .filter(|type_name| !type_name.is_empty() && !type_name.starts_with('@'))
+            .cloned()
+    }
+
+    /// Returns the declared element component type for a uniquely bound
+    /// single-level array-typed name such as `Helper[] items`, which resolves
+    /// to the element type `Helper` when a chain accesses an element. Names
+    /// without a resolvable array component (non-array, primitive, and
+    /// multi-dimensional or jagged array spellings) return `None`.
+    pub(in crate::symbol_dependency) fn array_component_for(&self, name: &str) -> Option<String> {
+        self.array_component_types
+            .get(name)
+            .filter(|type_name| !type_name.is_empty())
             .cloned()
     }
 
@@ -1034,11 +1052,82 @@ fn csharp_insert_receiver_binding(
     name: &str,
     type_name: Option<String>,
 ) {
-    if !name.is_empty() {
-        bindings
-            .types_by_name
-            .insert(name.to_string(), type_name.unwrap_or_default());
+    if name.is_empty() {
+        return;
     }
+    let name = name.to_string();
+    match &type_name {
+        Some(type_name) => {
+            // A single-level array spelling also records the element component
+            // type so an element-access receiver such as `items[0]` can
+            // dispatch on the element type; non-array spellings clear any
+            // stale component so a shadowed or re-declared name never keeps an
+            // outdated array binding.
+            match csharp_array_type_component_name(type_name) {
+                Some(component) => {
+                    bindings
+                        .array_component_types
+                        .insert(name.clone(), component);
+                    bindings.types_by_name.insert(name, type_name.clone());
+                }
+                None => {
+                    bindings.array_component_types.remove(&name);
+                    bindings.types_by_name.insert(name, type_name.clone());
+                }
+            }
+        }
+        None => {
+            bindings.array_component_types.remove(&name);
+            bindings.types_by_name.insert(name, String::new());
+        }
+    }
+}
+
+/// Extracts the element component type from a single-level array spelling
+/// such as `Helper[]`, `Helper []`, or `Box<Helper>[]`, keeping the raw
+/// component spelling so trace-time resolution can resolve it in the
+/// receiver's own scope. Multi-dimensional (`Helper[,]`), jagged
+/// (`Helper[][]`), primitive, `var`, `void`, `global::`-qualified, and
+/// malformed spellings return `None` and fail closed.
+fn csharp_array_type_component_name(text: &str) -> Option<String> {
+    let name = text.trim();
+    let open = name.find('[')?;
+    if open == 0 || !name[open..].trim_end().ends_with(']') {
+        return None;
+    }
+    let bracket = name[open..].trim();
+    if bracket != "[]" {
+        return None;
+    }
+    let component = name[..open].trim();
+    if component.is_empty()
+        || component.contains(['[', ']', '(', ')', ':', ','])
+        || matches!(
+            component,
+            "bool"
+                | "byte"
+                | "sbyte"
+                | "short"
+                | "ushort"
+                | "int"
+                | "uint"
+                | "long"
+                | "ulong"
+                | "nint"
+                | "nuint"
+                | "float"
+                | "double"
+                | "decimal"
+                | "char"
+                | "string"
+                | "object"
+                | "void"
+                | "var"
+        )
+    {
+        return None;
+    }
+    Some(component.to_string())
 }
 
 fn csharp_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {

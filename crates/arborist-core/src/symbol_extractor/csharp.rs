@@ -336,6 +336,28 @@ fn csharp_instance_member_chain_spelling(
                 segments.push(spelling);
                 break;
             }
+            "element_access_expression" => {
+                // An element-access hop such as `items[0]` or
+                // `this.fieldItems[0]` records the bracket on the accessed
+                // element's segment so the trailing member dispatches on the
+                // element component type; malformed or nested element
+                // accesses fail closed.
+                let Some(subscript) = current.child_by_field_name("subscript") else {
+                    return Ok(None);
+                };
+                let subscript_text = crate::language::node_text(subscript, source)?.trim();
+                if subscript_text.is_empty()
+                    || !subscript_text.starts_with('[')
+                    || !subscript_text.ends_with(']')
+                {
+                    return Ok(None);
+                }
+                segments.push(subscript_text.to_string());
+                let Some(expression) = current.child_by_field_name("expression") else {
+                    return Ok(None);
+                };
+                current = expression;
+            }
             "parenthesized_expression" => {
                 // A parenthesized segment such as `(MakeFactory())` in
                 // `(MakeFactory()).entry.Run` or `(group).inner().helper`
@@ -350,6 +372,24 @@ fn csharp_instance_member_chain_spelling(
         }
     }
     segments.reverse();
+    // A bracket segment such as `[0]` from an element-access hop merges onto
+    // the preceding member segment so `items` + `[0]` spells `items[0]`
+    // rather than `items.[0]`; a leading bracket (a malformed chain) fails
+    // closed.
+    if segments.iter().any(|segment| segment.starts_with('[')) {
+        let mut merged: Vec<String> = Vec::with_capacity(segments.len());
+        for segment in segments {
+            if segment.starts_with('[') {
+                let Some(previous) = merged.last_mut() else {
+                    return Ok(None);
+                };
+                previous.push_str(&segment);
+            } else {
+                merged.push(segment);
+            }
+        }
+        segments = merged;
+    }
     Ok(Some(segments.join(".")))
 }
 
@@ -372,7 +412,10 @@ fn csharp_direct_invocation_name(
         // receivers fall through to the static type-qualified handling below.
         if matches!(
             receiver.kind(),
-            "invocation_expression" | "member_access_expression" | "parenthesized_expression"
+            "invocation_expression"
+                | "member_access_expression"
+                | "parenthesized_expression"
+                | "element_access_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, false)?
         {
@@ -1188,5 +1231,85 @@ class SimpleCaller {
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());
         assert!(references("Counter::LambdaShadow").is_empty());
+    }
+
+    #[test]
+    fn element_access_receivers_canonicalize_to_array_spellings() {
+        let source = r#"
+namespace Demo;
+
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper item = new Helper();
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    private Group[] groups = new Group[1];
+    public int plainBound(Helper[] items) => items[0].helper(1);
+    public int indexedField(Helper[] items) => items[1].helper(2);
+    public int boundChain(Group[] groups) => groups[0].inner().helper(1);
+    public int thisField() => this.fieldItems[0].helper(1);
+    public int bareField() => fieldItems[0].helper(1);
+    public int factoryRoot() => makeItems()[0].helper(3);
+    private Helper[] makeItems() => new Helper[2];
+}
+"#;
+        let path = Path::new("Caller.cs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_csharp_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let symbol = |name: &str| {
+            symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == format!("Demo::Caller::{name}"))
+                .unwrap()
+        };
+        // `items[0]` and `items[1]` keep their element-access spelling so the
+        // resolver can dispatch the trailing member on the element type while
+        // still distinguishing it from a direct call on the array itself.
+        assert!(
+            symbol("plainBound")
+                .references_by_name
+                .contains("items[0].helper")
+        );
+        assert!(
+            symbol("indexedField")
+                .references_by_name
+                .contains("items[1].helper")
+        );
+        assert!(
+            symbol("boundChain")
+                .references_by_name
+                .contains("groups[0].inner().helper")
+        );
+        assert!(
+            symbol("thisField")
+                .references_by_name
+                .contains("this.fieldItems[0].helper")
+        );
+        assert!(
+            symbol("bareField")
+                .references_by_name
+                .contains("fieldItems[0].helper")
+        );
+        // A factory-rooted element access records the inner bare call but no
+        // element-access chain fact, and fails closed at trace time until
+        // factory-returned array receivers are traced.
+        assert!(
+            !symbol("factoryRoot")
+                .references_by_name
+                .contains("makeItems()[0].helper")
+        );
+        assert!(
+            symbol("factoryRoot")
+                .references_by_name
+                .contains("makeItems")
+        );
     }
 }

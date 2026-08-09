@@ -1757,12 +1757,26 @@ fn resolve_csharp_instance_receiver_call(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CSharpInstanceReceiverResolution> {
-    let Some((receiver_name, member_chain)) = reference_name.split_once('.') else {
+    let Some((raw_receiver_name, member_chain)) = reference_name.split_once('.') else {
         return Ok(CSharpInstanceReceiverResolution::NoBinding);
     };
-    if receiver_name.is_empty() || member_chain.is_empty() {
+    if raw_receiver_name.is_empty() || member_chain.is_empty() {
         return Ok(CSharpInstanceReceiverResolution::NoBinding);
     }
+    // A bound receiver may carry an element-access suffix such as `items[0]`
+    // in `items[0].helper(...)`; the element access dispatches on the array's
+    // element component type, while indexing a non-array receiver is
+    // malformed and fails closed.
+    let (receiver_name, array_access) = match raw_receiver_name.find('[') {
+        Some(open) if raw_receiver_name.ends_with(']') => {
+            let base = &raw_receiver_name[..open];
+            if base.is_empty() {
+                return Ok(CSharpInstanceReceiverResolution::Blocked);
+            }
+            (base, true)
+        }
+        _ => (raw_receiver_name, false),
+    };
     let Some(bindings) = csharp_receiver_type_bindings_for_function(
         &source_symbol.file_path,
         source_symbol.byte_range,
@@ -1785,49 +1799,73 @@ fn resolve_csharp_instance_receiver_call(
     // unknown, ambiguous, arity-mismatched, `void`, and primitive factories
     // fail closed too.
     let raw_binding = bindings.raw_for(receiver_name).unwrap_or_default();
-    let initial_binding =
-        if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding) {
-            resolve_csharp_factory_receiver_binding(
-                source_symbol,
-                &factory_name,
-                factory_arity,
-                &bindings,
-                raw_symbols,
-                semantic_path_index,
-                source_namespace_path,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
-        } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
-            resolve_csharp_initializer_chain_binding(
-                source_symbol,
-                chain,
-                &bindings,
-                raw_symbols,
-                semantic_path_index,
-                source_namespace_path,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
-        } else if raw_binding.is_empty() {
-            None
-        } else {
-            resolve_csharp_receiver_type_binding(
-                source_symbol,
-                raw_binding,
-                raw_symbols,
-                semantic_path_index,
-                source_namespace_path,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
+    let array_component = bindings.array_component_for(receiver_name);
+    let initial_binding = if array_access {
+        // An element-access receiver such as `items[0].helper(...)` on a
+        // single-level array-typed receiver dispatches on the array's element
+        // component type; indexing a non-array, primitive-array, or
+        // multi-dimensional-array receiver fails closed.
+        let Some(component_type) = array_component else {
+            return Ok(CSharpInstanceReceiverResolution::Blocked);
         };
+        resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if array_component.is_some() {
+        // A direct member call on an array-typed receiver such as
+        // `items.helper(...)` fails closed; only element-access receivers
+        // dispatch on the array's element component type.
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    } else if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding) {
+        resolve_csharp_factory_receiver_binding(
+            source_symbol,
+            &factory_name,
+            factory_arity,
+            &bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+        resolve_csharp_initializer_chain_binding(
+            source_symbol,
+            chain,
+            &bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if raw_binding.is_empty() {
+        None
+    } else {
+        resolve_csharp_receiver_type_binding(
+            source_symbol,
+            raw_binding,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    };
     let Some(binding) = initial_binding else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
@@ -3840,7 +3878,11 @@ fn resolve_csharp_member_chain_binding<'a>(
         // A method-call hop such as `inner()` or `inner(1)` dispatches the
         // hop method as an instance call and continues the chain on its
         // declared return type; field, property, and event hops resolve the
-        // member's declared type directly.
+        // member's declared type directly. An element-access hop such as
+        // `items[0]` strips the bracket and requires the named member to be a
+        // single-level array whose element component type pins the next hop.
+        let array_member_name = csharp_array_access_member_name(hop);
+        let member_name = array_member_name.unwrap_or(hop);
         if let Some((method_name, hop_arity)) = csharp_method_call_hop_spelling(hop) {
             let Some((next_binding, method_symbol)) = resolve_csharp_method_call_hop_binding(
                 type_symbol,
@@ -3880,13 +3922,24 @@ fn resolve_csharp_member_chain_binding<'a>(
                 else {
                     return Ok(None);
                 };
-                if member_bindings.contains(hop) {
-                    let Some(hop_type_name) = member_bindings.type_for(hop) else {
+                if member_bindings.contains(member_name) {
+                    // An element-access hop requires a single-level
+                    // array-typed member; the element component type pins the
+                    // next hop, while non-array, primitive-array, and
+                    // multi-dimensional-array members fail closed.
+                    let hop_type_name = if array_member_name.is_some() {
+                        member_bindings.array_component_for(member_name)
+                    } else {
+                        member_bindings.type_for(member_name)
+                    };
+                    let Some(hop_type_name) = hop_type_name else {
                         return Ok(None);
                     };
                     break (current_type_symbol, hop_type_name);
                 }
-                if current_type_symbol.node_kind == "interface_declaration" {
+                if current_type_symbol.node_kind == "interface_declaration"
+                    && array_member_name.is_none()
+                {
                     // Interfaces have no class/record base to walk; resolve
                     // the hop through the interface-extends chain instead,
                     // with the same shadowing and ambiguity rules as
@@ -3983,6 +4036,19 @@ fn csharp_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
         arguments.parse::<usize>().ok()?
     };
     Some((method_name.to_string(), arity))
+}
+
+/// Parses an element-access hop spelling such as `items[0]` or
+/// `fieldItems[1]` into the accessed member name. Plain member hops,
+/// malformed brackets, and multi-dimensional or nested element access return
+/// `None` so they fall through to member resolution and fail closed.
+fn csharp_array_access_member_name(hop: &str) -> Option<&str> {
+    let open = hop.find('[')?;
+    let (base, bracket) = hop.split_at(open);
+    if base.is_empty() || !bracket.ends_with(']') {
+        return None;
+    }
+    Some(base)
 }
 
 /// Resolves an arity-matched non-static method-call hop such as `inner()` or
