@@ -762,7 +762,7 @@ fn collect_typed_local_bindings(
                                 Some(type_name)
                             } else {
                                 csharp_initializer_element_access_from_declarator(node, source)?
-                                    .map(|base_name| format!("@element:{base_name}"))
+                                    .map(|(base_spelling, _)| format!("@element:{base_spelling}"))
                             }
                         }
                     }
@@ -834,16 +834,19 @@ fn csharp_var_initializer_type_binding(
 }
 
 /// Records a `var` local whose initializer is an element access such as
-/// `var first = items[0]`, returning the array-typed base spelling so the
-/// local resolves to the base array's element component type. Plain-identifier
-/// bases such as `items`, `local`, or a bare enclosing-class field name, and
-/// member-access bases such as `this.fieldItems` or `group.holder.fieldItems`
-/// are recorded; method-call bases, multi-dimensional element access, and
-/// other initializer shapes record nothing and fail closed.
+/// `var first = items[0]`, returning the array-typed base spelling and call
+/// arity so the local resolves to the base array's element component type.
+/// Plain-identifier bases such as `items`, `local`, or a bare enclosing-class
+/// field name and member-access bases such as `this.fieldItems` or
+/// `group.holder.fieldItems` record the spelling with arity zero; factory-call
+/// bases such as `makeItems()` or `Util.makeItems()` record the reference with
+/// a trailing `()` marker and the call's argument count. Multi-dimensional
+/// element access and other initializer shapes record nothing and fail
+/// closed.
 fn csharp_initializer_element_access_from_declarator(
     declarator: Node<'_>,
     source: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, usize)>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
     };
@@ -862,14 +865,42 @@ fn csharp_initializer_element_access_from_declarator(
     let Some(array) = initializer.child_by_field_name("expression") else {
         return Ok(None);
     };
-    if !matches!(array.kind(), "identifier" | "member_access_expression") {
+    let (base_spelling, call_arity) = match array.kind() {
+        "identifier" | "member_access_expression" => {
+            let base_name = crate::language::node_text(array, source)?.trim();
+            if base_name.is_empty() {
+                return Ok(None);
+            }
+            (base_name.to_string(), 0)
+        }
+        "invocation_expression" => {
+            let Some(function) = array.child_by_field_name("function") else {
+                return Ok(None);
+            };
+            let spelling = match function.kind() {
+                "identifier" | "member_access_expression" => {
+                    crate::language::node_text(function, source)?
+                        .trim()
+                        .to_string()
+                }
+                _ => return Ok(None),
+            };
+            if spelling.is_empty() {
+                return Ok(None);
+            }
+            let Some(arguments) = array.child_by_field_name("arguments") else {
+                return Ok(None);
+            };
+            let mut cursor = arguments.walk();
+            let arity = arguments.named_children(&mut cursor).count();
+            (format!("{spelling}()"), arity)
+        }
+        _ => return Ok(None),
+    };
+    if base_spelling.is_empty() {
         return Ok(None);
     }
-    let base_name = crate::language::node_text(array, source)?.trim();
-    if base_name.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(base_name.to_string()))
+    Ok(Some((base_spelling, call_arity)))
 }
 
 /// Infers a receiver type binding from an initializer expression, unwrapping

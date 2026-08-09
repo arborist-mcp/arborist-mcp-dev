@@ -16907,10 +16907,6 @@ fn csharp_var_qualified_element_access_receiver_calls_fail_closed_for_unsupporte
 class Helper {
     public int helper(int value) => value;
 }
-class Group {
-    public Helper[] fieldItems = new Helper[1];
-    public Helper[] makeItems() => new Helper[1];
-}
 class Util {
     public static Helper[] fieldItems = new Helper[1];
     public Helper[] instanceItems = new Helper[1];
@@ -16918,19 +16914,28 @@ class Util {
 class Caller {
     private Helper[] fieldItems = new Helper[2];
     private Helper holder = new Helper();
-    int run(Group group, int[] counts, Helper[][] matrix) {
+    Helper[] makeItems() => new Helper[2];
+    int[] makeCounts() => new int[2];
+    Helper[][] makeMatrix() => new Helper[2][2];
+    int run(int[] counts, Helper[][] matrix) {
         var nonArray = this.holder[0];
         var unbound = unknownObj.fieldItems[0];
         var matrixAccess = matrix[0][0];
-        var methodBase = group.makeItems()[0];
+        var unknownFactory = makeUnknown()[0];
+        var primitiveFactory = makeCounts()[0];
+        var multiFactory = makeMatrix()[0];
+        var arityFactory = makeItems(1)[0];
         var baseBase = base.fieldItems[0];
         var staticInstanceField = Util.instanceItems[0];
         return nonArray.helper(1)
             + unbound.helper(2)
             + matrixAccess.helper(3)
-            + methodBase.helper(4)
-            + baseBase.helper(5)
-            + staticInstanceField.helper(6);
+            + unknownFactory.helper(4)
+            + primitiveFactory.helper(5)
+            + multiFactory.helper(6)
+            + arityFactory.helper(7)
+            + baseBase.helper(8)
+            + staticInstanceField.helper(9);
     }
     int control() {
         var ok = this.fieldItems[0];
@@ -16942,10 +16947,163 @@ class Caller {
     .unwrap();
 
     // `var` locals bound from element accesses with a non-array `this`-rooted
-    // member, an unbound receiver, a multi-dimensional element access, a
-    // method-call base, an unresolvable `base` receiver, or a non-static
+    // member, an unbound receiver, a multi-dimensional element access,
+    // unknown/primitive-/multi-dimensional-returning/arity-mismatched
+    // factory-call bases, an unresolvable `base` receiver, or a non-static
     // field on a static type receiver all fail closed; only the `this`-rooted
     // element access in `control` traces.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::control");
+}
+
+#[test]
+fn traces_csharp_var_factory_call_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper { public int helper(int value) => value; }
+class Group { public int helper(int value) => value; }
+class Util {
+    public static Helper[] makeItems() => new Helper[2];
+    public static Group[] makeGroups() => new Group[1];
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int run() {
+        var first = makeItems()[0];
+        var second = Util.makeItems()[0];
+        var third = Util.makeGroups()[0];
+        return first.helper(1) + second.helper(2) + third.helper(3);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access on a factory call such as
+    // `var first = makeItems()[0]` or `var second = Util.makeItems()[0]`
+    // resolves the factory through the same rules as other `var` initializers
+    // and dispatches on the array's element component type.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::run");
+
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(group_persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn traces_csharp_var_factory_call_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper { public int helper(int value) => value; }
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int run() {
+        var first = makeItems()[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn csharp_var_factory_call_element_access_receiver_calls_fail_closed_for_unsupported_factories() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int[] makeCounts() => new int[2];
+    Helper[][] makeMatrix() => new Helper[2][2];
+    int run() {
+        var unknownFactory = unknownFactory()[0];
+        var primitiveFactory = makeCounts()[0];
+        var multiFactory = makeMatrix()[0];
+        var arityFactory = makeItems(1)[0];
+        return unknownFactory.helper(1)
+            + primitiveFactory.helper(2)
+            + multiFactory.helper(3)
+            + arityFactory.helper(4);
+    }
+    int control() {
+        var first = makeItems()[0];
+        return first.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // `var` locals bound from element accesses on unknown, primitive-array,
+    // multi-dimensional-array, or arity-mismatched factory calls all fail
+    // closed; only the matching `makeItems()` element access in `control`
+    // traces.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);

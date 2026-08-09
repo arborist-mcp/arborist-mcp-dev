@@ -1873,14 +1873,32 @@ fn resolve_csharp_instance_receiver_call(
             csharp_import_contexts_by_file,
             deadline,
         )?
-    } else if let Some(base_reference) = bindings.element_access_base_for(receiver_name) {
+    } else if let Some((base_reference, base_arity)) =
+        bindings.element_access_base_for(receiver_name)
+    {
         // A `var` local bound from an element access such as
         // `var first = items[0]` resolves to the base array's element
         // component type; a qualified base such as
         // `var fourth = this.fieldItems[0]` resolves the field chain's
-        // terminal array field the same way. An unbound or non-array base
+        // terminal array field, and a factory-call base such as
+        // `var first = makeItems()[0]` resolves through the same factory
+        // rules as other `var` initializers. An unbound or non-array base
         // fails closed.
-        if base_reference.contains('.') {
+        if let Some(factory_call) = base_reference.strip_suffix("()") {
+            csharp_factory_array_component_binding(
+                source_symbol,
+                factory_call,
+                base_arity,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if base_reference.contains('.') {
             csharp_qualified_element_access_component_type_path(
                 source_symbol,
                 &base_reference,
@@ -3948,6 +3966,76 @@ fn csharp_qualified_element_access_component_type_path(
         };
         Ok(Some(binding))
     }
+}
+
+/// Resolves the element component type binding of a factory-call
+/// element-access base such as `makeItems()` in `var first = makeItems()[0]`
+/// or `Util.makeItems()` in `var second = Util.makeItems()[0]`: the leading
+/// call resolves through the same factory rules as a `var` initializer (a
+/// unique enclosing-type instance call, base-type or static-imported method,
+/// or type-qualified static method with matching arity), and the component
+/// type resolves in the factory's own file and enclosing scope, canonicalized
+/// so callers in other namespaces dispatch on the canonical declared type.
+/// Unknown or arity-mismatched factories and primitive or multi-dimensional
+/// return arrays fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# factory array component resolution inputs explicit"
+)]
+fn csharp_factory_array_component_binding(
+    source_symbol: &IndexedSymbol,
+    factory_reference: &str,
+    factory_arity: usize,
+    bindings: &CSharpReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let Some(method) = resolve_csharp_var_factory_method(
+        source_symbol,
+        factory_reference,
+        factory_arity,
+        bindings,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = csharp_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    let Some(component_binding) = resolve_csharp_receiver_type_binding(
+        method,
+        &component_name,
+        raw_symbols,
+        semantic_path_index,
+        csharp_source_namespace_path(method, raw_symbols).flatten(),
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(canonicalize_csharp_type_binding(
+        method,
+        &component_binding,
+        raw_symbols,
+    ))
 }
 
 /// Resolves a static initializer type spelling such as `Util`,
