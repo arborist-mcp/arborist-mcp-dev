@@ -22230,6 +22230,139 @@ fn traces_kotlin_class_receiver_deep_superclass_member_calls_in_live_workspace_a
 }
 
 #[test]
+fn traces_kotlin_cross_file_class_receiver_deep_superclass_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Leaf\n\nfun deepCaller(leaf: Leaf): Int {\n    return leaf.rootHelper(1) + leaf.midHelper(1)\n}\n\nfun shadowCaller(leaf: Leaf): Int {\n    return leaf.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nopen class Root {\n    fun rootHelper(value: Int): Int = value\n    fun helper(value: Int): Int = value\n}\nopen class Mid : Root() {\n    fun midHelper(value: Int): Int = value\n}\nclass Leaf : Mid() {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // The imported superclass chain resolves members through any number of
+    // intermediate classes, and a nearer declaration shadows an inherited one.
+    for target in ["org::util::Root::rootHelper", "org::util::Mid::midHelper"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::deepCaller");
+    }
+
+    let leaf_helper = "org::util::Leaf::helper";
+    let live = trace_symbol_graph(&dir, leaf_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::shadowCaller");
+
+    // The shadowed Root::helper is never reached through Leaf receivers.
+    let root_helper = "org::util::Root::helper";
+    let live = trace_symbol_graph(&dir, root_helper, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "shadowed superclass member must not trace"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["org::util::Root::rootHelper", "org::util::Mid::midHelper"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::deepCaller");
+    }
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, leaf_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::shadowCaller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, root_helper, TraceDirection::Callers).unwrap();
+    assert!(
+        persisted.callers.is_empty(),
+        "shadowed superclass member must not trace"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_class_receiver_deep_superclass_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nopen class Root {\n    fun rootHelper(value: Int): Int = value\n}\nopen class Mid : Root()\nclass Leaf : Mid()\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Leaf\n\nfun caller(leaf: Leaf): Int {\n    return leaf.rootHelper(1)\n}\n";
+    let target = "org::util::Root::rootHelper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_class_receiver_deep_superclass_member_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Leaf\nimport org.util.OtherLeaf\n\nfun missingCaller(leaf: OtherLeaf): Int {\n    return leaf.rootHelper(1)\n}\n\nfun control(leaf: Leaf): Int {\n    return leaf.rootHelper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nopen class Root {\n    fun rootHelper(value: Int): Int = value\n}\nopen class Mid : Root()\nclass Leaf : Mid()\nclass OtherLeaf\n",
+    )
+    .unwrap();
+
+    // A class-typed receiver whose imported superclass chain lacks the member
+    // fails closed; only the class pinned to the chain that declares
+    // `rootHelper` in `control` traces.
+    let target = "org::util::Root::rootHelper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_imported_class_receiver_superclass_member_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
