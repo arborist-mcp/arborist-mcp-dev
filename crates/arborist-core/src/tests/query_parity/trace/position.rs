@@ -24711,6 +24711,96 @@ fn traces_kotlin_nested_class_constructor_receiver_calls_in_live_workspace_and_p
 }
 
 #[test]
+fn traces_kotlin_cross_file_nested_class_constructor_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.Outer\n\nfun caller(): Int {\n    val inner = Outer.Inner()\n    return inner.helper(1)\n}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n").unwrap();
+
+    // A qualified constructor initializer pins the nested class receiver
+    // through the explicitly imported outer type, so the trailing member
+    // dispatches on the imported nested class.
+    let helper_path = "org::util::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_nested_class_constructor_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.Outer\n\nfun caller(): Int {\n    val inner = Outer.Inner()\n    return inner.helper(1)\n}\n";
+    let target = "org::util::Outer::Inner::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_nested_class_constructor_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Outer\n\nfun missingCaller(): Int {\n    val inner = Outer.Absent()\n    return inner.helper(1)\n}\n\nfun control(): Int {\n    val inner = Outer.Inner()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n").unwrap();
+
+    // A qualified constructor whose nested type is unknown fails closed;
+    // only the initializer pinned to the imported nested class traces.
+    let target = "org::util::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_nested_class_constructor_bare_call_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
