@@ -30099,6 +30099,130 @@ fn kotlin_cross_file_this_and_super_rooted_hierarchy_member_calls_fail_closed_fo
 }
 
 #[test]
+fn traces_kotlin_member_chain_after_element_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\n\nclass Holder {\n    val fieldGroups: Array<Group> = arrayOf()\n    fun run(groups: Array<Group>): Int {\n        val local: Array<Group> = arrayOf()\n        return groups[0].item.helper(1) + groups[1].inner().helper(2) + local[0].item.helper(3) + fieldGroups[0].inner().helper(4)\n    }\n}\n\nfun caller(groups: Array<Group>): Int {\n    return groups[0].item.helper(5) + groups[0].inner().helper(6)\n}\n\nfun factoryCaller(): Int {\n    return makeGroups()[0].item.helper(7) + makeGroups()[1].inner().helper(8)\n}\n",
+    )
+    .unwrap();
+
+    // Member chains after an element hop on a bound array-typed parameter,
+    // local, or enclosing-class property such as `groups[0].item.helper(...)`
+    // or `groups[0].inner().helper(...)` walk each subsequent property or
+    // method-call hop on the element component type, and a factory-call
+    // element-access receiver followed by a member chain such as
+    // `makeGroups()[0].inner().helper(...)` resolves the leading factory and
+    // walks the trailing hops on the factory return array's element component
+    // type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 3);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Holder::run")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::factoryCaller")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Holder::run")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::factoryCaller")
+    );
+}
+
+#[test]
+fn traces_kotlin_member_chain_after_element_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\n\nfun caller(groups: Array<Group>): Int {\n    return groups[0].item.helper(1) + makeGroups()[0].inner().helper(2)\n}\n";
+    let helper_path = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_member_chain_after_element_hop_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\nfun makePrimitive(): Array<Int> = arrayOf()\nfun makeMissing(): Array<Missing> = arrayOf()\nfun makeMatrix(): Array<Array<Group>> = arrayOf()\n\nfun unknownHop(groups: Array<Group>): Int {\n    return groups[0].unknown().helper(1)\n}\n\nfun missingProperty(groups: Array<Group>): Int {\n    return groups[0].missing.helper(1)\n}\n\nfun primitiveFactoryChain(): Int {\n    return makePrimitive()[0].inner().helper(1)\n}\n\nfun missingComponentFactoryChain(): Int {\n    return makeMissing()[0].item.helper(1)\n}\n\nfun multiDimFactoryChain(): Int {\n    return makeMatrix()[0][0].helper(1)\n}\n\nfun control(groups: Array<Group>): Int {\n    return groups[0].item.helper(1) + makeGroups()[1].inner().helper(2)\n}\n",
+    )
+    .unwrap();
+
+    // Unknown intermediate property or method-call hops after an element hop,
+    // primitive or unresolvable array components, and multi-dimensional
+    // element access all fail closed; only the resolvable bound-array and
+    // factory element-hop chains in `control` trace.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_factory_root_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
@@ -34165,6 +34289,138 @@ fn kotlin_cross_file_qualified_factory_returned_array_receiver_calls_fail_closed
             .iter()
             .any(|caller| caller.symbol_id == "com::example::objectControl")
     );
+}
+
+#[test]
+fn traces_kotlin_cross_file_member_chain_after_factory_element_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factory.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeGroups\n\nfun caller(): Int {\n    return makeGroups()[0].item.helper(1) + makeGroups()[1].inner().helper(2)\n}\n\nfun secondCaller(): Int {\n    return makeGroups()[0].item.helper(3)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\n",
+    )
+    .unwrap();
+
+    // A factory-call element-access receiver followed by a member chain such
+    // as `makeGroups()[0].inner().helper(...)` resolves the leading call to an
+    // explicitly imported top-level factory and walks the trailing property
+    // and method-call hops on the factory return array's element component
+    // type, resolved in the factory's own package scope.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::secondCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::secondCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_member_chain_after_factory_element_hop_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factory.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeGroups\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.makeGroups\n\nfun caller(): Int {\n    return makeGroups()[0].item.helper(1)\n}\n";
+    let target = "org::util::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_member_chain_after_factory_element_hop_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factory.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeGroups\nimport org.util.makeMissing\nimport org.util.makePrimitive\n\nfun unknownHopCaller(): Int {\n    return makeGroups()[0].unknown().helper(1)\n}\n\nfun missingPropertyCaller(): Int {\n    return makeGroups()[0].missing.helper(1)\n}\n\nfun primitiveCaller(): Int {\n    return makePrimitive()[0].inner().helper(1)\n}\n\nfun missingComponentCaller(): Int {\n    return makeMissing()[0].item.helper(1)\n}\n\nfun control(): Int {\n    return makeGroups()[0].item.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val item: Helper = Helper()\n    fun inner(): Helper = Helper()\n}\n\nfun makeGroups(): Array<Group> = arrayOf()\nfun makePrimitive(): Array<Int> = arrayOf()\nfun makeMissing(): Array<Missing> = arrayOf()\n",
+    )
+    .unwrap();
+
+    // Unknown intermediate hops on an imported element component type,
+    // primitive array components, and unresolvable component types all fail
+    // closed; only the resolvable imported factory element-hop chain in
+    // `control` traces.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 
 #[test]

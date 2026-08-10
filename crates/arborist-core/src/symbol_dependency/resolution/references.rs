@@ -11011,28 +11011,27 @@ fn resolve_kotlin_qualified_initializer_function_path(
     Ok(None)
 }
 
-/// Resolves the terminal member of a bare or qualified factory-call
-/// element-access receiver such as `makeItems()[0].helper(...)`: the leading
-/// call resolves through the same factory rules as a property initializer (a
-/// unique same-file, same-package, or explicitly imported top-level function
-/// with a declared return type, or a qualified companion, object, or
-/// bound-receiver member for dotted callees), the declared return type must be
-/// a single-level generic array, and the final member dispatches on the
-/// array's element component type. Unknown or ambiguous factories, missing
-/// return types, primitive or multi-dimensional return arrays, and unresolved
-/// component types fail closed.
+/// Resolves the element component type of a factory call whose declared
+/// return type is a single-level generic array, such as `makeItems` in
+/// `makeItems()[0].helper(...)` or `Util.makeGroups` in
+/// `Util.makeGroups()[0].inner().helper(...)`. A bare callee resolves through
+/// the property initializer rules (a unique same-file, same-package, or
+/// explicitly imported top-level function with a declared return type); a
+/// qualified callee resolves through the qualified initializer rules (object,
+/// companion, or bound-receiver member). The component path resolves in the
+/// factory's own file and enclosing scope. Unknown or ambiguous factories,
+/// missing return types, primitive or multi-dimensional return arrays, and
+/// unresolved component types return `None` so callers fail closed.
 #[allow(clippy::too_many_arguments)]
-fn resolve_kotlin_factory_array_element_member_call(
+fn resolve_kotlin_factory_array_element_component_type(
     source_symbol: &IndexedSymbol,
     function_name: &str,
-    method: &str,
-    call_arity: usize,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, String)>> {
     // A bare callee such as `makeItems` resolves through the property
     // initializer rules (a unique same-file, same-package, or explicitly
     // imported top-level function with a declared return type); a qualified
@@ -11081,6 +11080,44 @@ fn resolve_kotlin_factory_array_element_member_call(
         kotlin_import_contexts_by_file,
         deadline,
     )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((component_path, component_name.to_string())))
+}
+
+/// Resolves the terminal member of a bare or qualified factory-call
+/// element-access receiver such as `makeItems()[0].helper(...)`: the leading
+/// call resolves through the same factory rules as a property initializer (a
+/// unique same-file, same-package, or explicitly imported top-level function
+/// with a declared return type, or a qualified companion, object, or
+/// bound-receiver member for dotted callees), the declared return type must be
+/// a single-level generic array, and the final member dispatches on the
+/// array's element component type. Unknown or ambiguous factories, missing
+/// return types, primitive or multi-dimensional return arrays, and unresolved
+/// component types fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_factory_array_element_member_call(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((component_path, component_name)) =
+        resolve_kotlin_factory_array_element_component_type(
+            source_symbol,
+            function_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
     else {
         return Ok(None);
     };
@@ -11672,7 +11709,8 @@ fn resolve_kotlin_chained_receiver_call(
         );
     }
     // The first hop is either a locally bound receiver, an element-access
-    // receiver whose base is bound with a single-level array component type, or
+    // receiver whose base is bound with a single-level array component type or
+    // is a factory call whose declared return type is a single-level array, or
     // a named object declaration such as `Config` in `Config.holder.run()`. An
     // ambiguous local binding fails closed instead of falling through to a
     // same-named object.
@@ -11712,6 +11750,19 @@ fn resolve_kotlin_chained_receiver_call(
         )?
     {
         path
+    } else if let Some((factory_base, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(function_name) = kotlin_array_factory_call_root_spelling(factory_base)
+        && let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
+            source_symbol,
+            &function_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        component_path
     } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
         hops[0],
