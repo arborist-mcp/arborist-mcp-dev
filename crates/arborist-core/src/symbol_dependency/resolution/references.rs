@@ -11140,6 +11140,114 @@ fn resolve_kotlin_factory_array_element_member_call(
     )
 }
 
+/// Resolves the element component type path of a factory-call element-access
+/// hop such as `makeGroups()[0]` in `group.makeGroups()[0].inner().helper(...)`
+/// or `Util.makeGroups()[0].item.helper(...)`. The factory is a uniquely
+/// declared member or companion function on `owner_type_path` whose declared
+/// return type is a single-level generic array; the component path resolves in
+/// the factory's own file and enclosing scope. Unknown or ambiguous factories,
+/// missing return types, primitive or multi-dimensional return arrays, and
+/// unresolved component types return `None` so callers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_owner_factory_array_element_component_type(
+    owner_type_path: &str,
+    function_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if function_name.is_empty() {
+        return Ok(None);
+    }
+    let mut factory_candidates = Vec::new();
+    // The owner scope covers bound-receiver and object factories; the
+    // canonical companion scope covers class and interface roots whose
+    // factories live on the companion. A factory declared in both scopes is
+    // ambiguous and fails closed.
+    for scope in [
+        owner_type_path.to_string(),
+        format!("{owner_type_path}::Companion"),
+    ] {
+        let candidates = semantic_path_index
+            .get(&format!("{scope}::{function_name}"))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.scope_path.as_deref() == Some(scope.as_str())
+                    && candidate.return_type.is_some()
+            })
+            .collect::<Vec<_>>();
+        factory_candidates.extend(candidates);
+    }
+    if factory_candidates.len() != 1 {
+        return Ok(None);
+    }
+    let factory = &raw_symbols[factory_candidates[0]];
+    let Some(return_type) = factory.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = kotlin_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        factory,
+        &component_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves an intermediate hop in a chained Kotlin receiver call. A
+/// factory-call element-access hop such as `makeGroups()[0]` resolves the
+/// leading call as a uniquely declared factory on the current receiver type
+/// and continues on the factory return array's element component type; all
+/// other hops fall through to the shared property and method-call hop rules.
+/// `this`/`super`-rooted chains keep their existing fail-closed factory policy
+/// because they resolve through `resolve_kotlin_type_rooted_member_chain`
+/// without this wrapper.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_chained_receiver_hop_type_path(
+    owner_type_path: &str,
+    hop: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some((factory_hop, _)) = kotlin_array_access_spelling(hop)
+        && let Some(function_name) = kotlin_array_factory_call_root_spelling(factory_hop)
+    {
+        return resolve_kotlin_owner_factory_array_element_component_type(
+            owner_type_path,
+            &function_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    kotlin_chain_hop_type_path(
+        owner_type_path,
+        hop,
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Resolves the direct superclass type path of the class enclosing
 /// `source_symbol`, such as `Base` in `class Caller : Base()`, by locating the
 /// enclosing class declaration's first delegation specifier. The superclass
@@ -11607,7 +11715,7 @@ fn resolve_kotlin_chained_receiver_call(
         let companion_scope = format!("{companion_root}::Companion");
         let mut receiver_path = companion_scope.clone();
         for hop in hops.iter().skip(consumed).take(hops.len() - consumed - 1) {
-            let Some(next_path) = kotlin_chain_hop_type_path(
+            let Some(next_path) = kotlin_chained_receiver_hop_type_path(
                 &receiver_path,
                 hop,
                 source_symbol,
@@ -11674,7 +11782,7 @@ fn resolve_kotlin_chained_receiver_call(
     {
         let mut receiver_path = nested_object_path;
         for hop in hops.iter().skip(2).take(hops.len() - 3) {
-            let Some(next_path) = kotlin_chain_hop_type_path(
+            let Some(next_path) = kotlin_chained_receiver_hop_type_path(
                 &receiver_path,
                 hop,
                 source_symbol,
@@ -11750,6 +11858,31 @@ fn resolve_kotlin_chained_receiver_call(
         )?
     {
         path
+    } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(initializer_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(base_name))
+        && !initializer_name.is_empty()
+        && resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &initializer_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        .is_none()
+        && let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
+            source_symbol,
+            &initializer_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        component_path
     } else if let Some((factory_base, _)) = kotlin_array_access_spelling(hops[0])
         && let Some(function_name) = kotlin_array_factory_call_root_spelling(factory_base)
         && let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
@@ -11772,17 +11905,32 @@ fn resolve_kotlin_chained_receiver_call(
         deadline,
     )? {
         object_path
+    } else if hops.len() >= 3
+        && let Some((factory_hop, _)) = kotlin_array_access_spelling(hops[1])
+        && kotlin_array_factory_call_root_spelling(factory_hop).is_some()
+        && let Some(class_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            hops[0],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        class_path
     } else {
         return Ok(None);
     };
     // Each intermediate hop must resolve to a uniquely declared property whose
-    // explicit type pins the next receiver, or to a method-call hop such as
-    // `inner()` whose declared return type continues the chain; a bare
+    // explicit type pins the next receiver, to a method-call hop such as
+    // `inner()` whose declared return type continues the chain, or to a
+    // factory-call element-access hop such as `makeGroups()[0]` whose declared
+    // single-level array return type pins the element component type; a bare
     // constructor initializer such as `val member = Other()` also pins the
     // type, while generic, nullable, function-call-inferred, ambiguous, and
     // missing hops fail closed.
     for hop in hops.iter().skip(1).take(hops.len() - 2) {
-        let Some(next_path) = kotlin_chain_hop_type_path(
+        let Some(next_path) = kotlin_chained_receiver_hop_type_path(
             &type_path,
             hop,
             source_symbol,

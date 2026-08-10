@@ -258,7 +258,7 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "kotlin-member-chain-after-factory-element-access-v17"
+        "kotlin-cross-file-qualified-factory-element-access-member-chain-v18"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
