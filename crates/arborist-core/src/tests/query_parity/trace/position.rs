@@ -28978,6 +28978,171 @@ fn traces_kotlin_array_property_element_access_hop_receiver_calls_in_live_worksp
 }
 
 #[test]
+fn traces_kotlin_companion_chain_array_element_access_method_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nclass Outer {\n    class Inner {\n        companion object NestedFactory {\n            val groups: Array<Helper> = arrayOf()\n        }\n    }\n}\n\nfun companionMethodCallCaller(): Int {\n    return Config.Factory.groups[0].inner().helper(1)\n}\n\nfun nestedCompanionMethodCallCaller(): Int {\n    return Outer.Inner.NestedFactory.groups[0].inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A companion-chain receiver such as `Config.Factory` or
+    // `Outer.Inner.NestedFactory` followed by an array-property element-access
+    // hop and a method-call hop dispatches the trailing member on the method
+    // hop's declared return type: `groups[0]` resolves on the canonical
+    // companion scope to the array element component `Helper`, `inner()`
+    // resolves on `Helper` to `Item`, and `helper` dispatches on `Item`. The
+    // leading companion hops (`Config.Factory` consumes two, the nested
+    // `Outer.Inner.NestedFactory` consumes three) are covered by the receiver
+    // chain root before the remaining hops are walked.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for expected in [
+        "com::example::companionMethodCallCaller",
+        "com::example::nestedCompanionMethodCallCaller",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for expected in [
+        "com::example::companionMethodCallCaller",
+        "com::example::nestedCompanionMethodCallCaller",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+}
+
+#[test]
+fn kotlin_companion_chain_array_element_access_method_hop_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n        val item: Item = Item()\n    }\n}\n\nclass Other\n\nclass Caller {\n    fun unknownProperty(): Int {\n        return Config.Factory.unknown[0].inner().helper(1)\n    }\n    fun nonArrayProperty(): Int {\n        return Config.Factory.item[0].inner().helper(1)\n    }\n    fun unknownMethodHop(): Int {\n        return Config.Factory.groups[0].missing().helper(1)\n    }\n    fun shadowedRoot(): Int {\n        val Config = Other()\n        return Config.Factory.groups[0].inner().helper(1)\n    }\n    fun unknownRoot(): Int {\n        return Missing.Factory.groups[0].inner().helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Unknown properties, non-array element accesses, unknown method-call
+    // hops, locally shadowed roots, and unknown roots in companion-chain
+    // element-access receivers fail closed instead of producing a caller.
+    let target = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "unknown, non-array, shadowed, and unresolvable companion-chain receivers must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_kotlin_companion_chain_array_element_access_method_hop_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nfun caller(): Int {\n    return Config.Factory.groups[0].inner().helper(1)\n}\n";
+    let target = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_companion_chain_array_element_access_method_hop_receiver_calls_across_files() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Callers.kt");
+    let base_path = dir.join("Types.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\nimport org.util.Outer\n\nfun caller(): Int {\n    return Config.Factory.groups[0].inner().helper(1)\n}\n\nfun nestedCaller(): Int {\n    return Outer.Inner.NestedFactory.groups[0].inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nclass Outer {\n    class Inner {\n        companion object NestedFactory {\n            val groups: Array<Helper> = arrayOf()\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Companion-chain roots resolve across files through the same import
+    // rules as other type receivers: `Config` and `Outer` resolve through the
+    // explicit imports, the nested class `Outer.Inner` walks the nested type
+    // declaration, and the array-property element-access plus method-call hops
+    // dispatch on the imported package's declared types.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for expected in ["com::example::caller", "com::example::nestedCaller"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    for expected in ["com::example::caller", "com::example::nestedCaller"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_array_property_element_access_hop_receiver_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

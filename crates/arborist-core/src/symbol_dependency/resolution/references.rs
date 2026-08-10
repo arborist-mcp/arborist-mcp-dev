@@ -11677,6 +11677,69 @@ fn resolve_kotlin_companion_member(
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
+/// Resolves a companion-chain receiver root such as `Config.Factory`,
+/// `Config.Companion`, `Outer.Inner`, or `Outer.Inner.Companion` to the
+/// canonical dispatch scope and the number of leading hops consumed. The
+/// first hop must resolve to a uniquely declared type and not be shadowed by
+/// a local binding; a second hop naming a companion object (its declared name
+/// or the literal `Companion`) consumes two hops onto the canonical
+/// `{type}::Companion` scope, while a second hop naming a nested class or
+/// interface consumes two hops onto the nested type (or three when a third
+/// hop names its companion). Object declarations cannot host companion
+/// objects. Unknown or ambiguous roots return `None` so callers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_companion_chain_root(
+    source_symbol: &IndexedSymbol,
+    hops: &[&str],
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, usize)>> {
+    if hops.len() < 2
+        || bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        return Ok(None);
+    }
+    let Some(class_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let direct_scope = resolve_kotlin_explicit_companion_scope(
+        &class_path,
+        hops[1],
+        raw_symbols,
+        semantic_path_index,
+    );
+    let nested_path = kotlin_path_nested_class_path(&class_path, hops[1], raw_symbols);
+    match (direct_scope.is_some(), nested_path) {
+        (true, _) => Ok(Some((class_path, 2))),
+        (false, Some(nested_path)) => {
+            let nested_companion = hops.len() >= 4
+                && resolve_kotlin_explicit_companion_scope(
+                    &nested_path,
+                    hops[2],
+                    raw_symbols,
+                    semantic_path_index,
+                )
+                .is_some();
+            Ok(Some((nested_path, if nested_companion { 3 } else { 2 })))
+        }
+        (false, None) => Ok(None),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_chained_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -11709,44 +11772,16 @@ fn resolve_kotlin_chained_receiver_call(
     // `Outer.Inner.Factory.holder.run(...)` dispatch through the nested
     // type's canonical companion scope. A local binding of the same name
     // shadows the class receiver.
-    let companion_chain = if bindings
-        .as_ref()
-        .is_some_and(|bindings| bindings.contains(hops[0]))
-    {
-        None
-    } else if let Some(class_path) = resolve_kotlin_receiver_type_path(
+    let companion_chain = kotlin_companion_chain_root(
         source_symbol,
-        hops[0],
+        &hops,
+        bindings.as_ref(),
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )? {
-        let direct_scope = resolve_kotlin_explicit_companion_scope(
-            &class_path,
-            hops[1],
-            raw_symbols,
-            semantic_path_index,
-        );
-        let nested_path = kotlin_path_nested_class_path(&class_path, hops[1], raw_symbols);
-        match (direct_scope.is_some(), nested_path) {
-            (true, _) => Some((class_path, 2)),
-            (false, Some(nested_path)) => {
-                let nested_companion = hops.len() >= 4
-                    && resolve_kotlin_explicit_companion_scope(
-                        &nested_path,
-                        hops[2],
-                        raw_symbols,
-                        semantic_path_index,
-                    )
-                    .is_some();
-                Some((nested_path, if nested_companion { 3 } else { 2 }))
-            }
-            (false, None) => None,
-        }
-    } else {
-        None
-    };
+    )?;
     if let Some((companion_root, consumed)) = companion_chain {
         let companion_scope = format!("{companion_root}::Companion");
         let mut receiver_path = companion_scope.clone();
@@ -12315,11 +12350,12 @@ fn kotlin_chain_hop_type_path(
     )
 }
 
-/// Resolves a dotted receiver prefix such as `group`, `group.holder`, or
-/// `items[0]` to the terminal receiver type path. The first hop resolves
-/// through the local bindings (parameter, local property, enclosing-class
-/// property, or element-access base) or a named object declaration; each
-/// following hop must resolve as a property or method-call hop. Unknown or
+/// Resolves a dotted receiver prefix such as `group`, `group.holder`,
+/// `items[0]`, or `Config.Factory.groups[0]` to the terminal receiver type
+/// path. The leading receiver resolves through the local bindings (parameter,
+/// local property, enclosing-class property, or element-access base), a
+/// companion-chain root, or a named object declaration; each following hop
+/// must resolve as a property, array-element, or method-call hop. Unknown or
 /// ambiguous receivers and hops fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_receiver_chain_type_path(
@@ -12342,7 +12378,58 @@ fn resolve_kotlin_receiver_chain_type_path(
         kotlin_import_contexts_by_file,
         deadline,
     )?;
-    let mut type_path = if bindings
+    let Some((mut type_path, skip)) = resolve_kotlin_receiver_chain_first_path(
+        source_symbol,
+        &hops,
+        bindings.as_ref(),
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    for hop in hops.iter().skip(skip) {
+        let Some(next_path) = kotlin_chain_hop_type_path(
+            &type_path,
+            hop,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path = next_path;
+    }
+    Ok(Some(type_path))
+}
+
+/// Resolves the leading receiver of a dotted receiver prefix to a type path
+/// and the number of leading hops that path already covers. A bound receiver
+/// resolves through its declared or element-access-inferred type; a
+/// companion-chain root such as `Config.Factory` or `Outer.Inner.Companion`
+/// resolves to the canonical `{type}::Companion` scope and consumes its
+/// leading hops; otherwise the first hop must be a named object declaration
+/// or a locally bound array component. Unknown or ambiguous receivers fail
+/// closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_receiver_chain_first_path(
+    source_symbol: &IndexedSymbol,
+    hops: &[&str],
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, usize)>> {
+    if bindings
         .as_ref()
         .is_some_and(|bindings| bindings.contains(hops[0]))
     {
@@ -12361,14 +12448,15 @@ fn resolve_kotlin_receiver_chain_type_path(
             else {
                 return Ok(None);
             };
-            path
-        } else if let Some(base) = bindings
+            return Ok(Some((path, 1)));
+        }
+        if let Some(base) = bindings
             .as_ref()
             .and_then(|bindings| bindings.element_access_base_for(hops[0]))
             && let Some(component_path) = resolve_kotlin_element_access_base_component_type_path(
                 source_symbol,
                 &base,
-                bindings.as_ref(),
+                bindings,
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
@@ -12376,16 +12464,11 @@ fn resolve_kotlin_receiver_chain_type_path(
                 deadline,
             )?
         {
-            // A `val` bound from a qualified element-access initializer such
-            // as `val first = makeItems()[0]` or
-            // `val first = group.fieldItems[0]` has no usable type until the
-            // base's terminal array element component type is resolved; the
-            // receiver chain continues from that component type.
-            component_path
-        } else {
-            return Ok(None);
+            return Ok(Some((component_path, 1)));
         }
-    } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        return Ok(None);
+    }
+    if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
         && let Some(component_type) = bindings
             .as_ref()
             .and_then(|bindings| bindings.array_component_for(base_name))
@@ -12398,8 +12481,21 @@ fn resolve_kotlin_receiver_chain_type_path(
             deadline,
         )?
     {
-        path
-    } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
+        return Ok(Some((path, 1)));
+    }
+    if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
+        source_symbol,
+        hops,
+        bindings,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some((format!("{companion_root}::Companion"), consumed)));
+    }
+    if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
         hops[0],
         raw_symbols,
@@ -12407,27 +12503,9 @@ fn resolve_kotlin_receiver_chain_type_path(
         kotlin_import_contexts_by_file,
         deadline,
     )? {
-        object_path
-    } else {
-        return Ok(None);
-    };
-    for hop in hops.iter().skip(1) {
-        let Some(next_path) = kotlin_chain_hop_type_path(
-            &type_path,
-            hop,
-            source_symbol,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        type_path = next_path;
+        return Ok(Some((object_path, 1)));
     }
-    Ok(Some(type_path))
+    Ok(None)
 }
 
 /// Resolves the declared type path of `property_name` on `owner_type_path`. A
