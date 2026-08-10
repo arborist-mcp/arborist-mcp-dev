@@ -19870,6 +19870,114 @@ fn traces_kotlin_property_chain_receiver_calls_to_extension_functions_in_live_wo
 }
 
 #[test]
+fn traces_kotlin_cross_file_property_chain_receiver_calls_to_extension_functions_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\nimport org.util.helper\n\nclass Holder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other\n\nfun Other.helper(value: Int): Int = value\n\nclass Group {\n    val member: Other = Other()\n}\n",
+    )
+    .unwrap();
+
+    // A property hop pinned to an imported class pins the receiver for the
+    // trailing member call, and the trailing call dispatches to the imported
+    // extension function declared on that receiver type in its own package.
+    let helper_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_receiver_calls_to_extension_functions_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other\n\nfun Other.helper(value: Int): Int = value\n\nclass Group {\n    val member: Other = Other()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Group\nimport org.util.helper\n\nclass Holder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.helper(1)\n    }\n}\n";
+    let target = "org::util::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn kotlin_cross_file_property_chain_receiver_calls_to_extension_functions_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\nimport org.util.helper\n\nclass MissingHolder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.missing(1)\n    }\n}\nclass Control {\n    fun run(): Int {\n        val group = Group()\n        return group.member.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other\n\nfun Other.helper(value: Int): Int = value\n\nclass Group {\n    val member: Other = Other()\n}\n",
+    )
+    .unwrap();
+
+    // A trailing member call whose extension is not imported fails closed; only
+    // the property chain pinned to the imported extension in `Control` traces.
+    let target = "org::util::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Control::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Control::run");
+}
+
+#[test]
 fn traces_kotlin_constructor_inferred_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
