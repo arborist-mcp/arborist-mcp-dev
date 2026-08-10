@@ -25585,6 +25585,139 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_companion_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nfun namedFactoryCaller(): Int {\n    return Config.Factory.holder.run(1)\n}\n\nfun explicitCompanionCaller(): Int {\n    return Config.Companion.holder.run(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\nclass Config {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Companion property chains resolve each intermediate property's declared
+    // type within the companion scope, and a companion declared in an imported
+    // package resolves the property type in the declaring type's own package so
+    // the trailing member dispatches across packages.
+    let run_path = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::explicitCompanionCaller",
+            "com::example::namedFactoryCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::explicitCompanionCaller",
+            "com::example::namedFactoryCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_companion_property_chain_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\nclass Config {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Config\n\nfun caller(): Int {\n    return Config.Factory.holder.run(1)\n}\n";
+    let target = "org::util::Holder::run";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_companion_property_chain_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Broken\nimport org.util.Good\n\nfun missingTypeCaller(): Int {\n    return Broken.Companion.holder.run(1)\n}\n\nfun missingHopCaller(): Int {\n    return Good.Factory.missing.run(1)\n}\n\nfun control(): Int {\n    return Good.Factory.holder.run(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\nclass Broken {\n    companion object {\n        val holder: Missing = Missing()\n    }\n}\nclass Good {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A companion property whose declared type is unresolvable and an unknown
+    // companion chain hop both fail closed; only the uniquely resolvable
+    // imported companion property chain in `control` traces.
+    let run_path = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_array_access_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let caller_path = dir.join("Caller.kt");
