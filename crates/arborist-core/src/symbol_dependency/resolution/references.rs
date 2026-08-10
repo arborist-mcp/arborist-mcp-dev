@@ -11300,7 +11300,6 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
             kotlin_property_type_path(
                 &current_path,
                 hop,
-                source_symbol,
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
@@ -11969,7 +11968,6 @@ fn kotlin_chain_hop_type_path(
     kotlin_property_type_path(
         owner_type_path,
         hop,
-        source_symbol,
         raw_symbols,
         semantic_path_index,
         file_overrides,
@@ -12074,13 +12072,13 @@ fn resolve_kotlin_receiver_chain_type_path(
 
 /// Resolves the declared type path of `property_name` on `owner_type_path`. A
 /// unique property resolves when it carries an explicit simple, non-nullable
-/// type or a bare constructor initializer; generic, nullable, function-call
+/// type or a bare constructor initializer; the declared type resolves in the
+/// property's own file and enclosing scope. Generic, nullable, function-call
 /// inferred, and ambiguous property types fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_type_path(
     owner_type_path: &str,
     property_name: &str,
-    source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -12123,7 +12121,7 @@ fn kotlin_property_type_path(
                     return Ok(None);
                 };
                 return resolve_kotlin_initializer_type_path(
-                    source_symbol,
+                    &raw_symbols[index],
                     &type_name,
                     raw_symbols,
                     file_overrides,
@@ -12172,7 +12170,7 @@ fn kotlin_property_type_path(
                     return Ok(None);
                 };
                 return resolve_kotlin_initializer_type_path(
-                    source_symbol,
+                    &raw_symbols[index],
                     &type_name,
                     raw_symbols,
                     file_overrides,
@@ -12192,7 +12190,7 @@ fn kotlin_property_type_path(
         return Ok(None);
     };
     resolve_kotlin_initializer_type_path(
-        source_symbol,
+        &raw_symbols[candidates[0]],
         &type_name,
         raw_symbols,
         file_overrides,
