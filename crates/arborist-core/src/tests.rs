@@ -51,6 +51,7 @@ mod c_patching;
 mod c_symbol_graph;
 mod index_refresh;
 mod javascript_patching;
+mod language_fixtures;
 mod language_invariants;
 mod patch_bindings;
 mod patch_preview_timeout;
