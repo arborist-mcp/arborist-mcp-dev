@@ -258,7 +258,7 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "kotlin-companion-chain-element-access-method-hop-v21"
+        "kotlin-var-companion-chain-element-access-inferred-chain-v22"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,

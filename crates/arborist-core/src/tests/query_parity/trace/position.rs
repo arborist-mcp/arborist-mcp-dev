@@ -29059,6 +29059,160 @@ fn kotlin_companion_chain_array_element_access_method_hop_receiver_calls_fail_cl
 }
 
 #[test]
+fn traces_kotlin_var_companion_chain_element_access_inferred_member_chains_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    val items: Array<Entry> = arrayOf()\n    fun inner(): Item = item\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nclass Outer {\n    class Inner {\n        companion object NestedFactory {\n            val groups: Array<Helper> = arrayOf()\n        }\n    }\n}\n\nfun caller(): Int {\n    val first = Config.Factory.groups[0]\n    return first.inner().helper(1) + first.item.helper(2)\n}\n\nfun nestedCaller(): Int {\n    val nested = Outer.Inner.NestedFactory.groups[0]\n    return nested.inner().helper(3)\n}\n\nfun canonicalCaller(): Int {\n    val canonical = Config.Companion.groups[0]\n    return canonical.inner().helper(4)\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access on a companion-chain array
+    // property such as `val first = Config.Factory.groups[0]` infers the base
+    // array's element component type from the canonical companion scope, so
+    // trailing property (`first.item.helper(...)`) and method-call
+    // (`first.inner().helper(...)`) hops dispatch on the inferred type. Named
+    // (`Config.Factory`), nested (`Outer.Inner.NestedFactory`), and canonical
+    // (`Config.Companion`) companion spellings consume their leading hops
+    // before the element access resolves on the companion scope.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for expected in [
+        "com::example::caller",
+        "com::example::nestedCaller",
+        "com::example::canonicalCaller",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for expected in [
+        "com::example::caller",
+        "com::example::nestedCaller",
+        "com::example::canonicalCaller",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_var_companion_chain_element_access_inferred_member_chains_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nfun caller(): Int {\n    val first = Config.Factory.groups[0]\n    return first.inner().helper(1)\n}\n";
+    let target = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_var_companion_chain_element_access_inferred_member_chains_across_files() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Callers.kt");
+    let base_path = dir.join("Types.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nfun caller(): Int {\n    val first = Config.Factory.groups[0]\n    return first.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n",
+    )
+    .unwrap();
+
+    // The companion-chain element-access base resolves across files through
+    // the explicit import: `Config` pins the imported type, `Factory` consumes
+    // onto its canonical companion scope, and `groups[0]` resolves the array
+    // property's element component type in the imported package before the
+    // trailing method-call hop dispatches on it.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_var_companion_chain_element_access_inferred_member_chains_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Other\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n        val item: Item = Item()\n    }\n}\n\nclass Caller {\n    fun unknownPropertyBase(): Int {\n        val first = Config.Factory.unknown[0]\n        return first.inner().helper(1)\n    }\n    fun nonArrayBase(): Int {\n        val first = Config.Factory.item[0]\n        return first.inner().helper(1)\n    }\n    fun directCompanionAccess(): Int {\n        val first = Config.Factory[0]\n        return first.inner().helper(1)\n    }\n    fun shadowedRoot(): Int {\n        val Config = Other()\n        val first = Config.Factory.groups[0]\n        return first.inner().helper(1)\n    }\n    fun unknownRoot(): Int {\n        val first = Missing.Factory.groups[0]\n        return first.inner().helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Unknown array-property bases, non-array element accesses, element
+    // accesses directly on the companion object itself, locally shadowed
+    // roots, and unknown roots in companion-chain element-access bases fail
+    // closed instead of producing a caller.
+    let target = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "unknown, non-array, direct-companion, shadowed, and unresolvable companion-chain element-access bases must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_companion_chain_array_element_access_method_hop_receiver_calls_from_dirty_vfs_overrides()
  {
     let dir = temporary_dir();

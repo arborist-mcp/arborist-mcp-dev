@@ -11465,7 +11465,8 @@ fn resolve_kotlin_element_access_base_component_type_path(
     if first_hop.is_empty() || chain.is_empty() {
         return Ok(None);
     }
-    let mut current_path = if first_hop == "super" {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    let (mut current_path, skip) = if first_hop == "super" {
         // A `super`-rooted base such as `val x = super.inheritedItems[0]`
         // starts on the direct superclass path; a class without a resolvable
         // superclass fails closed.
@@ -11479,7 +11480,7 @@ fn resolve_kotlin_element_access_base_component_type_path(
         else {
             return Ok(None);
         };
-        superclass_path
+        (superclass_path, 0)
     } else if let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop))
     {
         let Some(type_path) = resolve_kotlin_initializer_type_path(
@@ -11493,7 +11494,7 @@ fn resolve_kotlin_element_access_base_component_type_path(
         else {
             return Ok(None);
         };
-        type_path
+        (type_path, 0)
     } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
         first_hop,
@@ -11508,42 +11509,66 @@ fn resolve_kotlin_element_access_base_component_type_path(
         // declared on the object itself. The object name resolves from the
         // same package or an explicit import; unknown or ambiguous objects
         // fail closed.
-        object_path
+        (object_path, 0)
     } else {
         // An unbound first hop names a type whose terminal array property
         // lives on its companion object, the Kotlin analog of a Java static
         // field such as `Util.fieldItems` in `val x = Util.fieldItems[0]`.
-        // The class must declare a companion object; anonymous companions are
-        // discovered through their `Type::Companion::` member scope while
-        // named companions surface as an indexed `companion_object` symbol.
+        // A named or nested companion hop such as `Config.Factory.groups` or
+        // `Outer.Inner.Factory.groups` consumes the leading companion hops
+        // onto the canonical companion scope, and the class must otherwise
+        // declare a companion object; anonymous companions are discovered
+        // through their `Type::Companion::` member scope while named
+        // companions surface as an indexed `companion_object` symbol.
         // Missing, ambiguous, or non-class roots fail closed.
-        let Some(type_path) = resolve_kotlin_receiver_type_path(
+        let mut base_hops = Vec::with_capacity(hops.len() + 1);
+        base_hops.push(first_hop);
+        base_hops.extend(hops.iter().copied());
+        if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
             source_symbol,
-            first_hop,
+            &base_hops,
+            bindings,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        let companion_scope_prefix = format!("{type_path}::Companion::");
-        let companion_exists = semantic_path_index.iter().any(|(path, indexes)| {
-            path.starts_with(&companion_scope_prefix)
-                || indexes.iter().copied().any(|index| {
-                    let candidate = &raw_symbols[index];
-                    candidate.node_kind == "companion_object"
-                        && candidate.scope_path.as_deref() == Some(type_path.as_str())
-                })
-        });
-        if !companion_exists {
-            return Ok(None);
+        )? {
+            // The companion root must leave at least the terminal array
+            // property hop, so an element access directly on the companion
+            // object itself such as `Config.Factory[0]` still fails closed.
+            if consumed >= base_hops.len() {
+                return Ok(None);
+            }
+            (format!("{companion_root}::Companion"), consumed - 1)
+        } else {
+            let Some(type_path) = resolve_kotlin_receiver_type_path(
+                source_symbol,
+                first_hop,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let companion_scope_prefix = format!("{type_path}::Companion::");
+            let companion_exists = semantic_path_index.iter().any(|(path, indexes)| {
+                path.starts_with(&companion_scope_prefix)
+                    || indexes.iter().copied().any(|index| {
+                        let candidate = &raw_symbols[index];
+                        candidate.node_kind == "companion_object"
+                            && candidate.scope_path.as_deref() == Some(type_path.as_str())
+                    })
+            });
+            if !companion_exists {
+                return Ok(None);
+            }
+            (format!("{type_path}::Companion"), 0)
         }
-        format!("{type_path}::Companion")
     };
-    let hops = chain.split('.').collect::<Vec<_>>();
-    for (index, hop) in hops.iter().enumerate() {
+    for (index, hop) in hops.iter().enumerate().skip(skip) {
         let is_terminal = index + 1 == hops.len();
         let next_path = if is_terminal {
             kotlin_array_property_component_type_path(
