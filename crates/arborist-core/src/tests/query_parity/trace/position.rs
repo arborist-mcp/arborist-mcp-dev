@@ -19412,6 +19412,140 @@ fn traces_kotlin_enclosing_type_members_and_package_functions_in_live_workspace_
 }
 
 #[test]
+fn traces_kotlin_cross_file_enclosing_type_members_and_package_functions_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.helper\n\nclass Counter {\n    fun own(): Int = 1\n    fun caller(): Int = own() + helper(2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    // A member function can call its own enclosing-type member and an
+    // explicitly imported top-level function from another package; both the
+    // member and the imported package function resolve to their own symbols.
+    let helper_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Counter::caller");
+
+    let own_path = "com::example::Counter::own";
+    let own_live = trace_symbol_graph(&dir, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(own_live.indexed_files, 2);
+    assert_eq!(own_live.callers.len(), 1);
+    assert_eq!(
+        own_live.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+    let own_persisted =
+        trace_symbol_graph_from_index(&db_path, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(own_persisted.indexed_files, 2);
+    assert_eq!(own_persisted.callers.len(), 1);
+    assert_eq!(
+        own_persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_enclosing_type_members_and_package_functions_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.helper\n\nclass Counter {\n    fun caller(): Int = helper(1)\n}\n";
+    let target = "org::util::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Counter::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+}
+
+#[test]
+fn kotlin_cross_file_enclosing_type_members_and_package_functions_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.helper\n\nclass Counter {\n    fun caller(): Int = unrelatedHelper(1)\n}\n\nclass Control {\n    fun caller(): Int = helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    // A call to an unresolvable package-level function fails closed, while an
+    // explicitly imported package function still dispatches across packages.
+    let helper_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Control::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Control::caller"
+    );
+}
+
+#[test]
 fn handles_kotlin_ambiguous_package_names_and_qualified_receiver_calls() {
     let dir = temporary_dir();
     let first = dir.join("First.kt");
