@@ -26261,6 +26261,130 @@ fn traces_kotlin_nullable_this_and_super_rooted_member_calls_in_live_workspace_a
 }
 
 #[test]
+fn traces_kotlin_cross_file_nullable_this_and_super_rooted_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Entry\n\nclass Holder : Base() {\n    val member: Entry? = Entry()\n    fun run(): Int {\n        return this.member.helper(1) + super.entry.helper(2) + super.baseHelper(3)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry? = Entry()\n    fun baseHelper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Nullable `this`-rooted property hops and nullable `super`-rooted property
+    // hops declared on an imported superclass normalize to the underlying
+    // declared types, and direct `super.`-rooted calls dispatch on the imported
+    // direct superclass as usual.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    let base_helper = "org::util::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_cross_file_nullable_this_and_super_rooted_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Entry\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry? = Entry()\n    fun baseHelper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Base\nimport org.util.Entry\n\nclass Holder : Base() {\n    val member: Entry? = Entry()\n    fun run(): Int {\n        return this.member.helper(1) + super.entry.helper(2) + super.baseHelper(3)\n    }\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn kotlin_cross_file_nullable_this_and_super_rooted_member_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Entry\n\nclass UnknownHop : Base() {\n    fun run(): Int {\n        return this.missing.helper(1) + super.missing.helper(2)\n    }\n}\nclass Control : Base() {\n    val member: Entry? = Entry()\n    fun run(): Int {\n        return this.member.helper(1) + super.entry.helper(2) + super.baseHelper(3)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry? = Entry()\n    fun baseHelper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Unknown nullable `this`- and `super`-rooted property hops both fail
+    // closed across packages; only the resolvable nullable hops in `Control`
+    // trace.
+    let target = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Control::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Control::run");
+}
+
+#[test]
 fn traces_kotlin_nullable_receiver_member_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
