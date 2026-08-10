@@ -30139,6 +30139,154 @@ fn kotlin_nullable_receiver_member_calls_fail_closed_for_unsupported_references(
 }
 
 #[test]
+fn traces_kotlin_cross_file_nullable_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Box.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Box\nimport org.util.Entry\n\nclass Group {\n    val member: Entry? = Entry()\n    fun inner(): Entry? = Entry()\n}\n\nfun makeBox(): Box<String>? = Box<String>()\nfun makeEntry(): Entry? = Entry()\n\nfun caller(box: Box?): Int {\n    return box.entry.helper(1) + box.helper(2)\n}\n\nfun genericCaller(box: Box<String>?): Int {\n    return box.entry.helper(1) + box.helper(2)\n}\n\nfun chain(group: Group): Int {\n    return group.member.helper(1) + group.inner().helper(2)\n}\n\nfun local(): Int {\n    val other = makeBox()\n    return other.helper(1)\n}\n\nfun localEntry(): Int {\n    val e = makeEntry()\n    return e.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Nullable declared spellings such as `Box?`, `Box<String>?`, and
+    // `Entry?` normalize to the underlying raw base type for bound parameters,
+    // property hops, method-return hops, factory returns, and factory-inferred
+    // local bindings, so the trailing member dispatches on the same imported
+    // raw class declaration as the non-nullable spelling.
+    for target in ["org::util::Entry::helper", "org::util::Box::helper"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, target);
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        let expected = if target == "org::util::Entry::helper" {
+            vec![
+                "com::example::caller",
+                "com::example::chain",
+                "com::example::genericCaller",
+                "com::example::localEntry",
+            ]
+        } else {
+            vec![
+                "com::example::caller",
+                "com::example::genericCaller",
+                "com::example::local",
+            ]
+        };
+        assert_eq!(callers, expected, "{target} live");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["org::util::Entry::helper", "org::util::Box::helper"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        let expected = if target == "org::util::Entry::helper" {
+            vec![
+                "com::example::caller",
+                "com::example::chain",
+                "com::example::genericCaller",
+                "com::example::localEntry",
+            ]
+        } else {
+            vec![
+                "com::example::caller",
+                "com::example::genericCaller",
+                "com::example::local",
+            ]
+        };
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_nullable_receiver_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Box.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Box\nimport org.util.Entry\n\nfun caller(box: Box?): Int {\n    return box.entry.helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_nullable_receiver_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Box.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Box\nimport org.util.Entry\n\nfun makeUnknown(): UnknownBox? = TODO()\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\n",
+    )
+    .unwrap();
+
+    // An unknown nullable hop, a missing final member, and an unresolvable
+    // nullable factory return type all fail closed across packages; only the
+    // resolvable nullable receiver in `control` traces.
+    let target = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_nullable_class_receiver_hierarchy_member_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
