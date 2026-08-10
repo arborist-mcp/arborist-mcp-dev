@@ -71,6 +71,59 @@ mod tests {
     }
 
     #[test]
+    fn graph_with_diagnostics_sink_records_unresolved_and_ambiguous_references() {
+        use crate::diagnostics::{DiagnosticCategory, DiagnosticsSink};
+
+        let mut root = test_symbol();
+        root.references = vec!["caller".to_string(), "missing".to_string()];
+
+        let caller_a = SymbolMeta::new(SymbolMetaInit {
+            symbol_id: "caller".to_string(),
+            semantic_path: "caller".to_string(),
+            scope_path: None,
+            file_path: "a.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        });
+        let caller_b = SymbolMeta {
+            file_path: "b.py".to_string(),
+            ..caller_a.clone()
+        };
+
+        let resolved = vec![root.clone(), caller_a, caller_b];
+        let mut sink = DiagnosticsSink::default();
+        let deadline = TraceQueryDeadline::new(None).expect("unbounded deadline should be valid");
+
+        let result = super::graph::trace_from_symbol_with_deadline_and_diagnostics(
+            &resolved,
+            1,
+            &root,
+            TraceDirection::Callers,
+            &deadline,
+            Some(&mut sink),
+        )
+        .expect("graph expansion should succeed");
+
+        assert_eq!(result.callers.len(), 1);
+        let records = sink.records();
+        assert!(records.iter().any(|record| {
+            record.category == DiagnosticCategory::AmbiguousReference
+                && record.semantic_path.as_deref() == Some("caller")
+        }));
+        assert!(records.iter().any(|record| {
+            record.category == DiagnosticCategory::UnresolvedReference
+                && record.semantic_path.as_deref() == Some("missing")
+        }));
+    }
+
+    #[test]
     fn graph_expansion_reuses_the_callers_deadline() {
         let symbol = test_symbol();
         let deadline = TraceQueryDeadline::expired_for_tests(1);
@@ -182,9 +235,14 @@ mod tests {
         });
         let deadline = TraceQueryDeadline::expired_for_tests(1);
 
-        let error =
-            summarize_symbols_with_deadline(&[symbol], &[String::from("helper")], None, &deadline)
-                .expect_err("expired summary deadline should fail");
+        let error = summarize_symbols_with_deadline(
+            &[symbol],
+            &[String::from("helper")],
+            None,
+            &deadline,
+            None,
+        )
+        .expect_err("expired summary deadline should fail");
         assert!(error.to_string().contains("trace timeout exceeded"));
     }
 

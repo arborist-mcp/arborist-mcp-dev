@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::diagnostics::DiagnosticsSink;
 use crate::model::{SymbolMeta, SymbolSummary, SymbolSummaryInit, TraceEvidenceKeys};
 use crate::symbol_dependency::c_include_context_for_file;
 use crate::symbol_trace::TraceQueryDeadline;
@@ -11,6 +12,7 @@ pub(crate) fn summarize_symbols_with_deadline(
     semantic_paths: &[String],
     context_file: Option<&str>,
     deadline: &TraceQueryDeadline,
+    mut diagnostics: Option<&mut DiagnosticsSink>,
 ) -> Result<Vec<SymbolSummary>> {
     let include_context = context_file.and_then(|file| c_include_context_for_file(file).ok());
     let mut summaries = Vec::with_capacity(semantic_paths.len());
@@ -22,6 +24,7 @@ pub(crate) fn summarize_symbols_with_deadline(
             semantic_path,
             context_file,
             include_context.as_ref(),
+            diagnostics.as_deref_mut(),
         ) {
             summaries.push(summary);
         }
