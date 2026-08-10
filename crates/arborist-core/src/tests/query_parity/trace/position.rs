@@ -25585,6 +25585,133 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_generic_interface_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Renderer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Derived\n\nfun propertyCaller(renderer: Derived<String>): Int {\n    return renderer.entry.helper(1)\n}\n\nfun methodCaller(renderer: Derived<String>): Int {\n    return renderer.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Base<T> {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n",
+    )
+    .unwrap();
+
+    // The generic interface extends chain resolves parent interfaces in each
+    // interface's own file and package scope, so a caller in another package
+    // dispatches property and method-call hops declared on the raw generic
+    // base with the hop type resolved in the declaring interface's own package.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_generic_interface_chain_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Renderer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Derived\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Base<T> {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Derived\n\nfun caller(renderer: Derived<String>): Int {\n    return renderer.entry.helper(1) + renderer.inner().helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_generic_interface_chain_hop_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Renderer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Derived\nimport org.util.Root\n\nfun missingHopCaller(renderer: Derived<String>): Int {\n    return renderer.inner().helper(1)\n}\n\nfun missingPropertyCaller(renderer: Derived<String>): Int {\n    return renderer.entry.helper(1)\n}\n\nclass Good : Root\n\nfun control(good: Good): Int {\n    return good.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    val entry: Entry\n}\ninterface Base<T> {\n    val entry: Missing\n    fun inner(): Missing\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n",
+    )
+    .unwrap();
+
+    // Generic interface chain hops whose declared type is unresolvable fail
+    // closed for both property and method-call hops; only the uniquely
+    // resolvable imported interface property hop in `control` traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_diamond_interface_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
