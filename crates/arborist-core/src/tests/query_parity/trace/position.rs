@@ -25585,6 +25585,141 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_constructor_inferred_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\n\nfun caller(): Int {\n    val group = Group()\n    return group.inferred.helper(1)\n}\n\nfun secondCaller(): Int {\n    val group = Group()\n    return group.inferred.helper(2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val inferred = Other()\n}\n",
+    )
+    .unwrap();
+
+    // A property without an explicit declared type whose initializer is a
+    // bare-identifier constructor call such as `val inferred = Other()`
+    // pins the hop through the imported constructed type, so the trailing
+    // member dispatches across packages.
+    let helper_path = "org::util::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::secondCaller")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::secondCaller")
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_constructor_inferred_property_chain_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val inferred = Other()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Group\n\nfun caller(): Int {\n    val group = Group()\n    return group.inferred.helper(1)\n}\n";
+    let helper_path = "org::util::Other::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_constructor_inferred_property_chain_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\n\nfun missingPropertyCaller(): Int {\n    val group = Group()\n    return group.absent.helper(1)\n}\n\nfun undeclaredReturnCaller(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n\nfun control(): Int {\n    val group = Group()\n    return group.inferred.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val inferred = Other()\n    val derived = makeOther()\n}\nfun makeOther() = Other()\n",
+    )
+    .unwrap();
+
+    // A missing property and a property whose factory initializer has no
+    // declared return type both fail closed even when the enclosing type is
+    // declared in an imported package; only the constructor-inferred property
+    // chain in `control` traces.
+    let helper_path = "org::util::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_nullable_reference_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
