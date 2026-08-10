@@ -11172,10 +11172,11 @@ fn kotlin_delegation_specifier_type_name(
 /// resolves through the same factory rules as a direct factory-call
 /// element-access receiver. Otherwise the base's first hop must be `super`
 /// (the direct superclass path), a bound receiver with a usable declared
-/// type, or an unbound type whose terminal property lives on its companion
-/// object; intermediate hops walk the same property-type rules as chained
-/// receivers, and the terminal hop must be a uniquely declared single-level
-/// array property whose element component type receives the dispatch.
+/// type, a named object whose terminal property lives on the object itself,
+/// or an unbound type whose terminal property lives on its companion object;
+/// intermediate hops walk the same property-type rules as chained receivers,
+/// and the terminal hop must be a uniquely declared single-level array
+/// property whose element component type receives the dispatch.
 /// Unbound or non-array first hops, unknown or non-array terminal properties,
 /// and unresolvable intermediate hops fail closed.
 #[allow(clippy::too_many_arguments)]
@@ -11250,6 +11251,21 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
             return Ok(None);
         };
         type_path
+    } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
+        source_symbol,
+        first_hop,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        // An unbound first hop that names a declared object such as
+        // `Factory.fieldItems` in `val x = Factory.fieldItems[0]` starts on
+        // the object's own scope, so the terminal array property must be
+        // declared on the object itself. The object name resolves from the
+        // same package or an explicit import; unknown or ambiguous objects
+        // fail closed.
+        object_path
     } else {
         // An unbound first hop names a type whose terminal array property
         // lives on its companion object, the Kotlin analog of a Java static
