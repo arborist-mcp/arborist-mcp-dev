@@ -31156,6 +31156,118 @@ fn kotlin_class_receiver_diamond_interface_chain_hop_calls_fail_closed_for_unsup
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
+
+#[test]
+fn traces_kotlin_cross_file_class_receiver_diamond_interface_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Interfaces.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Left\nimport org.util.Right\nimport org.util.Root\n\ninterface Diamond : Left, Right\nclass Impl : Diamond\n\nfun hopCaller(impl: Impl): Int {\n    return impl.inner().helper(1) + impl.entry.helper(2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Left : Root\ninterface Right : Root\n",
+    )
+    .unwrap();
+
+    // Property and method-call hops on a class-typed receiver resolve through
+    // a diamond-shaped implemented-interface graph exactly once, so hops
+    // declared on the imported shared ancestor continue the chain on the
+    // inherited declared type across packages.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::hopCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::hopCaller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_class_receiver_diamond_interface_chain_hop_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Interfaces.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    fun inner(): Entry\n}\ninterface Left : Root\ninterface Right : Root\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Left\nimport org.util.Right\nimport org.util.Root\n\ninterface Diamond : Left, Right\nclass Impl : Diamond\n\nfun caller(impl: Impl): Int {\n    return impl.inner().helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_class_receiver_diamond_interface_chain_hop_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Interfaces.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Root\n\ninterface Left {\n    fun inner(): Entry\n}\ninterface Right {\n    fun inner(): Entry\n}\ninterface Competing : Left, Right\ninterface Bad : Missing\ninterface Blocked : Left, Bad\ninterface Good : Root\n\nclass CompetingImpl : Competing\nclass BlockedImpl : Blocked\nclass Control : Good\n\nfun competingCaller(competing: CompetingImpl): Int {\n    return competing.inner().helper(1)\n}\n\nfun blockedCaller(blocked: BlockedImpl): Int {\n    return blocked.inner().helper(1)\n}\n\nfun control(control: Control): Int {\n    return control.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    fun inner(): Entry\n}\n",
+    )
+    .unwrap();
+
+    // Competing hop declarations across diamond branches and a branch with an
+    // unresolvable parent both fail closed through the class receiver; only
+    // the uniquely resolvable inherited hop in `control` traces across
+    // packages.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
 #[test]
 fn traces_kotlin_interface_receiver_diamond_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
  {
