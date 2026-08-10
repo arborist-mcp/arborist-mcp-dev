@@ -377,3 +377,37 @@ fn indexed_symbols_are_reused_across_rebuilds_for_every_language() {
         "unchanged sources must produce identical symbol counts"
     );
 }
+
+#[test]
+fn symbol_extraction_respects_expired_deadlines_for_every_language() {
+    use std::time::{Duration, Instant};
+
+    use crate::symbol_extractor::index_symbols_from_document_with_deadline;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    let deadline = WorkspaceScanDeadline {
+        deadline: Some(Instant::now() - Duration::from_millis(1)),
+        timeout_ms: Some(1),
+    };
+    for language_id in registered_languages() {
+        let path = sample_path(language_id);
+        let source = sample_source(language_id);
+        let document = parse_document(&path, source)
+            .unwrap_or_else(|error| panic!("{language_id:?} sample must parse: {error}"));
+        let error = match index_symbols_from_document_with_deadline(
+            &path,
+            source,
+            &document,
+            Some(&deadline),
+        ) {
+            Ok(_) => panic!("{language_id:?} must reject an expired extraction deadline"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded"),
+            "{language_id:?} extraction must fail with the workspace scan timeout: {error}"
+        );
+    }
+}
