@@ -25585,6 +25585,146 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_nullable_class_receiver_hierarchy_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Root\n\nclass Derived : Base()\nclass Impl : Root\n\nfun superPropertyCaller(derived: Derived?): Int {\n    return derived.entry.helper(1)\n}\n\nfun superMethodCaller(derived: Derived?): Int {\n    return derived.inner().helper(1)\n}\n\nfun ifacePropertyCaller(impl: Impl?): Int {\n    return impl.entry.helper(1)\n}\n\nfun ifaceMethodCaller(impl: Impl?): Int {\n    return impl.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n    fun inner(): Entry = Entry()\n}\ninterface Root {\n    val entry: Entry\n    fun inner(): Entry\n}\n",
+    )
+    .unwrap();
+
+    // A nullable class-typed receiver normalizes to its raw class before the
+    // same class-hierarchy dispatch, so property and method-call hops declared
+    // on an imported superclass or implemented interface still trace with the
+    // hop type resolved in the declaring type's own package.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::ifaceMethodCaller",
+            "com::example::ifacePropertyCaller",
+            "com::example::superMethodCaller",
+            "com::example::superPropertyCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::ifaceMethodCaller",
+            "com::example::ifacePropertyCaller",
+            "com::example::superMethodCaller",
+            "com::example::superPropertyCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_nullable_class_receiver_hierarchy_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nopen class Base {\n    val entry: Entry = Entry()\n    fun inner(): Entry = Entry()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Base\n\nclass Derived : Base()\n\nfun caller(derived: Derived?): Int {\n    return derived.entry.helper(1) + derived.inner().helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_nullable_class_receiver_hierarchy_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Root\n\nclass BlockedSuper : MissingBase()\nclass MissingImpl : MissingRoot\nclass Good : Root\n\nfun superMissingCaller(derived: BlockedSuper?): Int {\n    return derived.entry.helper(1)\n}\n\nfun ifaceMissingCaller(impl: MissingImpl?): Int {\n    return impl.entry.helper(1)\n}\n\nfun control(good: Good?): Int {\n    return good.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    val entry: Entry\n}\n",
+    )
+    .unwrap();
+
+    // An unresolvable imported superclass and an unresolvable imported
+    // implemented interface both fail closed for nullable class-receiver
+    // hierarchy hops; only the uniquely resolvable imported interface hop in
+    // `control` traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_aliased_type_import_class_receiver_hierarchy_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
