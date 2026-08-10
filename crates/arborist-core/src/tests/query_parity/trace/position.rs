@@ -21961,6 +21961,137 @@ fn traces_kotlin_named_companion_receiver_member_calls_in_live_workspace_and_per
 }
 
 #[test]
+fn traces_kotlin_cross_file_named_companion_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nfun canonicalCaller(): Int = Config.Companion.helper(1)\n\nfun namedCaller(): Int = Config.Factory.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Config {\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A named companion object declared in an explicitly imported package is
+    // indexed under its declared name, so both the canonical `Companion`
+    // spelling and the declared name resolve to the same canonical
+    // companion-member ID across packages.
+    let helper_path = "org::util::Config::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    let mut caller_ids = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    let mut persisted_ids = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    persisted_ids.sort_unstable();
+    assert_eq!(
+        persisted_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_named_companion_receiver_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Config {\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Config\n\nfun caller(): Int = Config.Factory.helper(1)\n";
+    let target = "org::util::Config::Companion::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_named_companion_receiver_member_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nfun unknownCompanionNameCaller(): Int = Config.Missing.helper(1)\n\nfun instanceViaNamedCompanionCaller(): Int = Config.Factory.instance(1)\n\nfun control(): Int = Config.Factory.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Config {\n    fun instance(value: Int): Int = value\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n}\n",
+    )
+    .unwrap();
+
+    // An unknown companion name and an instance member reached through the
+    // named companion both fail closed across packages; only the resolvable
+    // named companion dispatch in `control` traces.
+    let target = "org::util::Config::Companion::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_named_companion_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
