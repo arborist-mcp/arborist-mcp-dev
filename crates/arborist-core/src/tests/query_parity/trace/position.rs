@@ -24546,6 +24546,98 @@ fn traces_kotlin_factory_inferred_nested_binding_property_chain_receiver_calls_i
 }
 
 #[test]
+fn traces_kotlin_cross_file_factory_inferred_nested_binding_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.holder.run(1)\n}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+
+    // A factory whose declared return type is an imported nested class pins
+    // the inferred binding before a property hop walks to the holder type
+    // declared on that nested class across packages.
+    let run_path = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_factory_inferred_nested_binding_property_chain_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.holder.run(1)\n}\n";
+    let target = "org::util::Holder::run";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_factory_inferred_nested_binding_property_chain_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\nfun makeMissing(): Outer.Absent = Outer.Absent()\n\nfun missingCaller(): Int {\n    val inner = makeMissing()\n    return inner.holder.run(1)\n}\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun control(): Int {\n    val inner = makeInner()\n    return inner.holder.run(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+
+    // A factory return type that names a missing nested type of the imported
+    // outer class fails closed, so only the resolvable factory-inferred
+    // property chain traces to the holder method.
+    let target = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn does_not_trace_kotlin_factory_inferred_nested_receiver_calls_with_missing_or_undeclared_returns()
 {
     let dir = temporary_dir();
