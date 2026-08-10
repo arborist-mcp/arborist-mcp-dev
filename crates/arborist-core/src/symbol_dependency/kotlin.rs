@@ -423,15 +423,49 @@ fn kotlin_property_binding(
     Ok(None)
 }
 
+/// Returns the callee spelling of a factory-call element-access base such as
+/// `makeItems` in `makeItems()[0]` or `Util.makeItems` in
+/// `Util.makeItems()[0]`. Plain-identifier and safe dotted navigation callees
+/// are accepted; `this`/`super` roots, parenthesized roots, and other
+/// non-name callees return `None` so qualified factory element-access bases
+/// fail closed only for genuinely unsupported shapes.
+fn kotlin_factory_call_callee_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() == "identifier" {
+        let name = node_text(node, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
+    }
+    if node.kind() != "navigation_expression" {
+        return Ok(None);
+    }
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 || children[1].kind() != "identifier" {
+        return Ok(None);
+    }
+    let text = node_text(node, source)?.trim();
+    if text.contains('?') || text.contains("::") {
+        return Ok(None);
+    }
+    let Some(prefix) = kotlin_factory_call_callee_name(children[0], source)? else {
+        return Ok(None);
+    };
+    let member = node_text(children[1], source)?.trim().to_string();
+    if member.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("{prefix}.{member}")))
+}
+
 /// Extracts the base of a single-level element-access initializer such as
-/// `items[0]`, `super.inheritedItems[0]`, or `makeItems()[0]`.
+/// `items[0]`, `super.inheritedItems[0]`, `makeItems()[0]`, or
+/// `Util.makeItems()[0]`.
 /// Plain-identifier and dotted field-chain bases (including `super`-rooted
-/// chains) return their spelling, and a factory-call base with a simple
-/// identifier callee returns the callee with a trailing `()` marker so
+/// chains) return their spelling, and a factory-call base with a plain or
+/// safe dotted callee returns the callee with a trailing `()` marker so
 /// trace-time resolution can walk the factory's declared return array.
-/// `this`-rooted chains, qualified call callees, nested element access, and
-/// function-call, multi-index, or nullable subscripts return `None` so
-/// element-access-inferred bindings fail closed.
+/// `this`-rooted chains, parenthesized or `super`-rooted call callees, nested
+/// element access, and function-call, multi-index, or nullable subscripts
+/// return `None` so element-access-inferred bindings fail closed.
 fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
     if initializer.kind() != "index_expression" {
         return Ok(None);
@@ -445,21 +479,18 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
     if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
         return Ok(None);
     }
-    // A factory-call base such as `makeItems()` records the identifier callee
-    // with a trailing `()` marker; qualified callees such as
-    // `Util.makeItems()` and non-identifier callees fail closed because
-    // qualified non-constructor initializers are capability-gated.
+    // A factory-call base such as `makeItems()` or `Util.makeItems()` records
+    // the callee with a trailing `()` marker so trace-time resolution can walk
+    // the factory's declared return array. Plain-identifier and safe dotted
+    // callees are accepted; `this`/`super` roots, parenthesized roots, and
+    // other non-name callees fail closed.
     if children[0].kind() == "call_expression" {
         let Some(callee) = children[0].named_child(0) else {
             return Ok(None);
         };
-        if callee.kind() != "identifier" {
+        let Some(callee_name) = kotlin_factory_call_callee_name(callee, source)? else {
             return Ok(None);
-        }
-        let callee_name = node_text(callee, source)?.trim();
-        if callee_name.is_empty() {
-            return Ok(None);
-        }
+        };
         return Ok(Some(format!("{callee_name}()")));
     }
     let base = node_text(children[0], source)?.trim();
@@ -1075,9 +1106,8 @@ mod tests {
             })
             .unwrap();
         // A factory-call base records the callee with a trailing `()` marker
-        // and no usable type; a plain base still binds the element component
-        // type directly. Qualified and member-call callees are rejected and
-        // stay unbound.
+        // and no usable type, for both plain and safe dotted callees; a plain
+        // base still binds the element component type directly.
         assert_eq!(
             run_bindings.element_access_base_for("factory"),
             Some("makeItems()".to_string())
@@ -1085,8 +1115,16 @@ mod tests {
         assert_eq!(run_bindings.type_for("factory"), None);
         assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
         assert_eq!(run_bindings.element_access_base_for("plain"), None);
-        assert!(!run_bindings.contains("qualified"));
-        assert!(!run_bindings.contains("member"));
+        assert_eq!(
+            run_bindings.element_access_base_for("qualified"),
+            Some("Util.makeItems()".to_string())
+        );
+        assert_eq!(
+            run_bindings.element_access_base_for("member"),
+            Some("group.makeItems()".to_string())
+        );
+        assert_eq!(run_bindings.type_for("qualified"), None);
+        assert_eq!(run_bindings.type_for("member"), None);
     }
 
     #[test]

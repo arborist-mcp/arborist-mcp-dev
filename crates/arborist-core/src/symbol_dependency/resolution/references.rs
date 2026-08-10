@@ -10428,6 +10428,29 @@ fn resolve_kotlin_reference_with_deadline(
             deadline,
         );
     }
+    // A factory-call element-access receiver such as
+    // `Util.makeItems()[0].helper(...)` or
+    // `group.makeGroups()[0].helper(...)` splits at the final dot so the
+    // element-access dispatch receives the full receiver spelling; the chained
+    // receiver path cannot consume a `()[0]` factory hop, and unknown or
+    // unresolvable factories fail closed.
+    if let Some((element_receiver, method)) = reference_name.rsplit_once('.')
+        && !method.contains('.')
+        && element_receiver.contains("()")
+        && element_receiver.ends_with(']')
+    {
+        return resolve_kotlin_qualified_receiver_call(
+            source_symbol,
+            element_receiver,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // A qualified call such as `other.helper(...)` resolves the receiver's type from the
     // caller's local scope and then dispatches to that type's member function. A chained
     // call such as `group.member.helper(...)` additionally resolves each intermediate
@@ -10610,15 +10633,23 @@ fn kotlin_array_access_spelling(segment: &str) -> Option<(&str, &str)> {
     Some((base, bracket))
 }
 
-/// Parses a bare factory-call element-access base such as `makeItems()` in
-/// `makeItems()[0].helper(...)` into the factory function name. The base must
-/// be exactly one call; dotted callees and malformed spellings fail closed.
-/// Multi-dimensional element access is rejected earlier by
+/// Parses a factory-call element-access base such as `makeItems()` or
+/// `Util.makeItems()` in `makeItems()[0].helper(...)` into the factory callee
+/// spelling. The base must be exactly one call with a plain or safe dotted
+/// callee; `this`/`super` roots, non-name roots, and malformed spellings fail
+/// closed. Multi-dimensional element access is rejected earlier by
 /// `kotlin_array_access_spelling`.
 fn kotlin_array_factory_call_root_spelling(base: &str) -> Option<String> {
     let open = base.find('(')?;
     let (method_name, rest) = base.split_at(open);
-    if method_name.is_empty() || method_name.contains('.') {
+    if method_name.is_empty()
+        || method_name.contains(['(', '[', ' ', '?'])
+        || method_name.contains("::")
+        || method_name
+            .split('.')
+            .next()
+            .is_some_and(|first| first == "this" || first == "super")
+    {
         return None;
     }
     if !rest.ends_with(')') {
@@ -13757,16 +13788,28 @@ mod tests {
             kotlin_array_factory_call_root_spelling("makeItems(1)"),
             Some("makeItems".to_string())
         );
-        // Dotted callees, non-call bases, empty names, and malformed spellings
-        // fail closed.
         assert_eq!(
             kotlin_array_factory_call_root_spelling("Util.makeItems()"),
-            None
+            Some("Util.makeItems".to_string())
         );
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("group.makeItems(1)"),
+            Some("group.makeItems".to_string())
+        );
+        // Non-call bases, `this`/`super` roots, empty names, and malformed
+        // spellings fail closed.
         assert_eq!(kotlin_array_factory_call_root_spelling("makeItems"), None);
         assert_eq!(kotlin_array_factory_call_root_spelling("()"), None);
         assert_eq!(
             kotlin_array_factory_call_root_spelling("makeItems()x"),
+            None
+        );
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("this.makeItems()"),
+            None
+        );
+        assert_eq!(
+            kotlin_array_factory_call_root_spelling("super.makeItems()"),
             None
         );
     }

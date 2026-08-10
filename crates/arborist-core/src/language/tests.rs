@@ -256,7 +256,10 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
 
     assert_eq!(descriptor.display_name, "Kotlin");
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
-    assert_eq!(descriptor.analysis_revision, "kotlin-constructor-chain-v15");
+    assert_eq!(
+        descriptor.analysis_revision,
+        "kotlin-qualified-factory-array-element-access-v16"
+    );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
