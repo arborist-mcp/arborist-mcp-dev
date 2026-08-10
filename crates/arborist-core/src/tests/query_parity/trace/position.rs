@@ -21519,6 +21519,114 @@ fn traces_kotlin_class_receiver_interface_chain_member_calls_in_live_workspace_a
 }
 
 #[test]
+fn traces_kotlin_cross_file_class_receiver_interface_chain_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Mid\n\nclass Impl : Mid\n\nfun caller(impl: Impl): Int {\n    return impl.render(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Mid : Root\n",
+    )
+    .unwrap();
+
+    // The class receiver dispatches the interface member through the unique
+    // interface extends chain of its directly implemented interface, with the
+    // chain resolved in the imported interface's own package.
+    let render_path = "org::util::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, render_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_class_receiver_interface_chain_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Mid : Root\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Mid\n\nclass Impl : Mid\n\nfun caller(impl: Impl): Int {\n    return impl.render(1)\n}\n";
+    let target = "org::util::Root::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_class_receiver_interface_chain_member_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Mid\nimport org.util.OtherMid\n\nclass MissingImpl : OtherMid\nclass Control : Mid\n\nfun missingCaller(impl: MissingImpl): Int {\n    return impl.render(1)\n}\n\nfun control(impl: Control): Int {\n    return impl.render(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Mid : Root\ninterface OtherMid\n",
+    )
+    .unwrap();
+
+    // A class whose implemented interface chain lacks the member fails closed;
+    // only the class pinned to the interface chain that declares `render` in
+    // `control` traces.
+    let target = "org::util::Root::render";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_class_receiver_multiple_interface_member_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
