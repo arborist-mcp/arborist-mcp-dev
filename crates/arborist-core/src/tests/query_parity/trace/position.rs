@@ -28743,6 +28743,135 @@ fn kotlin_var_qualified_factory_returned_array_receiver_calls_fail_closed_for_un
 }
 
 #[test]
+fn traces_kotlin_cross_file_var_qualified_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Util.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Group\nimport org.util.Helper\nimport org.util.Util\n\nobject Factory {\n    fun makeItems(): Array<Helper> = arrayOf()\n}\n\nclass Caller {\n    fun run(group: Group): Int {\n        val fromCompanion = Util.makeItems()\n        val fromExplicitCompanion = Util.Companion.makeGroups()\n        val fromObject = Factory.makeItems()\n        val fromBound = group.makeGroups()\n        return fromCompanion[0].helper(1)\n            + fromExplicitCompanion[0].helper(2)\n            + fromObject[0].helper(3)\n            + fromBound[0].helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    fun helper(value: Int): Int = value\n    fun makeGroups(): Array<Group> = arrayOf()\n}\n\nclass Util {\n    companion object {\n        fun makeItems(): Array<Helper> = arrayOf()\n        fun makeGroups(): Array<Group> = arrayOf()\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local initialized from a qualified factory call whose declared
+    // return type is a single-level array dispatches an element access on the
+    // array's element component type through the same factory rules as other
+    // `val` initializers, with the factory roots and hop types resolved in the
+    // imported package: companion roots, explicit companion hops, object roots
+    // declared in the caller file, and bound-receiver chains.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+
+    let group_helper_path = "org::util::Group::helper";
+    let group_live = trace_symbol_graph(&dir, group_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.indexed_files, 2);
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "com::example::Caller::run");
+
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.indexed_files, 2);
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(
+        group_persisted.callers[0].symbol_id,
+        "com::example::Caller::run"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_var_qualified_factory_returned_array_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Util.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Util {\n    companion object {\n        fun makeItems(): Array<Helper> = arrayOf()\n    }\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Helper\nimport org.util.Util\n\nfun caller(): Int {\n    val items = Util.makeItems()\n    return items[0].helper(1)\n}\n";
+    let target = "org::util::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_var_qualified_factory_returned_array_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Util.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Helper\nimport org.util.Util\n\nfun caller(): Int {\n    val fromCounts = Util.makeCounts()\n    val fromUnknown = Util.unknownFactory()\n    val fromUnknownType = Missing.makeItems()\n    return fromCounts[0].helper(1) + fromUnknown[0].helper(2) + fromUnknownType[0].helper(3)\n}\n\nfun control(): Int {\n    val items = Util.makeItems()\n    return items[0].helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Util {\n    companion object {\n        fun makeItems(): Array<Helper> = arrayOf()\n    }\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals initialized from an unknown member, an unknown factory, or
+    // an unknown qualified factory type all fail closed on element access;
+    // only the resolvable companion factory initializer in `control` traces
+    // across packages.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_var_parenthesized_initializer_receivers_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
