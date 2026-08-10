@@ -11358,18 +11358,8 @@ fn kotlin_delegation_specifier_type_name(
 /// element-access initializer such as `val x = group.holder.fieldItems[0]`,
 /// a `super`-rooted initializer such as `val x = super.inheritedItems[0]`, a
 /// companion-object initializer such as `val x = Util.fieldItems[0]`, or a
-/// factory-call initializer such as `val x = makeItems()[0]`.
-/// A factory-call base records the callee with a trailing `()` marker and
-/// resolves through the same factory rules as a direct factory-call
-/// element-access receiver. Otherwise the base's first hop must be `super`
-/// (the direct superclass path), a bound receiver with a usable declared
-/// type, a named object whose terminal property lives on the object itself,
-/// or an unbound type whose terminal property lives on its companion object;
-/// intermediate hops walk the same property-type rules as chained receivers,
-/// and the terminal hop must be a uniquely declared single-level array
-/// property whose element component type receives the dispatch.
-/// Unbound or non-array first hops, unknown or non-array terminal properties,
-/// and unresolvable intermediate hops fail closed.
+/// factory-call initializer such as `val x = makeItems()[0]` on the resolved
+/// element component type of the initializer's terminal array.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_qualified_element_access_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -11387,25 +11377,87 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
     else {
         return Ok(None);
     };
+    let Some(component_path) = resolve_kotlin_element_access_base_component_type_path(
+        source_symbol,
+        &base,
+        bindings,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let type_name = component_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(method)
+        .to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &component_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the element component type path of a name bound from a qualified
+/// element-access initializer such as `val x = group.holder.fieldItems[0]`,
+/// a `super`-rooted initializer such as `val x = super.inheritedItems[0]`, a
+/// companion-object initializer such as `val x = Util.fieldItems[0]`, a
+/// factory-call initializer such as `val x = makeItems()[0]`, or a qualified
+/// factory-call initializer such as `val x = Util.makeItems()[0]`.
+/// A factory-call base records the callee with a trailing `()` marker and
+/// resolves through the same factory rules as a direct factory-call
+/// element-access receiver. Otherwise the base's first hop must be `super`
+/// (the direct superclass path), a bound receiver with a usable declared
+/// type, a named object whose terminal property lives on the object itself,
+/// or an unbound type whose terminal property lives on its companion object;
+/// intermediate hops walk the same property-type rules as chained receivers,
+/// and the terminal hop must be a uniquely declared single-level array
+/// property whose element component type is returned. Unbound or non-array
+/// first hops, unknown or non-array terminal properties, and unresolvable
+/// intermediate hops return `None` so callers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_element_access_base_component_type_path(
+    source_symbol: &IndexedSymbol,
+    base: &str,
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
     // A factory-call base such as `val x = makeItems()[0]` records the callee
     // with a trailing `()` marker; resolve the factory's declared return array
     // through the same rules as a direct factory-call element-access receiver
-    // and dispatch the member on the array's element component type.
+    // and return the array's element component type.
     if let Some(function_name) = base.strip_suffix("()") {
         if function_name.is_empty() {
             return Ok(None);
         }
-        return resolve_kotlin_factory_array_element_member_call(
+        let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
             source_symbol,
             function_name,
-            method,
-            call_arity,
             raw_symbols,
             semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        );
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(component_path));
     }
     let Some((first_hop, chain)) = base.split_once('.') else {
         return Ok(None);
@@ -11519,23 +11571,7 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
         };
         current_path = next_path;
     }
-    let type_name = current_path
-        .rsplit("::")
-        .next()
-        .unwrap_or(method)
-        .to_string();
-    resolve_kotlin_member_or_extension(
-        source_symbol,
-        &current_path,
-        &type_name,
-        method,
-        call_arity,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        kotlin_import_contexts_by_file,
-        deadline,
-    )
+    Ok(Some(current_path))
 }
 
 /// Resolves the element component type path of a uniquely declared array
@@ -11816,34 +11852,58 @@ fn resolve_kotlin_chained_receiver_call(
             deadline,
         );
     }
-    // The first hop is either a locally bound receiver, an element-access
-    // receiver whose base is bound with a single-level array component type or
-    // is a factory call whose declared return type is a single-level array, or
-    // a named object declaration such as `Config` in `Config.holder.run()`. An
+    // The first hop is either a locally bound receiver (including a `val`
+    // bound from a qualified element-access initializer whose terminal array
+    // element component type starts the chain), an element-access receiver
+    // whose base is bound with a single-level array component type or is a
+    // factory call whose declared return type is a single-level array, or a
+    // named object declaration such as `Config` in `Config.holder.run()`. An
     // ambiguous local binding fails closed instead of falling through to a
     // same-named object.
     let mut type_path = if bindings
         .as_ref()
         .is_some_and(|bindings| bindings.contains(hops[0]))
     {
-        let Some(type_name) = bindings
+        if let Some(type_name) = bindings
             .as_ref()
             .and_then(|bindings| bindings.type_for(hops[0]))
-        else {
+        {
+            let Some(path) = resolve_kotlin_initializer_type_path(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            path
+        } else if let Some(base) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.element_access_base_for(hops[0]))
+            && let Some(component_path) = resolve_kotlin_element_access_base_component_type_path(
+                source_symbol,
+                &base,
+                bindings.as_ref(),
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            // A `val` bound from a qualified element-access initializer such
+            // as `val first = makeItems()[0]` or
+            // `val first = group.fieldItems[0]` has no usable type until the
+            // base's terminal array element component type is resolved; start
+            // the chain on that component type so trailing hops dispatch
+            // through the same chain rules.
+            component_path
+        } else {
             return Ok(None);
-        };
-        let Some(path) = resolve_kotlin_initializer_type_path(
-            source_symbol,
-            &type_name,
-            raw_symbols,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        path
+        }
     } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
         && let Some(component_type) = bindings
             .as_ref()
@@ -12268,24 +12328,45 @@ fn resolve_kotlin_receiver_chain_type_path(
         .as_ref()
         .is_some_and(|bindings| bindings.contains(hops[0]))
     {
-        let Some(type_name) = bindings
+        if let Some(type_name) = bindings
             .as_ref()
             .and_then(|bindings| bindings.type_for(hops[0]))
-        else {
+        {
+            let Some(path) = resolve_kotlin_initializer_type_path(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            path
+        } else if let Some(base) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.element_access_base_for(hops[0]))
+            && let Some(component_path) = resolve_kotlin_element_access_base_component_type_path(
+                source_symbol,
+                &base,
+                bindings.as_ref(),
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            // A `val` bound from a qualified element-access initializer such
+            // as `val first = makeItems()[0]` or
+            // `val first = group.fieldItems[0]` has no usable type until the
+            // base's terminal array element component type is resolved; the
+            // receiver chain continues from that component type.
+            component_path
+        } else {
             return Ok(None);
-        };
-        let Some(path) = resolve_kotlin_initializer_type_path(
-            source_symbol,
-            &type_name,
-            raw_symbols,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        path
+        }
     } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
         && let Some(component_type) = bindings
             .as_ref()
