@@ -47,6 +47,7 @@ use super::{
     validate_patch_with_trace_context_at_position, validate_patch_with_trace_context_from_path,
     validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
 };
+mod adapter_contract;
 mod c_patching;
 mod c_symbol_graph;
 mod index_refresh;

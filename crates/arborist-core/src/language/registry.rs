@@ -303,11 +303,12 @@ impl LanguageRegistry {
         self.extensions.get(extension.as_str()).copied()
     }
 
+    pub(crate) fn language_ids(&self) -> impl Iterator<Item = LanguageId> + '_ {
+        self.adapters.keys().copied()
+    }
+
     pub fn supported_language_names(&self) -> Vec<&'static str> {
-        self.adapters
-            .keys()
-            .map(|language_id| persisted_language_id(*language_id))
-            .collect()
+        self.language_ids().map(persisted_language_id).collect()
     }
 
     pub(crate) fn analysis_provenance(&self) -> (Vec<String>, BTreeMap<String, String>, String) {
