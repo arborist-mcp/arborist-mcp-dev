@@ -29675,6 +29675,133 @@ fn kotlin_this_and_super_rooted_hierarchy_member_calls_fail_closed_for_unsupport
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::Good::run");
 }
+
+#[test]
+fn traces_kotlin_cross_file_this_and_super_rooted_hierarchy_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Hierarchy.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Root\n\nclass Caller : Base(), Root {\n    fun run(): Int {\n        return this.grandHelper(1) + this.render(2) + super.grandHelper(3)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nopen class Grand {\n    fun grandHelper(value: Int): Int = value\n}\nopen class Mid : Grand()\nopen class Base : Mid()\ninterface Root {\n    fun render(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // A `this.`-rooted call dispatches members inherited through the enclosing
+    // type's imported superclass chain and implemented-interface fallback, and
+    // a `super.`-rooted call continues up the direct superclass chain beyond
+    // the immediate superclass across packages.
+    for target in ["org::util::Grand::grandHelper", "org::util::Root::render"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_this_and_super_rooted_hierarchy_member_calls_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Hierarchy.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Root\n\nclass Caller : Root {\n    fun run(): Int {\n        return this.render(1)\n    }\n}\n";
+    let target = "org::util::Root::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn kotlin_cross_file_this_and_super_rooted_hierarchy_member_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Hierarchy.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Root\n\ninterface A {\n    fun helper(value: Int): Int = value\n}\ninterface B {\n    fun helper(value: Int): Int = value\n}\nclass Competing : A, B {\n    fun run(): Int {\n        return this.helper(1)\n    }\n}\nopen class MissingBase : Missing\nclass Blocked : MissingBase() {\n    fun run(): Int {\n        return this.helper(1)\n    }\n}\nclass NoSuper {\n    fun run(): Int {\n        return super.helper(1)\n    }\n}\nclass Good : Root {\n    fun run(): Int {\n        return this.render(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Competing implemented interfaces and an unresolvable superclass chain
+    // both fail closed through a `this.`-rooted call, and a `super.`-rooted
+    // call in a class without a resolvable superclass fails closed; only the
+    // uniquely resolvable `this.`-rooted interface fallback in `Good` traces
+    // across packages.
+    let helper_path = "com::example::A::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "competing and blocked this-rooted hierarchies must fail closed"
+    );
+
+    let render_path = "org::util::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Good::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        persisted.callers.is_empty(),
+        "competing and blocked this-rooted hierarchies must fail closed"
+    );
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Good::run");
+}
+
 #[test]
 fn traces_kotlin_factory_root_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
