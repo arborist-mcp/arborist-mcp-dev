@@ -12260,9 +12260,14 @@ fn kotlin_method_call_hop_type_path(
 
 /// Resolves the next receiver type path for one chain hop. A method-call hop
 /// such as `inner()` dispatches on the declared return type of a unique member
-/// or extension function; any other hop must resolve as a uniquely declared
-/// property whose declared type or bare constructor initializer pins the next
-/// receiver. Unknown or ambiguous hops fail closed.
+/// or extension function; an array-property element-access hop such as
+/// `groups[0]` resolves the base name as a uniquely declared single-level
+/// array property and continues on the element component type; any other hop
+/// must resolve as a uniquely declared property whose declared type or bare
+/// constructor initializer pins the next receiver. Factory-call element-access
+/// hops such as `makeGroups()[0]` are resolved by the chained-hop wrapper
+/// before this fallback and remain unsupported in the receiver-chain and
+/// constructor-receiver contexts. Unknown or ambiguous hops fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_chain_hop_type_path(
     owner_type_path: &str,
@@ -12279,6 +12284,19 @@ fn kotlin_chain_hop_type_path(
             owner_type_path,
             &method_name,
             source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if let Some((base_name, _)) = kotlin_array_access_spelling(hop)
+        && !base_name.contains('(')
+    {
+        return kotlin_array_property_component_type_path(
+            owner_type_path,
+            base_name,
             raw_symbols,
             semantic_path_index,
             file_overrides,

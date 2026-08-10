@@ -28913,6 +28913,271 @@ fn kotlin_cross_file_var_element_access_inferred_member_chain_receiver_calls_fai
 }
 
 #[test]
+fn traces_kotlin_array_property_element_access_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    val items: Array<Entry> = arrayOf()\n    fun inner(): Item = item\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n}\n\nobject Registry {\n    val groups: Array<Helper> = arrayOf()\n}\n\nclass Config {\n    companion object Factory {\n        val groups: Array<Helper> = arrayOf()\n    }\n}\n\nfun caller(holder: Holder): Int {\n    return holder.groups[0].item.helper(1) + holder.groups[1].inner().helper(2) + holder.groups[2].items[0].helper(3)\n}\n\nfun objectCaller(): Int {\n    return Registry.groups[0].item.helper(1)\n}\n\nfun companionCaller(): Int {\n    return Config.Factory.groups[0].item.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An array-property element-access hop such as `groups[0]` in
+    // `holder.groups[0].item.helper(...)` resolves the base name as a uniquely
+    // declared single-level array property on the current receiver and
+    // continues the chain on the element component type, so a trailing
+    // property hop (`holder.groups[0].item.helper`), method-call hop
+    // (`holder.groups[1].inner().helper`), and nested array-property hop
+    // (`holder.groups[2].items[0].helper`) all dispatch; object-rooted
+    // (`Registry.groups[0].item.helper`) and named-companion
+    // (`Config.Factory.groups[0].item.helper`) receivers follow the same
+    // element-access hop rules on the object or companion scope.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for expected in [
+        "com::example::caller",
+        "com::example::objectCaller",
+        "com::example::companionCaller",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+    let entry_path = "com::example::Entry::helper";
+    let live_entry = trace_symbol_graph(&dir, entry_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_entry.symbol.symbol_id, entry_path);
+    assert_eq!(live_entry.callers.len(), 1);
+    assert_eq!(live_entry.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for expected in [
+        "com::example::caller",
+        "com::example::objectCaller",
+        "com::example::companionCaller",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+    let persisted_entry =
+        trace_symbol_graph_from_index(&db_path, entry_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_entry.callers.len(), 1);
+    assert_eq!(persisted_entry.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_array_property_element_access_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n}\n\nfun caller(holder: Holder): Int {\n    return holder.groups[0].item.helper(1) + holder.groups[0].inner().helper(2)\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_array_property_element_access_hop_receiver_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n    val single: Helper = Helper()\n    val matrix: Array<Array<Helper>> = arrayOf()\n    val counts: IntArray = intArrayOf()\n}\n\nfun directFailures(holder: Holder): Int {\n    return holder.single[0].helper(1) + holder.matrix[0][0].helper(2) + holder.counts[0].helper(3) + holder.missing[0].helper(4) + holder.groups.helper(5)\n}\n\nfun valFailures(holder: Holder): Int {\n    val fromNonArray = holder.single[0]\n    val fromMultiDim = holder.matrix[0][0]\n    val fromPrimitive = holder.counts[0]\n    val fromUnknown = holder.missing[0]\n    return fromNonArray.item.helper(1) + fromMultiDim.item.helper(2) + fromPrimitive.item.helper(3) + fromUnknown.item.helper(4)\n}\n\nfun control(holder: Holder): Int {\n    return holder.groups[0].item.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Array-property element-access hops fail closed for non-array properties
+    // (`holder.single[0]`), multi-dimensional arrays
+    // (`holder.matrix[0][0]`), primitive arrays (`holder.counts[0]`), unknown
+    // properties (`holder.missing[0]`), and direct member calls on the array
+    // itself (`holder.groups.helper`), both as direct chain hops and as `val`
+    // element-access initializers; only the resolvable chain in `control`
+    // traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
+fn traces_kotlin_cross_file_array_property_element_access_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\n\nclass Caller {\n    fun run(holder: Holder): Int {\n        return holder.groups[0].item.helper(1)\n    }\n}\n\nfun caller(holder: Holder): Int {\n    return holder.groups[0].inner().helper(2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // An array-property element-access hop whose terminal property and element
+    // component type are declared in an explicitly imported package such as
+    // `holder.groups[0].item.helper(...)` or
+    // `holder.groups[0].inner().helper(...)` resolves the array property in
+    // the imported holder's scope and continues the chain on the imported
+    // element component type across files.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Caller::run")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::caller")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Caller::run")
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_array_property_element_access_hop_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Holder\n\nfun caller(holder: Holder): Int {\n    return holder.groups[0].item.helper(1)\n}\n";
+    let item_path = "org::util::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_array_property_element_access_hop_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\n\nfun caller(holder: Holder): Int {\n    return holder.single[0].helper(1) + holder.matrix[0][0].helper(2) + holder.counts[0].helper(3) + holder.missing[0].helper(4)\n}\n\nfun control(holder: Holder): Int {\n    return holder.groups[0].item.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n}\n\nclass Holder {\n    val groups: Array<Helper> = arrayOf()\n    val single: Helper = Helper()\n    val matrix: Array<Array<Helper>> = arrayOf()\n    val counts: IntArray = intArrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // Array-property element-access hops declared in an imported package fail
+    // closed for non-array, multi-dimensional, primitive, and unknown terminal
+    // properties; only the resolvable chain in `control` traces.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_var_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

@@ -488,7 +488,7 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "kotlin-var-element-access-inferred-member-chain-v19",
+    analysis_revision: "kotlin-array-property-element-access-hop-chain-v20",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
