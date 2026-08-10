@@ -23835,6 +23835,102 @@ fn traces_kotlin_factory_inferred_binding_property_chain_receiver_calls_in_live_
 }
 
 #[test]
+fn traces_kotlin_cross_file_factory_inferred_binding_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factories.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.makeGroup\n\nfun caller(): Int {\n    val group = makeGroup()\n    return group.derived.helper(1)\n}\n").unwrap();
+    fs::write(&factory_path, "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = Other()\n}\n\nfun makeGroup(): Group = Group()\n").unwrap();
+
+    // A factory-inferred local binding hops through a property declared on
+    // the imported factory return type, resolved in the factory's own
+    // package, before dispatching the trailing member.
+    let helper_path = "org::util::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_factory_inferred_binding_property_chain_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factories.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(&factory_path, "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = Other()\n}\n\nfun makeGroup(): Group = Group()\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.makeGroup\n\nfun caller(): Int {\n    val group = makeGroup()\n    return group.derived.helper(1)\n}\n";
+    let target = "org::util::Other::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_factory_inferred_binding_property_chain_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factories.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeAbsent\nimport org.util.makeGroup\n\nfun missingCaller(): Int {\n    val group = makeAbsent()\n    return group.derived.helper(1)\n}\n\nfun control(): Int {\n    val group = makeGroup()\n    return group.derived.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = Other()\n}\n\nfun makeGroup(): Group = Group()\n\nfun makeAbsent(): Absent = Absent()\n",
+    )
+    .unwrap();
+
+    // A factory whose declared return type is unresolvable fails closed
+    // while the binding pinned to the imported factory return type still
+    // traces through the property chain.
+    let target = "org::util::Other::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_factory_inferred_nested_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
