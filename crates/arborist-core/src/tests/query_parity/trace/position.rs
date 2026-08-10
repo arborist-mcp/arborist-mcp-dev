@@ -29059,6 +29059,7 @@ fn kotlin_companion_chain_array_element_access_method_hop_receiver_calls_fail_cl
 }
 
 #[test]
+
 fn traces_kotlin_var_companion_chain_element_access_inferred_member_chains_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
@@ -29209,6 +29210,163 @@ fn kotlin_var_companion_chain_element_access_inferred_member_chains_fail_closed_
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_kotlin_this_super_rooted_factory_element_access_member_chains_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    fun inner(): Helper = Helper()\n}\n\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n    fun inheritedGroups(): Array<Group> = arrayOf()\n}\n\nclass Derived : Base() {\n    fun ownMake(): Array<Helper> = arrayOf()\n    fun runThisOwn(): Int {\n        return this.ownMake()[0].helper(1)\n    }\n    fun runThisInherited(): Int {\n        return this.inheritedMake()[0].helper(2)\n    }\n    fun runThisHop(): Int {\n        return this.inheritedGroups()[0].inner().helper(3)\n    }\n    fun runSuper(): Int {\n        return super.inheritedMake()[0].helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `this`-rooted factory element-access receiver such as
+    // `this.ownMake()[0].helper(...)` resolves the leading call as a factory
+    // on the enclosing type, a `this`-rooted inherited factory such as
+    // `this.inheritedMake()[0].helper(...)` walks the direct superclass chain
+    // before dispatching on the return array's element component type, a
+    // trailing method-call hop such as `this.inheritedGroups()[0].inner().helper(...)`
+    // continues on the hop's declared return type, and a `super`-rooted
+    // factory such as `super.inheritedMake()[0].helper(...)` resolves on the
+    // direct superclass. Unknown factories and non-array returns still fail
+    // closed.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 4);
+    for expected in [
+        "com::example::Derived::runThisOwn",
+        "com::example::Derived::runThisInherited",
+        "com::example::Derived::runThisHop",
+        "com::example::Derived::runSuper",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for expected in [
+        "com::example::Derived::runThisOwn",
+        "com::example::Derived::runThisInherited",
+        "com::example::Derived::runThisHop",
+        "com::example::Derived::runSuper",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|caller| caller.symbol_id == expected)
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_this_super_rooted_factory_element_access_member_chains_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n}\n\nclass Derived : Base() {\n    fun run(): Int {\n        return this.inheritedMake()[0].helper(1)\n    }\n}\n";
+    let target = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Derived::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Derived::run");
+}
+
+#[test]
+fn traces_kotlin_this_super_rooted_factory_element_access_member_chains_across_files() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Callers.kt");
+    let base_path = dir.join("Types.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\n\nclass Derived : Base() {\n    fun run(): Int {\n        return this.inheritedMake()[0].helper(1) + super.inheritedMake()[0].helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // A `this`-rooted or `super`-rooted inherited factory resolves the base
+    // class through the explicit import, so the factory return array's element
+    // component type dispatches in the imported package.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Derived::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Derived::run");
+}
+
+#[test]
+fn kotlin_this_super_rooted_factory_element_access_member_chains_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun makeCounts(): IntArray = intArrayOf()\n    fun makeMatrix(): Array<Array<Helper>> = arrayOf()\n    fun makeOther(): Other = Other()\n}\n\nclass Derived : Base() {\n    fun run(): Int {\n        return this.unknownMake()[0].helper(1)\n            + this.makeCounts()[0].helper(2)\n            + this.makeMatrix()[0].helper(3)\n            + this.makeOther()[0].helper(4)\n            + super.unknownMake()[0].helper(5)\n            + super.makeMatrix()[0].helper(6)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Unknown factories, primitive-returning factories, multi-dimensional
+    // return arrays, and non-array-returning factories on `this`/`super`
+    // roots fail closed instead of producing a caller.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "unknown, primitive-returning, multi-dimensional, and non-array-returning this/super-rooted factories must fail closed"
+    );
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
 

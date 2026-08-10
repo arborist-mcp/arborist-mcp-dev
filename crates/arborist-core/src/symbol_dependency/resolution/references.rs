@@ -11164,25 +11164,66 @@ fn resolve_kotlin_owner_factory_array_element_component_type(
     let mut factory_candidates = Vec::new();
     // The owner scope covers bound-receiver and object factories; the
     // canonical companion scope covers class and interface roots whose
-    // factories live on the companion. A factory declared in both scopes is
-    // ambiguous and fails closed.
-    for scope in [
-        owner_type_path.to_string(),
-        format!("{owner_type_path}::Companion"),
-    ] {
-        let candidates = semantic_path_index
-            .get(&format!("{scope}::{function_name}"))
+    // factories live on the companion. When neither scope declares the
+    // factory, the walk continues on each direct superclass scope (and its
+    // companion) so a factory inherited from a base class resolves through
+    // `this`/`super`-rooted and bound receivers the same way an inherited
+    // method-call hop does. A factory declared in more than one reachable
+    // scope is ambiguous and fails closed.
+    let mut current_type_path = owner_type_path.to_string();
+    let mut visited_type_paths = BTreeSet::new();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Kotlin owner factory array element")?;
+        }
+        if !visited_type_paths.insert(current_type_path.clone()) {
+            break;
+        }
+        for scope in [
+            current_type_path.clone(),
+            format!("{current_type_path}::Companion"),
+        ] {
+            let candidates = semantic_path_index
+                .get(&format!("{scope}::{function_name}"))
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.node_kind == "function_declaration"
+                        && candidate.scope_path.as_deref() == Some(scope.as_str())
+                        && candidate.return_type.is_some()
+                })
+                .collect::<Vec<_>>();
+            factory_candidates.extend(candidates);
+        }
+        if !factory_candidates.is_empty() {
+            break;
+        }
+        let class_candidates = semantic_path_index
+            .get(&current_type_path)
             .into_iter()
             .flatten()
             .copied()
             .filter(|index| {
                 let candidate = &raw_symbols[*index];
-                candidate.node_kind == "function_declaration"
-                    && candidate.scope_path.as_deref() == Some(scope.as_str())
-                    && candidate.return_type.is_some()
+                candidate.node_kind == "class_declaration" && !kotlin_type_is_interface(candidate)
             })
             .collect::<Vec<_>>();
-        factory_candidates.extend(candidates);
+        let [class_index] = class_candidates.as_slice() else {
+            break;
+        };
+        let Some(superclass_path) = kotlin_superclass_path_for_class(
+            &raw_symbols[*class_index],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            break;
+        };
+        current_type_path = superclass_path;
     }
     if factory_candidates.len() != 1 {
         return Ok(None);
@@ -11209,9 +11250,10 @@ fn resolve_kotlin_owner_factory_array_element_component_type(
 /// leading call as a uniquely declared factory on the current receiver type
 /// and continues on the factory return array's element component type; all
 /// other hops fall through to the shared property and method-call hop rules.
-/// `this`/`super`-rooted chains keep their existing fail-closed factory policy
-/// because they resolve through `resolve_kotlin_type_rooted_member_chain`
-/// without this wrapper.
+/// `this`/`super`-rooted chains resolve through
+/// `resolve_kotlin_type_rooted_member_chain` with this wrapper, so factory
+/// element-access hops declared on the enclosing type or its superclass chain
+/// resolve there too.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_chained_receiver_hop_type_path(
     owner_type_path: &str,
@@ -12106,7 +12148,7 @@ fn resolve_kotlin_type_rooted_member_chain(
     }
     let mut receiver_path = root_type_path.to_string();
     for hop in hops.iter().take(hops.len() - 1) {
-        let Some(next_path) = kotlin_chain_hop_type_path(
+        let Some(next_path) = kotlin_chained_receiver_hop_type_path(
             &receiver_path,
             hop,
             source_symbol,
