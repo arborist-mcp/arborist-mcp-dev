@@ -19722,6 +19722,152 @@ fn traces_kotlin_qualified_receiver_calls_via_parameter_and_class_property_in_li
 }
 
 #[test]
+fn traces_kotlin_cross_file_qualified_receiver_calls_via_parameter_and_class_property_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Counters.kt");
+    let base_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.Counter\n\nclass Holder {\n    val counter = Counter()\n    fun viaProperty(): Int = counter.increment(1)\n}\n\nfun viaParameter(counter: Counter): Int = counter.increment(2)\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Counter {\n    fun increment(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // A parameter receiver and a class-property receiver both dispatch the
+    // trailing member on the imported declared type.
+    let increment_path = "org::util::Counter::increment";
+    let live = trace_symbol_graph(&dir, increment_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, increment_path);
+    let callers = &live.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::Holder::viaProperty",
+            "com::example::viaParameter"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, increment_path, TraceDirection::Callers).unwrap();
+    let callers = &persisted.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::Holder::viaProperty",
+            "com::example::viaParameter"
+        ]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_qualified_receiver_calls_via_parameter_and_class_property_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Counters.kt");
+    let base_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Counter {\n    fun increment(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Counter\n\nclass Holder {\n    val counter = Counter()\n    fun viaProperty(): Int = counter.increment(1)\n}\n\nfun viaParameter(counter: Counter): Int = counter.increment(2)\n";
+    let target = "org::util::Counter::increment";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let callers = &live.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::Holder::viaProperty",
+            "com::example::viaParameter"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let callers = &persisted.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::Holder::viaProperty",
+            "com::example::viaParameter"
+        ]
+    );
+}
+
+#[test]
+fn kotlin_cross_file_qualified_receiver_calls_via_parameter_and_class_property_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Counters.kt");
+    let base_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Counter\n\nfun missingParameter(counter: MissingCounter): Int = counter.increment(1)\n\nfun control(counter: Counter): Int = counter.increment(2)\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Counter {\n    fun increment(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // A parameter receiver whose declared type is unresolvable fails
+    // closed; only the receiver pinned to the imported declared type traces.
+    let target = "org::util::Counter::increment";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn does_not_trace_kotlin_qualified_receiver_calls_with_unknown_or_ambiguous_receiver_types() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
