@@ -24207,6 +24207,97 @@ fn traces_kotlin_dotted_alias_property_type_receiver_calls_in_live_workspace_and
 }
 
 #[test]
+fn traces_kotlin_cross_file_dotted_alias_property_type_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\ntypealias Helper = Outer.Inner\n\nclass Group {\n    val inner: Helper = Helper()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.inner.holder.run(1)\n}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+
+    // A declared property type spelled through a dotted alias resolves to
+    // the imported nested type before the property chain dispatches the
+    // terminal member on the imported holder type.
+    let run_path = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_dotted_alias_property_type_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\ntypealias Helper = Outer.Inner\n\nclass Group {\n    val inner: Helper = Helper()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.inner.holder.run(1)\n}\n";
+    let target = "org::util::Holder::run";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_dotted_alias_property_type_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\nimport org.util.Outer\n\ntypealias Helper = Outer.Inner\ntypealias Missing = Outer.Absent\n\nclass Group {\n    val inner: Helper = Helper()\n}\n\nclass MissingGroup {\n    val inner: Missing = Missing()\n}\n\nfun missingCaller(): Int {\n    val group = MissingGroup()\n    return group.inner.holder.run(1)\n}\n\nfun control(): Int {\n    val group = Group()\n    return group.inner.holder.run(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(&base_path, "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n").unwrap();
+
+    // A property whose declared type is a dotted alias to an unknown nested
+    // type fails closed; only the property chain pinned to the resolvable
+    // dotted alias traces.
+    let target = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_dotted_alias_companion_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
