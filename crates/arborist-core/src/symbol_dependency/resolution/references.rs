@@ -11453,21 +11453,24 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
 
 /// Resolves the element component type path of a name bound from a qualified
 /// element-access initializer such as `val x = group.holder.fieldItems[0]`,
-/// a `super`-rooted initializer such as `val x = super.inheritedItems[0]`, a
+/// a `this`-rooted initializer such as `val x = this.groups[0]`, a
+/// `super`-rooted initializer such as `val x = super.inheritedItems[0]`, a
 /// companion-object initializer such as `val x = Util.fieldItems[0]`, a
 /// factory-call initializer such as `val x = makeItems()[0]`, or a qualified
 /// factory-call initializer such as `val x = Util.makeItems()[0]`.
 /// A factory-call base records the callee with a trailing `()` marker and
 /// resolves through the same factory rules as a direct factory-call
-/// element-access receiver. Otherwise the base's first hop must be `super`
-/// (the direct superclass path), a bound receiver with a usable declared
-/// type, a named object whose terminal property lives on the object itself,
-/// or an unbound type whose terminal property lives on its companion object;
-/// intermediate hops walk the same property-type rules as chained receivers,
-/// and the terminal hop must be a uniquely declared single-level array
-/// property whose element component type is returned. Unbound or non-array
-/// first hops, unknown or non-array terminal properties, and unresolvable
-/// intermediate hops return `None` so callers fail closed.
+/// element-access receiver. Otherwise the base's first hop must be `this`
+/// (the enclosing type path), `super` (the direct superclass path), a bound
+/// receiver with a usable declared type, a named object whose terminal
+/// property lives on the object itself, or an unbound type whose terminal
+/// property lives on its companion object; intermediate hops walk the same
+/// property-type rules as chained receivers, and the terminal hop must be a
+/// uniquely declared single-level array property (declared on the owner or
+/// inherited through its class or interface chain) whose element component
+/// type is returned. Unbound or non-array first hops, unknown or non-array
+/// terminal properties, and unresolvable intermediate hops return `None` so
+/// callers fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_element_access_base_component_type_path(
     source_symbol: &IndexedSymbol,
@@ -11523,6 +11526,25 @@ fn resolve_kotlin_element_access_base_component_type_path(
             return Ok(None);
         };
         (superclass_path, 0)
+    } else if first_hop == "this" {
+        // A `this`-rooted base such as `val x = this.groups[0]` starts on
+        // the enclosing type path: a declared type scope, or the companion
+        // scope of a declared type for `this` inside a companion member.
+        // Callers outside a type (top-level functions, extension functions)
+        // fail closed because `this` has no enclosing type to dispatch on.
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let this_root = if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+            scope_path
+        } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+            && kotlin_path_is_type_declaration(parent, raw_symbols)
+        {
+            scope_path
+        } else {
+            return Ok(None);
+        };
+        (this_root.to_string(), 0)
     } else if let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop))
     {
         let Some(type_path) = resolve_kotlin_initializer_type_path(
@@ -11643,10 +11665,11 @@ fn resolve_kotlin_element_access_base_component_type_path(
 
 /// Resolves the element component type path of a uniquely declared array
 /// property such as `fieldItems` on `owner_type_path` in
-/// `val x = group.holder.fieldItems[0]`. The property must be declared under
-/// the owner type with a single-level generic array type whose component
-/// resolves in the property's own file and enclosing scope. Unknown,
-/// ambiguous, non-array, or multi-dimensional property types fail closed.
+/// `val x = group.holder.fieldItems[0]`. The property may be declared under
+/// the owner type or inherited through its class or interface chain, and must
+/// carry a single-level generic array type whose component resolves in the
+/// property's own file and enclosing scope. Unknown, ambiguous, non-array,
+/// or multi-dimensional property types fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_array_property_component_type_path(
     owner_type_path: &str,
@@ -11671,17 +11694,36 @@ fn kotlin_array_property_component_type_path(
                 && candidate.scope_path.as_deref() == Some(owner_type_path)
         })
         .collect::<Vec<_>>();
-    if candidates.len() != 1 {
+    let property_index = if candidates.len() == 1 {
+        Some(candidates[0])
+    } else if candidates.is_empty() {
+        // An inherited terminal array property such as
+        // `this.inheritedGroups[0]` where `inheritedGroups` is declared on a
+        // parent class or interface walks the same inherited-member rules as
+        // property hops; ambiguous or blocked chains fail closed.
+        resolve_kotlin_inherited_property_index(
+            owner_type_path,
+            property_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        None
+    };
+    let Some(property_index) = property_index else {
         return Ok(None);
-    }
-    let Some(return_type) = raw_symbols[candidates[0]].return_type.as_deref() else {
+    };
+    let Some(return_type) = raw_symbols[property_index].return_type.as_deref() else {
         return Ok(None);
     };
     let Some(component_name) = kotlin_array_type_component_name(return_type) else {
         return Ok(None);
     };
     resolve_kotlin_receiver_type_path(
-        &raw_symbols[candidates[0]],
+        &raw_symbols[property_index],
         &component_name,
         raw_symbols,
         file_overrides,
@@ -12575,6 +12617,67 @@ fn resolve_kotlin_receiver_chain_first_path(
     Ok(None)
 }
 
+/// Resolves the index of a `property_declaration` named `property_name` that
+/// an `owner_type_path` instance inherits: a parent-interface member in the
+/// interface extends chain, a parent-class member in the direct superclass
+/// chain, or an implemented-interface member when the class hierarchy does not
+/// declare it. Ambiguous, blocked, cyclic, or unresolvable chains fail closed
+/// as `None` so property and array-property hops never guess an inherited
+/// target.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_inherited_property_index(
+    owner_type_path: &str,
+    property_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<usize>> {
+    match resolve_kotlin_inherited_member_index(
+        owner_type_path,
+        property_name,
+        "property_declaration",
+        None,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        KotlinInheritedMemberResolution::Resolved(index) => Ok(Some(index)),
+        KotlinInheritedMemberResolution::Blocked => Ok(None),
+        KotlinInheritedMemberResolution::NoMember => {
+            let inherited_member = resolve_kotlin_superclass_chain_member(
+                owner_type_path,
+                property_name,
+                "property_declaration",
+                None,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?;
+            let inherited_member = match inherited_member {
+                Some(index) => Some(index),
+                None => resolve_kotlin_class_receiver_interface_member(
+                    owner_type_path,
+                    property_name,
+                    "property_declaration",
+                    None,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?,
+            };
+            Ok(inherited_member)
+        }
+    }
+}
+
 /// Resolves the declared type path of `property_name` on `owner_type_path`. A
 /// unique property resolves when it carries an explicit simple, non-nullable
 /// type or a bare constructor initializer; the declared type resolves in the
@@ -12605,85 +12708,32 @@ fn kotlin_property_type_path(
         })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
-        // An interface-typed owner dispatches a property hop declared on a
-        // parent interface in its extends chain; blocked chains fail closed.
-        match resolve_kotlin_inherited_member_index(
+        let Some(index) = resolve_kotlin_inherited_property_index(
             owner_type_path,
             property_name,
-            "property_declaration",
-            None,
             raw_symbols,
             semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )? {
-            KotlinInheritedMemberResolution::Resolved(index) => {
-                let Some(return_type) = raw_symbols[index].return_type.as_deref() else {
-                    return Ok(None);
-                };
-                let Some(type_name) = kotlin_dotted_type_name(return_type) else {
-                    return Ok(None);
-                };
-                return resolve_kotlin_initializer_type_path(
-                    &raw_symbols[index],
-                    &type_name,
-                    raw_symbols,
-                    file_overrides,
-                    kotlin_import_contexts_by_file,
-                    deadline,
-                );
-            }
-            KotlinInheritedMemberResolution::Blocked => return Ok(None),
-            KotlinInheritedMemberResolution::NoMember => {
-                // A class-typed owner dispatches a property hop declared on a
-                // parent class in its direct superclass chain, or on an
-                // implemented interface when the class hierarchy does not
-                // declare it; ambiguous chains fail closed.
-                let inherited_member = resolve_kotlin_superclass_chain_member(
-                    owner_type_path,
-                    property_name,
-                    "property_declaration",
-                    None,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                    kotlin_import_contexts_by_file,
-                    deadline,
-                )?;
-                let inherited_member = match inherited_member {
-                    Some(index) => Some(index),
-                    None => resolve_kotlin_class_receiver_interface_member(
-                        owner_type_path,
-                        property_name,
-                        "property_declaration",
-                        None,
-                        raw_symbols,
-                        semantic_path_index,
-                        file_overrides,
-                        kotlin_import_contexts_by_file,
-                        deadline,
-                    )?,
-                };
-                let Some(index) = inherited_member else {
-                    return Ok(None);
-                };
-                let Some(return_type) = raw_symbols[index].return_type.as_deref() else {
-                    return Ok(None);
-                };
-                let Some(type_name) = kotlin_dotted_type_name(return_type) else {
-                    return Ok(None);
-                };
-                return resolve_kotlin_initializer_type_path(
-                    &raw_symbols[index],
-                    &type_name,
-                    raw_symbols,
-                    file_overrides,
-                    kotlin_import_contexts_by_file,
-                    deadline,
-                );
-            }
-        }
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(return_type) = raw_symbols[index].return_type.as_deref() else {
+            return Ok(None);
+        };
+        let Some(type_name) = kotlin_dotted_type_name(return_type) else {
+            return Ok(None);
+        };
+        return resolve_kotlin_initializer_type_path(
+            &raw_symbols[index],
+            &type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
     }
     if candidates.len() != 1 {
         return Ok(None);

@@ -28453,11 +28453,11 @@ fn kotlin_var_qualified_element_access_receiver_calls_fail_closed_for_unsupporte
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun makeItems(): Array<Helper> = arrayOf()\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(group: Group, counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromThis = this.fieldItems[0]\n        val fromUnknown = unknownProp.fieldItems[0]\n        val fromCounts = counts[0]\n        val fromMatrix = matrix[0][0]\n        return fromThis.helper(1) + fromUnknown.helper(2) + fromCounts.helper(3) + fromMatrix.helper(4)\n    }\n    fun control(group: Group): Int {\n        val ok = group.fieldItems[0]\n        return ok.helper(1)\n    }\n}\n",
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun makeItems(): Array<Helper> = arrayOf()\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(group: Group, counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromUnknownThis = this.unknownItems[0]\n        val fromUnknown = unknownProp.fieldItems[0]\n        val fromCounts = counts[0]\n        val fromMatrix = matrix[0][0]\n        return fromUnknownThis.helper(1) + fromUnknown.helper(2) + fromCounts.helper(3) + fromMatrix.helper(4)\n    }\n    fun control(group: Group): Int {\n        val ok = group.fieldItems[0]\n        return ok.helper(1)\n    }\n}\n",
     )
     .unwrap();
 
-    // `val` locals bound from element accesses with `this`-rooted,
+    // `val` locals bound from element accesses with `this`-rooted unknown,
     // unknown-receiver, primitive-array, or multi-dimensional bases all fail
     // closed; only the resolvable qualified element-access base in `control`
     // traces.
@@ -28502,6 +28502,215 @@ fn traces_kotlin_var_super_rooted_element_access_receiver_calls_in_live_workspac
         trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_kotlin_var_this_rooted_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nopen class Base {\n    val inheritedGroups: Array<Helper> = arrayOf()\n}\n\nclass Derived : Base() {\n    val groups: Array<Helper> = arrayOf()\n    val items: Array<Item> = arrayOf()\n    fun runThisVar(): Int {\n        val first = this.groups[0]\n        return first.inner().helper(1)\n    }\n    fun runThisItemsVar(): Int {\n        val first = this.items[0]\n        return first.helper(2)\n    }\n    fun runThisInheritedVar(): Int {\n        val first = this.inheritedGroups[0]\n        return first.inner().helper(3)\n    }\n}\n\nclass CompanionHolder {\n    companion object {\n        val fieldItems: Array<Helper> = arrayOf()\n        fun runCompanionThisVar(): Int {\n            val first = this.fieldItems[0]\n            return first.inner().helper(4)\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access with a `this`-rooted base
+    // such as `val first = this.groups[0]` dispatches on the enclosing type's
+    // array property element component type, and a `this`-rooted base whose
+    // terminal array property is inherited from a parent class such as
+    // `val first = this.inheritedGroups[0]` walks the direct superclass
+    // chain. Inside a companion member `this` refers to the companion object,
+    // so a `this`-rooted base dispatches on the companion's array property; a
+    // trailing property or method-call hop then dispatches on the hop's
+    // declared type.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisItemsVar")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+    assert!(live.callers.iter().any(|caller| caller.symbol_id
+        == "com::example::CompanionHolder::Companion::runCompanionThisVar"));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisItemsVar")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+    assert!(persisted.callers.iter().any(|caller| caller.symbol_id
+        == "com::example::CompanionHolder::Companion::runCompanionThisVar"));
+}
+
+#[test]
+fn traces_kotlin_var_this_rooted_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nopen class Base {\n    val inheritedGroups: Array<Helper> = arrayOf()\n}\n\nclass Derived : Base() {\n    val groups: Array<Helper> = arrayOf()\n    fun runThisVar(): Int {\n        val first = this.groups[0]\n        return first.inner().helper(1)\n    }\n    fun runThisInheritedVar(): Int {\n        val first = this.inheritedGroups[0]\n        return first.inner().helper(2)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_var_this_rooted_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Helper\n\nclass Derived : Base() {\n    val groups: Array<Helper> = arrayOf()\n    fun runThisVar(): Int {\n        val first = this.groups[0]\n        return first.inner().helper(1)\n    }\n    fun runThisInheritedVar(): Int {\n        val first = this.inheritedGroups[0]\n        return first.inner().helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\nopen class Base {\n    val inheritedGroups: Array<Helper> = arrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access with a `this`-rooted base
+    // whose terminal array property is declared in the caller's class or
+    // inherited from an imported parent class dispatches on the imported
+    // element component type, resolved in the property's own package scope.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisVar")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInheritedVar")
+    );
+}
+
+#[test]
+fn kotlin_var_this_rooted_element_access_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    val inheritedCounts: IntArray = intArrayOf()\n    val inheritedMatrix: Array<Array<Helper>> = arrayOf()\n    val inheritedGroup: Group = Group()\n}\n\nclass Caller : Base() {\n    val counts: IntArray = intArrayOf()\n    val matrix: Array<Array<Helper>> = arrayOf()\n    val group: Group = Group()\n    fun run(): Int {\n        val fromUnknown = this.unknownItems[0]\n        val fromCounts = this.counts[0]\n        val fromMatrix = this.matrix[0][0]\n        val fromInheritedCounts = this.inheritedCounts[0]\n        val fromInheritedMatrix = this.inheritedMatrix[0][0]\n        val fromNonArray = this.group[0]\n        return fromUnknown.helper(1) + fromCounts.helper(2) + fromMatrix.helper(3) + fromInheritedCounts.helper(4) + fromInheritedMatrix.helper(5) + fromNonArray.helper(6)\n    }\n}\n\nfun topLevel(): Int {\n    val first = this.unknown[0]\n    return first.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals bound from element accesses with `this`-rooted bases whose
+    // terminal property is unknown, primitive-array, multi-dimensional-array,
+    // or non-array all fail closed, including inherited properties with those
+    // shapes; a top-level function has no enclosing type for `this`, so its
+    // `this`-rooted base fails closed too.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
 }
 
 #[test]
@@ -30381,15 +30590,15 @@ fn kotlin_var_parenthesized_initializer_receivers_fail_closed_for_unsupported_re
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromCounts = (counts[0])\n        val fromMatrix = (matrix[0][0])\n        val fromThis = (this.fieldItems[0])\n        val fromUnknown = (unknownFactory())\n        val fromUnknownType = (Missing.makeItems())\n        return fromCounts.helper(1) + fromMatrix.helper(2) + fromThis.helper(3) + fromUnknown.helper(4) + fromUnknownType.helper(5)\n    }\n}\n\nfun control(): Int {\n    val items = (makeItems())\n    return items[0].helper(1)\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n",
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromCounts = (counts[0])\n        val fromMatrix = (matrix[0][0])\n        val fromUnknownThis = (this.unknownItems[0])\n        val fromUnknown = (unknownFactory())\n        val fromUnknownType = (Missing.makeItems())\n        return fromCounts.helper(1) + fromMatrix.helper(2) + fromUnknownThis.helper(3) + fromUnknown.helper(4) + fromUnknownType.helper(5)\n    }\n}\n\nfun control(): Int {\n    val items = (makeItems())\n    return items[0].helper(1)\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n",
     )
     .unwrap();
 
     // Parenthesized initializers whose inner form would fail closed stay
     // unbound: primitive-array and multi-dimensional element accesses,
-    // `this`-rooted bases, unknown factories, and unknown qualified callees.
-    // Only the resolvable parenthesized factory initializer in `control`
-    // traces.
+    // `this`-rooted unknown-property bases, unknown factories, and unknown
+    // qualified callees. Only the resolvable parenthesized factory
+    // initializer in `control` traces.
     let helper_path = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -34951,7 +35160,7 @@ fn kotlin_cross_file_var_qualified_element_access_receiver_calls_fail_closed_for
     let db_path = dir.join("symbols.db");
     fs::write(
         &caller_path,
-        "package com.example\n\nimport org.util.Group\nimport org.util.Helper\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(group: Group, counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromThis = this.fieldItems[0]\n        val fromUnknown = unknownProp.fieldItems[0]\n        val fromCounts = counts[0]\n        val fromMatrix = matrix[0][0]\n        val fromMissingHop = group.missing.fieldItems[0]\n        return fromThis.helper(1) + fromUnknown.helper(2) + fromCounts.helper(3) + fromMatrix.helper(4) + fromMissingHop.helper(5)\n    }\n    fun control(group: Group): Int {\n        val ok = group.fieldItems[0]\n        return ok.helper(1)\n    }\n}\n",
+        "package com.example\n\nimport org.util.Group\nimport org.util.Helper\n\nclass Caller {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(group: Group, counts: IntArray, matrix: Array<Array<Helper>>): Int {\n        val fromUnknownThis = this.unknownItems[0]\n        val fromUnknown = unknownProp.fieldItems[0]\n        val fromCounts = counts[0]\n        val fromMatrix = matrix[0][0]\n        val fromMissingHop = group.missing.fieldItems[0]\n        return fromUnknownThis.helper(1) + fromUnknown.helper(2) + fromCounts.helper(3) + fromMatrix.helper(4) + fromMissingHop.helper(5)\n    }\n    fun control(group: Group): Int {\n        val ok = group.fieldItems[0]\n        return ok.helper(1)\n    }\n}\n",
     )
     .unwrap();
     fs::write(
@@ -34960,7 +35169,7 @@ fn kotlin_cross_file_var_qualified_element_access_receiver_calls_fail_closed_for
     )
     .unwrap();
 
-    // `val` locals bound from element accesses with `this`-rooted,
+    // `val` locals bound from element accesses with `this`-rooted unknown,
     // unknown-receiver, primitive-array, multi-dimensional, or unknown-hop
     // bases all fail closed even when the bound and hop types are declared in
     // an imported package; only the resolvable qualified element-access base
