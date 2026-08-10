@@ -25585,6 +25585,131 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_array_access_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\n\nclass Holder {\n    val fieldItems: Array<Entry> = arrayOf()\n    fun run(items: Array<Entry>, index: Int): Int {\n        val local: Array<Entry> = arrayOf()\n        return items[0].helper(1) + items[index].helper(2) + local[1].helper(3) + fieldItems[0].helper(4)\n    }\n}\n\nfun caller(items: Array<Entry>): Int {\n    return items[0].helper(5)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Element-access receivers on array-typed parameters, locals, and
+    // enclosing-class properties dispatch on the imported element component
+    // type, so the trailing member dispatches across packages.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::Holder::run", "com::example::caller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::Holder::run", "com::example::caller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_array_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Entry\n\nfun caller(items: Array<Entry>): Int {\n    return items[0].helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_array_access_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\n\nfun missingElementCaller(items: Array<Missing>): Int {\n    return items[0].helper(1)\n}\n\nfun nonArrayCaller(items: Entry): Int {\n    return items[0].helper(1)\n}\n\nfun control(items: Array<Entry>): Int {\n    return items[0].helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // An unresolvable array element type and a non-array subscript base both
+    // fail closed; only the uniquely resolvable imported array element
+    // component in `control` traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_constructor_rooted_superclass_chain_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
