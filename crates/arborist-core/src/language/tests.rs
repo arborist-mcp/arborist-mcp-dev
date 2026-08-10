@@ -3,7 +3,7 @@ use std::path::Path;
 use tree_sitter::Point;
 
 use super::{
-    LanguageCapabilities, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
+    LanguageCapabilities, LanguageRegistry, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
     c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
     offset_for_position, parse_document, point_for_offset, read_source, supported_languages,
 };
@@ -51,6 +51,45 @@ fn detect_language_accepts_uppercase_extensions() {
     }
 }
 
+#[test]
+fn language_families_group_shared_syntax_adapters() {
+    assert!(LanguageRegistry::same_language_family(
+        LanguageId::C,
+        LanguageId::Cpp
+    ));
+    assert!(LanguageRegistry::same_language_family(
+        LanguageId::Cpp,
+        LanguageId::C
+    ));
+    assert!(LanguageRegistry::same_language_family(
+        LanguageId::JavaScript,
+        LanguageId::TypeScript
+    ));
+    assert!(LanguageRegistry::same_language_family(
+        LanguageId::TypeScript,
+        LanguageId::Tsx
+    ));
+    assert!(LanguageRegistry::same_language_family(
+        LanguageId::JavaScript,
+        LanguageId::Tsx
+    ));
+    assert!(!LanguageRegistry::same_language_family(
+        LanguageId::Python,
+        LanguageId::C
+    ));
+    assert!(!LanguageRegistry::same_language_family(
+        LanguageId::Python,
+        LanguageId::CSharp
+    ));
+    assert!(!LanguageRegistry::same_language_family(
+        LanguageId::Java,
+        LanguageId::Kotlin
+    ));
+    assert!(!LanguageRegistry::same_language_family(
+        LanguageId::Rust,
+        LanguageId::Go
+    ));
+}
 #[test]
 fn supported_languages_reports_all_builtin_languages() {
     assert_eq!(

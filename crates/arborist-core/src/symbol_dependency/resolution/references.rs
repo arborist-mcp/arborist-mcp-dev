@@ -59,7 +59,7 @@ use super::type_alias::{
     is_cpp_constructible_type,
 };
 use crate::language::{
-    JavaDirectSuperclassReference, detect_language,
+    JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
     normalize_path, parse_document, read_source,
 };
@@ -1566,6 +1566,21 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         visible_candidates
     };
+    // References never cross a language family without an approved bridge
+    // (design doc §17.3, §18): a candidate in a different family is an
+    // unsupported cross-language match and must fail closed.
+    let candidate_slice = candidate_slice
+        .into_iter()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            let Some(source_language) = language_id else {
+                return true;
+            };
+            detect_language(Path::new(&candidate.file_path)).is_ok_and(|candidate_language| {
+                LanguageRegistry::same_language_family(source_language, candidate_language)
+            })
+        })
+        .collect::<Vec<_>>();
     let import_bound_candidates = if let Some(binding) = javascript_import_binding {
         candidate_slice
             .iter()

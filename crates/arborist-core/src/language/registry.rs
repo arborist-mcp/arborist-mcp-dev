@@ -311,6 +311,10 @@ impl LanguageRegistry {
         self.language_ids().map(persisted_language_id).collect()
     }
 
+    pub(crate) fn same_language_family(left: LanguageId, right: LanguageId) -> bool {
+        language_family_id(left) == language_family_id(right)
+    }
+
     pub(crate) fn analysis_provenance(&self) -> (Vec<String>, BTreeMap<String, String>, String) {
         let mut language_ids = Vec::new();
         let mut analysis_revisions = BTreeMap::new();
@@ -341,6 +345,19 @@ impl LanguageRegistry {
                 detection_entries.join(";")
             ),
         )
+    }
+}
+
+fn language_family_id(language_id: LanguageId) -> u8 {
+    match language_id {
+        LanguageId::Python => 0,
+        LanguageId::C | LanguageId::Cpp => 1,
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx => 2,
+        LanguageId::Rust => 3,
+        LanguageId::Go => 4,
+        LanguageId::Java => 5,
+        LanguageId::Kotlin => 6,
+        LanguageId::CSharp => 7,
     }
 }
 
