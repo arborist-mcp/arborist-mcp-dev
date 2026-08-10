@@ -21327,6 +21327,147 @@ fn traces_kotlin_branching_interface_chain_member_calls_in_live_workspace_and_pe
 }
 
 #[test]
+fn traces_kotlin_cross_file_branching_interface_chain_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nimport org.util.Diamond\nimport org.util.Mixed\n\nfun diamondCaller(renderer: Diamond): Int {\n    return renderer.render(1)\n}\n\nfun mixedCaller(renderer: Mixed): Int {\n    return renderer.render(1)\n}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Left : Root\ninterface Right : Root\ninterface Diamond : Left, Right\ninterface A : Root\ninterface B\ninterface Mixed : A, B\n").unwrap();
+
+    // A declaration reached identically through multiple diamond branches
+    // declared in an imported package still resolves once, and a branch
+    // that proves it has no declaration does not block the uniquely
+    // resolvable branch.
+    let render_path = "org::util::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, render_path);
+    let callers = &live.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::diamondCaller", "com::example::mixedCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    let callers = &persisted.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::diamondCaller", "com::example::mixedCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_branching_interface_chain_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    fs::write(&base_path, "package org.util\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Left : Root\ninterface Right : Root\ninterface Diamond : Left, Right\ninterface A : Root\ninterface B\ninterface Mixed : A, B\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.Diamond\nimport org.util.Mixed\n\nfun diamondCaller(renderer: Diamond): Int {\n    return renderer.render(1)\n}\n\nfun mixedCaller(renderer: Mixed): Int {\n    return renderer.render(1)\n}\n";
+    let target = "org::util::Root::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let callers = &live.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::diamondCaller", "com::example::mixedCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let callers = &persisted.callers;
+    let mut caller_ids = callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::diamondCaller", "com::example::mixedCaller"]
+    );
+}
+
+#[test]
+fn kotlin_cross_file_branching_interface_chain_member_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.A\nimport org.util.B\nimport org.util.BlockedMixed\nimport org.util.Competing\nimport org.util.Good\nimport org.util.X\nimport org.util.Y\n\nfun competingCaller(competing: Competing): Int = competing.helper(1)\n\nfun cyclicCaller(x: X): Int = x.helper(1)\n\nfun blockedCaller(blocked: BlockedMixed): Int = blocked.helper(1)\n\nfun control(good: Good): Int = good.render(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\ninterface A {\n    fun helper(value: Int): Int = value\n}\ninterface B {\n    fun helper(value: Int): Int = value\n}\ninterface Competing : A, B\ninterface X : Y\ninterface Y : X\ninterface Bad : Missing\ninterface BlockedMixed : A, Bad\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Good : Root\n",
+    )
+    .unwrap();
+
+    // Competing declarations across branches, a cyclic interface chain, and
+    // a branch with an unresolvable parent all fail closed; only the
+    // uniquely resolvable inherited member in `control` traces.
+    let helper_path = "org::util::A::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "competing and blocked branches must fail closed"
+    );
+
+    let render_path = "org::util::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        persisted.callers.is_empty(),
+        "competing and blocked branches must fail closed"
+    );
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_branching_interface_chain_receiver_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
