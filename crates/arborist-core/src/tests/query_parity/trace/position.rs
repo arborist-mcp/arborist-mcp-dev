@@ -25585,6 +25585,143 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_typealias_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let local_path = dir.join("Local.kt");
+    let alias_path = dir.join("Alias.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Helper\n\nfun importedAliasCaller(helper: Helper): Int {\n    return helper.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &local_path,
+        "package com.example\n\nimport org.util.Entry\n\ntypealias LocalAlias = Entry\n\nfun localAliasCaller(entry: LocalAlias): Int {\n    return entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &alias_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ntypealias Helper = Entry\n",
+    )
+    .unwrap();
+
+    // A type alias declared in another package binds the trailing member once
+    // the alias target resolves in the alias's own file and package scope, and
+    // a local alias whose target is explicitly imported resolves the same way.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::importedAliasCaller",
+            "com::example::localAliasCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::importedAliasCaller",
+            "com::example::localAliasCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_typealias_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let alias_path = dir.join("Alias.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Helper\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &alias_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ntypealias Helper = Entry\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Helper\n\nfun caller(helper: Helper): Int {\n    return helper.helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_typealias_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let alias_path = dir.join("Alias.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.MissingAlias\nimport org.util.Box\nimport org.util.GoodAlias\n\nfun missingTargetCaller(helper: MissingAlias): Int {\n    return helper.helper(1)\n}\n\nfun genericTargetCaller(box: Box<String>): Int {\n    return box.helper(1)\n}\n\nfun control(helper: GoodAlias): Int {\n    return helper.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &alias_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ntypealias MissingAlias = Missing\ntypealias Box<T> = List<T>\ntypealias GoodAlias = Entry\n",
+    )
+    .unwrap();
+
+    // An imported type alias with an unresolvable target and a generic alias
+    // both fail closed; only the imported alias whose target resolves in its
+    // own package traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_generic_interface_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

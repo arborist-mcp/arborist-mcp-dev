@@ -13092,6 +13092,11 @@ fn resolve_kotlin_receiver_type_path(
         .map(|segment| segment.to_string())
         .collect::<VecDeque<_>>();
     let mut resolved_path = None;
+    // The first segment resolves in the caller's file and package scope, but an
+    // alias target must resolve in the alias's own file and package scope so an
+    // imported alias whose target lives in its own package still pins the
+    // receiver.
+    let mut scope_symbol = source_symbol;
     while let Some(name) = pending.pop_front() {
         let candidate_path = if let Some(current_path) = resolved_path.as_deref() {
             // A later segment must name a concrete nested type declaration under
@@ -13102,13 +13107,13 @@ fn resolve_kotlin_receiver_type_path(
             }
             Some(nested_path)
         } else {
-            let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+            let same_package_path = kotlin_package_scope(scope_symbol, raw_symbols)
                 .map(|scope| format!("{scope}::{name}"));
             let same_package_is_type = same_package_path
                 .as_deref()
                 .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
             let imported_binding = resolve_kotlin_import_binding_for_reference(
-                &source_symbol.file_path,
+                &scope_symbol.file_path,
                 &name,
                 file_overrides,
                 kotlin_import_contexts_by_file,
@@ -13134,6 +13139,11 @@ fn resolve_kotlin_receiver_type_path(
         if resolved_path.is_none()
             && let Some(alias_target) = kotlin_type_alias_target(&candidate_path, raw_symbols)
         {
+            if let Some(alias_symbol) = raw_symbols.iter().find(|candidate| {
+                candidate.semantic_path == candidate_path && candidate.node_kind == "type_alias"
+            }) {
+                scope_symbol = alias_symbol;
+            }
             let target_segments = alias_target.split('.').collect::<Vec<_>>();
             if target_segments.is_empty()
                 || target_segments.iter().any(|segment| {
