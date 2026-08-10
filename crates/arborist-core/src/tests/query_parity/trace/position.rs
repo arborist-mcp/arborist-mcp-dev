@@ -25585,6 +25585,122 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_parenthesized_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let group_path = dir.join("Group.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Group\nimport org.util.makeGroup\n\nfun caller(group: Group): Int {\n    val plainBound = group.entry.helper(1)\n    val parenBound = (group).entry.helper(1)\n    val plainBoundHop = group.inner().entry.helper(1)\n    val parenBoundHop = (group).inner().entry.helper(1)\n    val plainFactory = makeGroup().entry.helper(1)\n    val parenFactory = (makeGroup()).entry.helper(1)\n    val plainConstructed = Group().entry.helper(1)\n    val parenConstructed = (Group()).entry.helper(1)\n    val parenDouble = ((group)).entry.helper(1)\n    return plainBound + parenBound + plainBoundHop + parenBoundHop + plainFactory + parenFactory + plainConstructed + parenConstructed + parenDouble\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &group_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n    fun inner(): Group = this\n}\nfun makeGroup(): Group = Group()\n",
+    )
+    .unwrap();
+
+    // A parenthesized receiver unwraps to the same chain spelling as its
+    // unparenthesized form for bound-receiver hops, method-call hops, factory
+    // roots, constructed roots, and nested parentheses, so the trailing member
+    // dispatches on the same resolved receiver even when the bound type,
+    // hop types, factory, and trailing member are declared in an imported
+    // package.
+    for helper_path in ["org::util::Entry::helper", "org::util::Group::inner"] {
+        let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, helper_path);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_parenthesized_receiver_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let group_path = dir.join("Group.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Group\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &group_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Entry\nimport org.util.Group\n\nfun caller(group: Group): Int {\n    return (group).entry.helper(1) + ((group)).entry.helper(2)\n}\n";
+    let helper_path = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_parenthesized_receiver_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let group_path = dir.join("Group.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Entry\nimport org.util.Group\n\nfun caller(group: Group): Int {\n    return (group).missing.helper(1) + (unknown).entry.helper(2) + (group)?.entry.helper(3)\n}\n\nfun control(group: Group): Int {\n    return (group).entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &group_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\n",
+    )
+    .unwrap();
+
+    // An unknown chain hop, an unknown parenthesized root, and a nullable
+    // parenthesized receiver all fail closed even when the bound and hop types
+    // are declared in an imported package; only the resolvable parenthesized
+    // receiver in `control` traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_qualified_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
