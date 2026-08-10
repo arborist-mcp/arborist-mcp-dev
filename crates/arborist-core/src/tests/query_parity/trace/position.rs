@@ -25585,6 +25585,139 @@ fn kotlin_cross_file_class_receiver_hierarchy_hop_calls_fail_closed_for_unsuppor
     assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
 }
 #[test]
+fn traces_kotlin_cross_file_diamond_interface_chain_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Diamond\n\nclass Impl : Diamond\n\nfun diamondPropertyCaller(impl: Impl): Int {\n    return impl.entry.helper(1)\n}\n\nfun diamondMethodCaller(impl: Impl): Int {\n    return impl.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Left : Root\ninterface Right : Root\ninterface Diamond : Left, Right\n",
+    )
+    .unwrap();
+
+    // A diamond-shaped implemented-interface chain declared in an imported
+    // package still resolves the shared-ancestor property and method-call hop
+    // exactly once, with the hop type resolved in the declaring type's own
+    // package so the trailing member dispatches across packages.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::diamondMethodCaller",
+            "com::example::diamondPropertyCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec![
+            "com::example::diamondMethodCaller",
+            "com::example::diamondPropertyCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_diamond_interface_chain_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Diamond\n\nclass Stale {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Root {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Left : Root\ninterface Right : Root\ninterface Diamond : Left, Right\n",
+    )
+    .unwrap();
+    let overlay = "package com.example\n\nimport org.util.Diamond\n\nclass Impl : Diamond\n\nfun caller(impl: Impl): Int {\n    return impl.entry.helper(1) + impl.inner().helper(1)\n}\n";
+    let target = "org::util::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_cross_file_diamond_interface_chain_hop_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.A\nimport org.util.B\nimport org.util.Root\n\nclass Competing : A, B\nclass MissingChain : Unknown\nclass Good : Root\n\nfun competingPropertyCaller(competing: Competing): Int {\n    return competing.entry.helper(1)\n}\n\nfun missingPropertyCaller(missing: MissingChain): Int {\n    return missing.entry.helper(1)\n}\n\nfun control(good: Good): Int {\n    return good.entry.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface A {\n    val entry: Entry\n}\ninterface B {\n    val entry: Entry\n}\ninterface Root {\n    val entry: Entry\n}\n",
+    )
+    .unwrap();
+
+    // Competing imported implemented interfaces and an unresolvable imported
+    // implemented chain both fail closed; only the uniquely resolvable
+    // imported interface hop in `control` traces.
+    let helper_path = "org::util::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
 fn traces_kotlin_cross_file_this_and_super_rooted_class_receiver_hierarchy_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
