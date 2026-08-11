@@ -334,6 +334,43 @@ fn kotlin_parenthesized_initializer_expression(mut initializer: Node<'_>) -> Opt
     }
 }
 
+/// Returns the operand of a postfix force-unwrap expression such as
+/// `makeNullable()!!` or `items!!` when `node` is a `unary_expression` whose
+/// operator is the `!!` force-unwrap token. Other unary operators such as
+/// boolean negation or arithmetic signs return `None` so initializer and
+/// element-access bindings only strip nullability without guessing about value
+/// transformations.
+fn kotlin_force_unwrap_operand(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() != "unary_expression" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let is_force_unwrap = node.children(&mut cursor).any(|child| child.kind() == "!!");
+    if !is_force_unwrap {
+        return None;
+    }
+    node.named_child(0)
+}
+
+/// Strips parentheses and postfix `!!` force-unwrap operators from an
+/// initializer expression such as `(makeItems()!!)` so `val` locals bind the
+/// same receiver shape as the fully unwrapped expression. Only the `!!`
+/// operator unwraps; other unary operators (negation, arithmetic signs) fail
+/// closed because they transform the value rather than only nullability.
+fn kotlin_initializer_expression(mut initializer: Node<'_>) -> Option<Node<'_>> {
+    loop {
+        let unwrapped = kotlin_parenthesized_initializer_expression(initializer)?;
+        if unwrapped != initializer {
+            initializer = unwrapped;
+            continue;
+        }
+        let Some(inner) = kotlin_force_unwrap_operand(initializer) else {
+            return Some(initializer);
+        };
+        initializer = inner;
+    }
+}
+
 fn kotlin_property_binding(
     property: Node<'_>,
     source: &str,
@@ -371,23 +408,27 @@ fn kotlin_property_binding(
     // Fall back to a constructor-call initializer such as `val x = Other()` or
     // `val x = Outer.Inner()`, or an element-access initializer such as
     // `val x = items[0]`; a parenthesized initializer such as `(Other())`,
-    // `(makeItems())`, or `(items[0])` unwraps to the same inner expression so
-    // `val` locals bind the same receiver type as the unparenthesized form.
-    // Qualified callees must be pure identifier chains, and element-access
-    // bases follow the plain/qualified/factory rules below.
+    // `(makeItems())`, or `(items[0])` and a postfix force-unwrap initializer
+    // such as `makeNullable()!!` unwrap to the same inner expression so `val`
+    // locals bind the same receiver type as the unwrapped form. Qualified
+    // callees must be pure identifier chains, and element-access bases follow
+    // the plain/qualified/factory rules below.
     let initializer = children
         .iter()
         .find(|child| {
             matches!(
                 child.kind(),
-                "call_expression" | "index_expression" | "parenthesized_expression"
+                "call_expression"
+                    | "index_expression"
+                    | "parenthesized_expression"
+                    | "unary_expression"
             )
         })
         .copied();
     let Some(initializer) = initializer else {
         return Ok(None);
     };
-    let Some(initializer) = kotlin_parenthesized_initializer_expression(initializer) else {
+    let Some(initializer) = kotlin_initializer_expression(initializer) else {
         return Ok(None);
     };
     if initializer.kind() == "call_expression"
@@ -507,15 +548,17 @@ fn kotlin_factory_call_callee_name(node: Node<'_>, source: &str) -> Result<Optio
 
 /// Extracts the base of a single-level element-access initializer such as
 /// `items[0]`, `this.groups[0]`, `super.inheritedItems[0]`, `makeItems()[0]`,
-/// `Util.makeItems()[0]`, `this.ownMake()[0]`, or
-/// `super.inheritedMake()[0]`.
+/// `Util.makeItems()[0]`, `this.ownMake()[0]`,
+/// `super.inheritedMake()[0]`, or the force-unwrapped spellings
+/// `items!![0]`, `this.makeNullable()!![0]`, or `super.makeNullable()!![0]`.
 /// Plain-identifier and dotted field-chain bases (including `this`- and
-/// `super`-rooted chains) return their spelling, and a factory-call base with
-/// a plain, safe dotted, or `this`/`super`-rooted callee returns the callee
-/// with a trailing `()` marker so trace-time resolution can walk the
-/// factory's declared return array. Parenthesized roots, nested element
-/// access, and function-call, multi-index, or nullable subscripts return
-/// `None` so element-access-inferred bindings fail closed.
+/// `super`-rooted chains) return their spelling, a postfix `!!` force-unwrap
+/// on the base unwraps to the operand because it only strips nullability, and
+/// a factory-call base with a plain, safe dotted, or `this`/`super`-rooted
+/// callee returns the callee with a trailing `()` marker so trace-time
+/// resolution can walk the factory's declared return array. Parenthesized
+/// roots, nested element access, and function-call, multi-index, or nullable
+/// subscripts return `None` so element-access-inferred bindings fail closed.
 fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
     if initializer.kind() != "index_expression" {
         return Ok(None);
@@ -529,14 +572,22 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
     if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
         return Ok(None);
     }
+    // A postfix `!!` force-unwrap base such as `items!!` in `items!![0]` or
+    // `this.makeNullable()!!` in `this.makeNullable()!![0]` unwraps to its
+    // operand because `!!` only strips nullability without changing the
+    // element component or receiver type; other unary operators fail closed.
+    let mut base_node = children[0];
+    while let Some(inner) = kotlin_force_unwrap_operand(base_node) {
+        base_node = inner;
+    }
     // A factory-call base such as `makeItems()`, `Util.makeItems()`,
     // `this.ownMake()`, or `super.inheritedMake()` records the callee with a
     // trailing `()` marker so trace-time resolution can walk the factory's
     // declared return array. Plain-identifier, safe dotted, and
     // `this`/`super`-rooted callees are accepted; parenthesized roots and
     // other non-name callees fail closed.
-    if children[0].kind() == "call_expression" {
-        let Some(callee) = children[0].named_child(0) else {
+    if base_node.kind() == "call_expression" {
+        let Some(callee) = base_node.named_child(0) else {
             return Ok(None);
         };
         let Some(callee_name) = kotlin_factory_call_callee_name(callee, source)? else {
@@ -544,7 +595,7 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
         };
         return Ok(Some(format!("{callee_name}()")));
     }
-    let base = node_text(children[0], source)?.trim();
+    let base = node_text(base_node, source)?.trim();
     if base.is_empty()
         || base.contains(['(', '[', ' ', '?'])
         || base.contains("::")
@@ -674,16 +725,23 @@ fn kotlin_declared_type_name(text: &str) -> Option<String> {
 }
 
 /// Extracts the element component type name from a single-level Kotlin generic
-/// array spelling such as `Array<Helper>` or `Array<Outer.Inner>`, normalizing
-/// the component through `kotlin_dotted_type_name`. Nested generic arrays such
-/// as `Array<Array<Helper>>`, primitive arrays such as `IntArray`, malformed
-/// spellings, and non-`Array<...>` spellings return `None` and fail closed.
+/// array spelling such as `Array<Helper>`, `Array<Outer.Inner>`, or the
+/// nullable spelling `Array<Helper>?`, normalizing the component through
+/// `kotlin_dotted_type_name`. Nullability does not change the element component
+/// type, so nullable single-level arrays bind the same component as non-null
+/// arrays. Nested generic arrays such as `Array<Array<Helper>>`, primitive
+/// arrays such as `IntArray`, malformed spellings, and non-`Array<...>`
+/// spellings return `None` and fail closed.
 pub(in crate::symbol_dependency) fn kotlin_array_type_component_name(text: &str) -> Option<String> {
     let name = text.trim();
     let rest = name.strip_prefix("Array<")?;
     let close = rest.rfind('>')?;
-    if !rest[close + 1..].trim().is_empty() {
-        return None;
+    // A trailing `?` marks a nullable array such as `Array<Helper>?`; the
+    // element component type is unchanged by nullability. Double-nullable and
+    // other trailing spellings still fail closed.
+    match rest[close + 1..].trim() {
+        "" | "?" => {}
+        _ => return None,
     }
     let component = rest[..close].trim();
     if component.is_empty() {
@@ -822,8 +880,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        KotlinImportBinding, KotlinReceiverTypeBindings, kotlin_dotted_type_name,
-        kotlin_import_context_for_file_with_overrides_and_deadline,
+        KotlinImportBinding, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
+        kotlin_dotted_type_name, kotlin_import_context_for_file_with_overrides_and_deadline,
         kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
     };
     use crate::language::normalize_path;
@@ -891,6 +949,40 @@ mod tests {
         assert_eq!(kotlin_dotted_type_name("Box<String>Extra"), None);
         assert_eq!(kotlin_dotted_type_name(""), None);
         assert_eq!(kotlin_dotted_type_name("Box (String)"), None);
+    }
+
+    #[test]
+    fn kotlin_array_type_component_name_accepts_nullable_and_plain_arrays() {
+        assert_eq!(
+            kotlin_array_type_component_name("Array<Helper>").as_deref(),
+            Some("Helper")
+        );
+        assert_eq!(
+            kotlin_array_type_component_name("Array<Outer.Inner>").as_deref(),
+            Some("Outer.Inner")
+        );
+        // Nullability does not change the element component type, so a
+        // nullable single-level array binds the same component as the plain
+        // spelling.
+        assert_eq!(
+            kotlin_array_type_component_name("Array<Helper>?").as_deref(),
+            Some("Helper")
+        );
+        assert_eq!(
+            kotlin_array_type_component_name("Array<Outer.Inner>?").as_deref(),
+            Some("Outer.Inner")
+        );
+        // Double-nullable, nested generic, primitive-array, and malformed
+        // spellings still fail closed.
+        assert_eq!(kotlin_array_type_component_name("Array<Helper>??"), None);
+        assert_eq!(
+            kotlin_array_type_component_name("Array<Array<Helper>>?"),
+            None
+        );
+        assert_eq!(kotlin_array_type_component_name("IntArray?"), None);
+        assert_eq!(kotlin_array_type_component_name("Helper?"), None);
+        assert_eq!(kotlin_array_type_component_name("Array<>?"), None);
+        assert_eq!(kotlin_array_type_component_name(""), None);
     }
 
     #[test]

@@ -29162,6 +29162,170 @@ fn kotlin_var_this_super_rooted_factory_call_receiver_calls_fail_closed_for_unsu
 }
 
 #[test]
+fn traces_kotlin_cross_file_nullable_factory_force_unwrap_var_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Helper\n\nclass Derived : Base() {\n    fun runThisPlainAccess(): Int {\n        val items = this.makeNullable()\n        return items[0].helper(1)\n    }\n    fun runThisForceAccess(): Int {\n        val items = this.makeNullable()\n        return items!![0].helper(2)\n    }\n    fun runThisForceInitializer(): Int {\n        val items = this.makeNullable()!!\n        return items[0].helper(3)\n    }\n    fun runThisForceFirst(): Int {\n        val first = this.makeNullable()!![0]\n        return first.helper(4)\n    }\n    fun runSuperForce(): Int {\n        val second = super.makeNullable()!![0]\n        return second.helper(5)\n    }\n    fun runInlineThisForce(): Int {\n        return this.makeNullable()!![0].helper(6)\n    }\n    fun runInlineSuperForce(): Int {\n        return super.makeNullable()!![0].helper(7)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun makeNullable(): Array<Helper>? = arrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals bound from a `this`- or `super`-rooted nullable-array
+    // factory on an imported parent class dispatch on the imported return
+    // array's element component type whether the element access or the
+    // initializer carries a `!!` force-unwrap (or neither), and inline
+    // `this`/`super`-rooted force-unwrapped factory element-access receivers
+    // resolve the same way, all in the factory's own package scope.
+    let helper_path = "org::util::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::Derived::runThisPlainAccess",
+        "com::example::Derived::runThisForceAccess",
+        "com::example::Derived::runThisForceInitializer",
+        "com::example::Derived::runThisForceFirst",
+        "com::example::Derived::runSuperForce",
+        "com::example::Derived::runInlineThisForce",
+        "com::example::Derived::runInlineSuperForce",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::Derived::runThisPlainAccess",
+        "com::example::Derived::runThisForceAccess",
+        "com::example::Derived::runThisForceInitializer",
+        "com::example::Derived::runThisForceFirst",
+        "com::example::Derived::runSuperForce",
+        "com::example::Derived::runInlineThisForce",
+        "com::example::Derived::runInlineSuperForce",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_nullable_factory_force_unwrap_var_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun makeNullable(): Array<Helper>? = arrayOf()\n}\n\nclass Derived : Base() {\n    fun runThisForceAccess(): Int {\n        val items = this.makeNullable()\n        return items!![0].helper(1)\n    }\n    fun runThisForceInitializer(): Int {\n        val items = this.makeNullable()!!\n        return items[0].helper(2)\n    }\n    fun runThisForceFirst(): Int {\n        val first = this.makeNullable()!![0]\n        return first.helper(3)\n    }\n    fun runSuperForce(): Int {\n        val second = super.makeNullable()!![0]\n        return second.helper(4)\n    }\n    fun runInlineThisForce(): Int {\n        return this.makeNullable()!![0].helper(5)\n    }\n    fun runInlineSuperForce(): Int {\n        return super.makeNullable()!![0].helper(6)\n    }\n}\n";
+    let helper_path = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Derived::runThisForceAccess",
+        "com::example::Derived::runThisForceInitializer",
+        "com::example::Derived::runThisForceFirst",
+        "com::example::Derived::runSuperForce",
+        "com::example::Derived::runInlineThisForce",
+        "com::example::Derived::runInlineSuperForce",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Derived::runThisForceAccess",
+        "com::example::Derived::runThisForceInitializer",
+        "com::example::Derived::runThisForceFirst",
+        "com::example::Derived::runSuperForce",
+        "com::example::Derived::runInlineThisForce",
+        "com::example::Derived::runInlineSuperForce",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_nullable_factory_force_unwrap_var_receiver_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun makeCounts(): IntArray = intArrayOf()\n    fun makeMatrix(): Array<Array<Helper>> = arrayOf()\n    fun makeOther(): Other = Other()\n}\n\nclass Caller : Base() {\n    fun run(): Int {\n        val fromUnknown = this.unknownMake()!!\n        val fromCounts = this.makeCounts()!!\n        val fromMatrix = this.makeMatrix()!!\n        val fromOther = this.makeOther()!!\n        val fromSuperCounts = super.makeCounts()!!\n        val fromSuperUnknown = super.unknownMake()!!\n        return fromUnknown[0].helper(1) + fromCounts[0].helper(2) + fromMatrix[0].helper(3) + fromOther[0].helper(4) + fromSuperCounts[0].helper(5) + fromSuperUnknown[0].helper(6)\n    }\n}\n\nfun topLevel(): Int {\n    val items = this.unknownMake()!!\n    return items[0].helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals initialized from `!!` force-unwrapped `this`/`super`-rooted
+    // factory calls whose callee is unknown, primitive-returning,
+    // multi-dimensional-returning, or non-array-returning all fail closed,
+    // including inherited super-rooted factories with those shapes, and a
+    // top-level function has no enclosing type for `this`, so its
+    // `this`-rooted force-unwrapped factory fails closed too.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_var_companion_object_element_access_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

@@ -156,20 +156,23 @@ fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>
 
 /// Collects the dotted segments of a navigation chain such as `other.helper`,
 /// `group.member.helper`, `Outer.Inner().helper`, `Group().member.helper`,
-/// `this.entry.helper`, `super.entry.helper`, or `items[0].helper`. The base
-/// may be a plain identifier, `this`, `super`, a pure identifier navigation
-/// chain, a call expression over either, or an element access over either; a
-/// call base marks its last segment with `()` so resolution can
-/// distinguish a constructor-call receiver from a class-name receiver, and an
+/// `this.entry.helper`, `super.entry.helper`, `items[0].helper`, or
+/// `items!![0].helper`. The base may be a plain identifier, `this`, `super`, a
+/// pure identifier navigation chain, a call expression over either, an
+/// element access over either, or a postfix `!!` force-unwrap over any of
+/// those; a call base marks its last segment with `()` so resolution can
+/// distinguish a constructor-call receiver from a class-name receiver, an
 /// element-access base merges its bracket onto the accessed element's segment
-/// so resolution dispatches on the element component type. A parenthesized
-/// receiver such as `(group)` in `(group).entry.helper(...)` or
+/// so resolution dispatches on the element component type, and a force-unwrap
+/// base unwraps to the operand because `!!` only strips nullability without
+/// changing the element component or receiver type. A parenthesized receiver
+/// such as `(group)` in `(group).entry.helper(...)` or
 /// `(makeGroup())` in `(makeGroup()).entry.helper(...)` unwraps to the same
 /// chain spelling as the unparenthesized form so the trailing member
 /// dispatches on the same resolved receiver. Nullable (`?.`),
-/// callable-reference (`::`), complex-index, and multi-dimensional receivers
-/// still fail closed and produce no direct-call fact so resolution never
-/// guesses a target.
+/// callable-reference (`::`), complex-index, multi-dimensional, and other
+/// unary-operator receivers still fail closed and produce no direct-call fact
+/// so resolution never guesses a target.
 fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
     if node.kind() == "identifier" {
         let segment = node_text(node, source)?.trim().to_string();
@@ -241,6 +244,21 @@ fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec
             return Ok(None);
         };
         return kotlin_navigation_segments(inner, source);
+    }
+    // A postfix force-unwrap base such as `items!!` in `items!![0].helper(...)`
+    // or `this.makeNullable()!!` unwraps to the same chain spelling as the
+    // operand because `!!` only strips nullability without changing the
+    // element component or receiver type; other unary operators (negation,
+    // arithmetic signs) fail closed.
+    if node.kind() == "unary_expression" {
+        let text = node_text(node, source)?.trim();
+        if !text.ends_with("!!") {
+            return Ok(None);
+        }
+        let Some(operand) = node.named_child(0) else {
+            return Ok(None);
+        };
+        return kotlin_navigation_segments(operand, source);
     }
     if node.kind() != "navigation_expression" {
         return Ok(None);
@@ -546,6 +564,45 @@ fun getIndex(): Int = 0
         );
         assert_eq!(
             caller.call_arities_by_name.get("items[index].helper"),
+            Some(&[1usize].into_iter().collect())
+        );
+    }
+
+    #[test]
+    fn records_kotlin_force_unwrap_receiver_calls_and_skips_other_unary_operators() {
+        let source = r#"
+package com.example
+
+class Helper {
+    fun helper(value: Int): Int = value
+}
+
+class Caller {
+    fun run(items: Array<Helper>?, enabled: Boolean): Int {
+        items!![0].helper(1)
+        items!!.helper(2)
+        return if (enabled) 0 else 1
+    }
+}
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::run")
+            .unwrap();
+        // A postfix `!!` force-unwrap unwraps to the operand spelling because
+        // it only strips nullability, so `items!![0]` records as `items[0]`
+        // and `items!!` records as `items`; the boolean negation inside the
+        // `if` condition is not a receiver and records no direct-call fact.
+        assert!(caller.references_by_name.contains("items[0].helper"));
+        assert!(caller.references_by_name.contains("items.helper"));
+        assert_eq!(
+            caller.call_arities_by_name.get("items[0].helper"),
             Some(&[1usize].into_iter().collect())
         );
     }
