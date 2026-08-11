@@ -709,16 +709,21 @@ fn kotlin_generic_type_base_name(name: &str) -> Option<String> {
 
 /// Returns a receiver type spelling for a declared-type node: plain dotted
 /// names normalize through `kotlin_dotted_type_name`, and generic array
-/// spellings such as `Array<Helper>` or `Array<Array<Helper>>` are kept as
-/// their raw spelling so the binding can record the element component type or
-/// mark the receiver unusable. Other complex and malformed spellings return
-/// `None` and fail closed.
+/// spellings such as `Array<Helper>`, `Array<Array<Helper>>`, or the nullable
+/// spelling `Array<Helper>?` are kept as their raw spelling so the binding can
+/// record the element component type or mark the receiver unusable. Other
+/// complex and malformed spellings return `None` and fail closed.
 fn kotlin_declared_type_name(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if let Some(normalized) = kotlin_dotted_type_name(trimmed) {
         return Some(normalized);
     }
-    if trimmed.starts_with("Array<") && trimmed.ends_with('>') {
+    // A nullable array spelling such as `Array<Helper>?` keeps its raw
+    // spelling (with the trailing `?`) so the binding records the element
+    // component type just like the non-null spelling; nullability does not
+    // change the component type.
+    let without_nullable = trimmed.strip_suffix('?').map(str::trim).unwrap_or(trimmed);
+    if without_nullable.starts_with("Array<") && without_nullable.ends_with('>') {
         return Some(trimmed.to_string());
     }
     None
@@ -881,7 +886,8 @@ mod tests {
 
     use super::{
         KotlinImportBinding, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
-        kotlin_dotted_type_name, kotlin_import_context_for_file_with_overrides_and_deadline,
+        kotlin_declared_type_name, kotlin_dotted_type_name,
+        kotlin_import_context_for_file_with_overrides_and_deadline,
         kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
     };
     use crate::language::normalize_path;
@@ -983,6 +989,34 @@ mod tests {
         assert_eq!(kotlin_array_type_component_name("Helper?"), None);
         assert_eq!(kotlin_array_type_component_name("Array<>?"), None);
         assert_eq!(kotlin_array_type_component_name(""), None);
+    }
+
+    #[test]
+    fn kotlin_declared_type_name_accepts_nullable_array_spellings() {
+        assert_eq!(
+            kotlin_declared_type_name("Array<Helper>").as_deref(),
+            Some("Array<Helper>")
+        );
+        // Nullable array spellings keep their raw spelling with the trailing
+        // `?` so the binding records the same element component type as the
+        // non-null spelling.
+        assert_eq!(
+            kotlin_declared_type_name("Array<Helper>?").as_deref(),
+            Some("Array<Helper>?")
+        );
+        assert_eq!(
+            kotlin_declared_type_name("Array<Outer.Inner>?").as_deref(),
+            Some("Array<Outer.Inner>?")
+        );
+        // Primitive arrays already normalize through the dotted-name path, and
+        // malformed or double-nullable spellings fail closed.
+        assert_eq!(
+            kotlin_declared_type_name("IntArray?").as_deref(),
+            Some("IntArray")
+        );
+        assert_eq!(kotlin_declared_type_name("Array<Helper>??"), None);
+        assert_eq!(kotlin_declared_type_name("Array<Helper"), None);
+        assert_eq!(kotlin_declared_type_name(""), None);
     }
 
     #[test]

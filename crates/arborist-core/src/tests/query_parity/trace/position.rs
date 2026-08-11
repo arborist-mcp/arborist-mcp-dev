@@ -29326,6 +29326,164 @@ fn kotlin_nullable_factory_force_unwrap_var_receiver_calls_fail_closed_for_unsup
 }
 
 #[test]
+fn traces_kotlin_cross_file_nullable_declared_array_var_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Helper\nimport org.util.Item\n\nclass Caller : Base() {\n    val fieldItems: Array<Item>? = arrayOf()\n    fun runLocal(): Int {\n        val local: Array<Item>? = arrayOf()\n        return local!![0].helper(1)\n    }\n    fun runParam(items: Array<Item>?): Int {\n        return items!![0].helper(2)\n    }\n    fun runField(): Int {\n        return this.fieldItems!![0].helper(3)\n    }\n    fun runSuperField(): Int {\n        return super.inheritedItems!![0].helper(4)\n    }\n    fun runHop(): Int {\n        val group = this.makeGroup()\n        return group!!.inner().helper(5)\n    }\n    fun runHopInline(): Int {\n        return this.makeGroup()!!.inner().helper(6)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nopen class Base {\n    val inheritedItems: Array<Item>? = arrayOf()\n    fun makeGroup(): Helper = Helper()\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals and parameters declared with a nullable single-level array
+    // type such as `Array<Item>?` dispatch a `!!` force-unwrapped element
+    // access on the declared element component type, `this`/`super`-rooted
+    // nullable array property bases resolve through the imported parent class,
+    // and a `!!` force-unwrap on a bound or inline member-call hop resolves the
+    // same chain as the non-unwrapped spelling, all in the imported package's
+    // scope.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Caller::runLocal",
+        "com::example::Caller::runParam",
+        "com::example::Caller::runField",
+        "com::example::Caller::runSuperField",
+        "com::example::Caller::runHop",
+        "com::example::Caller::runHopInline",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Caller::runLocal",
+        "com::example::Caller::runParam",
+        "com::example::Caller::runField",
+        "com::example::Caller::runSuperField",
+        "com::example::Caller::runHop",
+        "com::example::Caller::runHopInline",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_nullable_declared_array_var_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nopen class Base {\n    val inheritedItems: Array<Item>? = arrayOf()\n    fun makeGroup(): Helper = Helper()\n}\n\nclass Caller : Base() {\n    val fieldItems: Array<Item>? = arrayOf()\n    fun runLocal(): Int {\n        val local: Array<Item>? = arrayOf()\n        return local!![0].helper(1)\n    }\n    fun runParam(items: Array<Item>?): Int {\n        return items!![0].helper(2)\n    }\n    fun runField(): Int {\n        return this.fieldItems!![0].helper(3)\n    }\n    fun runSuperField(): Int {\n        return super.inheritedItems!![0].helper(4)\n    }\n    fun runHop(): Int {\n        val group = this.makeGroup()\n        return group!!.inner().helper(5)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Caller::runLocal",
+        "com::example::Caller::runParam",
+        "com::example::Caller::runField",
+        "com::example::Caller::runSuperField",
+        "com::example::Caller::runHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Caller::runLocal",
+        "com::example::Caller::runParam",
+        "com::example::Caller::runField",
+        "com::example::Caller::runSuperField",
+        "com::example::Caller::runHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_nullable_declared_array_var_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Caller {\n    fun run(): Int {\n        val counts: IntArray? = intArrayOf()\n        val matrix: Array<Array<Helper>>? = arrayOf()\n        val unknown: Array<Missing>? = arrayOf()\n        return counts!![0].helper(1) + matrix!![0].helper(2) + unknown!![0].helper(3)\n    }\n    fun runParamMatrix(matrix: Array<Array<Helper>>?): Int {\n        return matrix!![0].helper(1)\n    }\n    fun runParamOther(other: Other?): Int {\n        return other[0].helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals and parameters declared with nullable primitive arrays,
+    // multi-dimensional arrays, unresolvable components, and non-array types
+    // all fail closed when an element access tries to dispatch on a missing
+    // element component type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_var_companion_object_element_access_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
@@ -33500,14 +33658,14 @@ fn kotlin_nullable_receiver_member_calls_fail_closed_for_unsupported_references(
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\nfun makeUnknown(): UnknownBox? = TODO()\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun nullableArray(items: Array<Entry>?): Int {\n    return items[0].helper(1)\n}\n\nfun valueType(count: Int?): Int {\n    return count.unknown(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Box<T> {\n    val entry: Entry? = Entry()\n}\nfun makeUnknown(): UnknownBox? = TODO()\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun nullableMatrix(matrix: Array<Array<Entry>>?): Int {\n    return matrix[0].helper(1)\n}\n\nfun valueType(count: Int?): Int {\n    return count.unknown(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
     )
     .unwrap();
 
     // An unknown hop, a missing final member, an unresolvable nullable factory
-    // return type, a nullable generic array receiver, and a nullable value-type
-    // receiver all fail closed; only the resolvable nullable receiver in
-    // `control` traces.
+    // return type, a nullable multi-dimensional array receiver, and a nullable
+    // value-type receiver all fail closed; only the resolvable nullable receiver
+    // in `control` traces.
     let helper_path = "com::example::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -34965,7 +35123,7 @@ fn kotlin_cross_file_nullable_reference_receiver_calls_fail_closed_for_unsupport
     let db_path = dir.join("symbols.db");
     fs::write(
         &caller_path,
-        "package com.example\n\nimport org.util.Box\nimport org.util.Entry\nimport org.util.makeUnknown\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun nullableArray(items: Array<Entry>?): Int {\n    return items[0].helper(1)\n}\n\nfun valueType(count: Int?): Int {\n    return count.unknown(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
+        "package com.example\n\nimport org.util.Box\nimport org.util.Entry\nimport org.util.makeUnknown\n\nfun caller(box: Box?): Int {\n    return box.unknown.helper(1) + box.entry.unknownHelper(2)\n}\n\nfun unknownFactory(): Int {\n    val other = makeUnknown()\n    return other.helper(1)\n}\n\nfun nullableMatrix(matrix: Array<Array<Entry>>?): Int {\n    return matrix[0].helper(1)\n}\n\nfun valueType(count: Int?): Int {\n    return count.unknown(1)\n}\n\nfun control(box: Box?): Int {\n    return box.entry.helper(1)\n}\n",
     )
     .unwrap();
     fs::write(
@@ -34975,10 +35133,10 @@ fn kotlin_cross_file_nullable_reference_receiver_calls_fail_closed_for_unsupport
     .unwrap();
 
     // An unknown hop, a missing final member, an unresolvable nullable factory
-    // return type, a nullable generic array receiver, and a nullable value-type
-    // receiver all fail closed even when the nullable types are declared in an
-    // imported package; only the resolvable nullable receiver in `control`
-    // traces.
+    // return type, a nullable multi-dimensional array receiver, and a nullable
+    // value-type receiver all fail closed even when the nullable types are
+    // declared in an imported package; only the resolvable nullable receiver in
+    // `control` traces.
     let helper_path = "org::util::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
