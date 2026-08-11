@@ -32515,6 +32515,92 @@ fn kotlin_property_chain_initializer_constructor_call_roots_fail_closed_for_unsu
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_nullable_and_generic_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Box<T> {\n    val item: Item = Item()\n}\n\nfun makeNullable(): Holder? = Holder()\n\nfun makeBox(): Box<Holder> = Box()\n\nclass Util {\n    fun runNullableCall(): Int {\n        val first = makeNullable().item\n        return first.helper(1)\n    }\n    fun runGenericCall(): Int {\n        val first = makeBox().item\n        return first.helper(2)\n    }\n    fun runGenericConstructor(): Int {\n        val first = Box<Holder>().item\n        return first.helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Nullable and generic spellings normalize to their raw dotted base
+    // types for property-chain initializer roots: `makeNullable().item`
+    // dispatches on `Holder` from a nullable `Holder?` return type,
+    // `makeBox().item` on the raw `Box` from `Box<Holder>`, and
+    // `Box<Holder>().item` on the constructed raw `Box`; all three callers
+    // trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runNullableCall",
+        "com::example::Util::runGenericCall",
+        "com::example::Util::runGenericConstructor",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runNullableCall",
+        "com::example::Util::runGenericCall",
+        "com::example::Util::runGenericConstructor",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_nullable_and_generic_roots_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Empty<T> {}\n\nclass Util {\n    fun failSafeCallRoot(): Int {\n        val first = Holder()?.item\n        return first.helper(1)\n    }\n    fun failArrayRoot(): Int {\n        val first = Array<Item>().item\n        return first.helper(2)\n    }\n    fun failGenericMissingTerminal(): Int {\n        val first = Empty<Holder>().item\n        return first.helper(3)\n    }\n    fun control(): Int {\n        val first = Holder().item\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Nullable/generic property-chain initializer roots fail closed for
+    // safe-call roots (`Holder()?.item`), generic-array constructor roots
+    // (`Array<Item>().item` is not captured as a chain), and generic roots
+    // whose raw base lacks the terminal property (`Empty<Holder>().item`);
+    // only the resolvable root in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();

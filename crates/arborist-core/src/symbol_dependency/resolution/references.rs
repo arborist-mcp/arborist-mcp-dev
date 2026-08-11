@@ -12375,9 +12375,12 @@ fn kotlin_property_chain_initializer_root(
             };
             return Ok(Some((type_path, 1)));
         }
+        let Some(constructor_name) = kotlin_dotted_type_name(&hop_name) else {
+            return Ok(None);
+        };
         if let Some(type_path) = resolve_kotlin_receiver_type_path(
             source_symbol,
-            &hop_name,
+            &constructor_name,
             raw_symbols,
             file_overrides,
             kotlin_import_contexts_by_file,

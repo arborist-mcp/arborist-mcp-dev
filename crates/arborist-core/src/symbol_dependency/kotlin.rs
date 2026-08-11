@@ -482,17 +482,23 @@ fn kotlin_property_chain_initializer(
 }
 
 /// Returns whether a property-chain hop is a plain identifier property name or
-/// a zero-argument method-call spelling such as `make()`. Method-call hops let
-/// a property-chain initializer such as `val first = make().item` dispatch
+/// a zero-argument method-call spelling such as `make()`, including generic
+/// constructor spellings such as `Box<Holder>()`. Method-call hops let a
+/// property-chain initializer such as `val first = make().item` dispatch
 /// through the enclosing type's member function declared return type before
-/// walking the remaining property hops; non-zero-argument call spellings and
-/// other shapes fail closed at capture time.
+/// walking the remaining property hops, and generic constructor hops let a
+/// chain such as `val first = Box<Holder>().item` start on the raw constructed
+/// type; non-zero-argument call spellings and other shapes fail closed at
+/// capture time.
 fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
     if let Some(name) = hop.strip_suffix("()") {
-        return !name.is_empty()
-            && name
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || character == '_');
+        if name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return !name.is_empty();
+        }
+        return kotlin_dotted_type_name(name).is_some();
     }
     hop.chars()
         .all(|character| character.is_ascii_alphanumeric() || character == '_')
