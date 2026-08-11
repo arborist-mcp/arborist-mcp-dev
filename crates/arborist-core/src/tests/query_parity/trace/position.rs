@@ -32356,6 +32356,165 @@ fn kotlin_cross_file_property_chain_initializer_method_call_hops_fail_closed_for
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_constructor_call_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n}\n\nclass Util {\n    fun runPlain(): Int {\n        val first = Holder().item\n        return first.helper(1)\n    }\n    fun runChained(): Int {\n        val first = Group().holder.item\n        return first.helper(2)\n    }\n    fun runParen(): Int {\n        val first = (Holder().item)\n        return first.helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a property-chain initializer whose leading
+    // hop is a plain constructor call, such as `val first = Holder().item`
+    // or `val first = Group().holder.item`, starts the chain on the
+    // constructed type and walks the remaining property hops; parenthesized
+    // spellings unwrap the same way. All three callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runChained",
+        "com::example::Util::runParen",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runChained",
+        "com::example::Util::runParen",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_constructor_call_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Util {\n    fun run(): Int {\n        val first = Holder().item\n        return first.helper(1)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Util::run");
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_constructor_call_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\n\nclass Util {\n    fun runImported(): Int {\n        val first = Holder().item\n        return first.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A constructor-call root also resolves through an explicit type import,
+    // so `val first = Holder().item` with `Holder` declared in another
+    // package dispatches through the imported type's property.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::runImported");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::runImported"
+    );
+}
+
+#[test]
+fn kotlin_property_chain_initializer_constructor_call_roots_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val count: Int = 0\n}\n\nclass Util {\n    fun failUnknown(): Int {\n        val first = Missing().item\n        return first.helper(1)\n    }\n    fun failPrimitiveTerminal(): Int {\n        val first = Holder().count\n        return first.helper(2)\n    }\n    fun failArrayRoot(): Int {\n        val first = Array<Item>().item\n        return first.helper(3)\n    }\n    fun control(): Int {\n        val first = Holder().item\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Constructor-call property-chain initializer roots fail closed for
+    // unknown constructed types (`Missing().item`), roots whose terminal
+    // property has no usable member dispatch (`Holder().count` resolves to
+    // `Int`), and generic-array constructor roots (`Array<Item>().item` is
+    // not captured as a chain); only the resolvable root in `control`
+    // traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();

@@ -12299,9 +12299,11 @@ fn resolve_kotlin_property_chain_initializer_type_path(
 /// declared return type of a unique same-file, same-package, or explicitly
 /// imported top-level function, falling back to an enclosing-type member or
 /// companion member function through the same rules as an unqualified
-/// initializer callee. The returned skip count tells callers how many leading
-/// hops the root consumed. Bare property and `this`-rooted chains outside a
-/// type return `None` so chains fail closed.
+/// initializer callee; when no such function exists, a plain constructor-call
+/// hop such as `Holder()` in `val first = Holder().item` starts the chain on
+/// the constructed type. The returned skip count tells callers how many
+/// leading hops the root consumed. Bare property and `this`-rooted chains
+/// outside a type return `None` so chains fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_chain_initializer_root(
     source_symbol: &IndexedSymbol,
@@ -12329,50 +12331,61 @@ fn kotlin_property_chain_initializer_root(
             return Ok(None);
         };
         Ok(Some((this_root.to_string(), 1)))
-    } else if let Some(function_name) = kotlin_method_call_hop_spelling(first_hop) {
+    } else if let Some(hop_name) = kotlin_method_call_hop_spelling(first_hop) {
         // A leading method-call hop such as `make()` in `val first =
         // make().item` resolves as a unique initializer callee (same-file,
         // same-package, or explicitly imported top-level function, then an
         // enclosing-type member or companion member function) whose declared
-        // return type starts the chain; unknown or ambiguous callees fail
-        // closed.
-        let Some(function_path) = resolve_kotlin_property_initializer_function_path(
+        // return type starts the chain; when no such function exists, the hop
+        // may instead be a plain constructor call such as `Holder()` in
+        // `val first = Holder().item`, which starts the chain on the
+        // constructed type. Unknown or ambiguous callees fail closed.
+        if let Some(function_path) = resolve_kotlin_property_initializer_function_path(
             source_symbol,
-            &function_name,
+            &hop_name,
             raw_symbols,
             semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        let Some(function) = raw_symbols
-            .iter()
-            .find(|candidate| candidate.symbol_id == function_path)
-        else {
-            return Ok(None);
-        };
-        let Some(return_type) = function
-            .return_type
-            .as_deref()
-            .and_then(kotlin_dotted_type_name)
-        else {
-            return Ok(None);
-        };
-        let Some(type_path) = resolve_kotlin_receiver_type_path(
-            function,
-            &return_type,
+        )? {
+            let Some(function) = raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == function_path)
+            else {
+                return Ok(None);
+            };
+            let Some(return_type) = function
+                .return_type
+                .as_deref()
+                .and_then(kotlin_dotted_type_name)
+            else {
+                return Ok(None);
+            };
+            let Some(type_path) = resolve_kotlin_receiver_type_path(
+                function,
+                &return_type,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some((type_path, 1)));
+        }
+        if let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &hop_name,
             raw_symbols,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        Ok(Some((type_path, 1)))
+        )? {
+            return Ok(Some((type_path, 1)));
+        }
+        Ok(None)
     } else {
         let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
             return Ok(None);
