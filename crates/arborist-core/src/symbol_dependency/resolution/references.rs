@@ -12301,13 +12301,17 @@ fn resolve_kotlin_property_chain_initializer_type_path(
 /// companion member function through the same rules as an unqualified
 /// initializer callee; when no such function exists, a plain constructor-call
 /// hop such as `Holder()` in `val first = Holder().item` starts the chain on
-/// the constructed type. A bare first hop that names a named object, a class
-/// with an explicit or named companion chain (`Config.Factory` or
-/// `Config.Companion`), or a class with an anonymous companion starts the
-/// chain on that object or companion scope before falling back to the
-/// enclosing type's own property. The returned skip count tells callers how
-/// many leading hops the root consumed. Bare property and `this`-rooted
-/// chains outside a type return `None` so chains fail closed.
+/// the constructed type. A locally bound bare first hop (such as `x` in
+/// `val first = x.item` after `val x = Holder()`) starts the chain on the
+/// bound value's declared type, its recorded property-chain terminal type,
+/// or its element-access component type; a bare first hop that names a named
+/// object, a class with an explicit or named companion chain
+/// (`Config.Factory` or `Config.Companion`), or a class with an anonymous
+/// companion starts the chain on that object or companion scope before
+/// falling back to the enclosing type's own property. The returned skip
+/// count tells callers how many leading hops the root consumed. Bare property
+/// and `this`-rooted chains outside a type return `None` so chains fail
+/// closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_chain_initializer_root(
     source_symbol: &IndexedSymbol,
@@ -12402,22 +12406,77 @@ fn kotlin_property_chain_initializer_root(
             kotlin_import_contexts_by_file,
             deadline,
         )?;
-        // A locally bound first hop names a local value rather than a named
-        // object, so object roots are skipped when the name is shadowed; the
-        // companion resolvers below apply the same shadow check.
-        let first_hop_bound = bindings
+        // A locally bound first hop dispatches through the bound value
+        // instead of a same-named object, companion, or enclosing-type
+        // member: `val x = Holder()` then `val first = x.item` starts the
+        // chain on `Holder`, `val x = group.holder` on the terminal type of
+        // that chain, and `val x = makeItems()[0]` on the element component
+        // type. Bound names whose declared type or base cannot resolve fail
+        // closed instead of guessing a same-named root.
+        if bindings
             .as_ref()
-            .is_some_and(|bindings| bindings.contains(first_hop));
-        if !first_hop_bound
-            && let Some(object_path) = resolve_kotlin_object_receiver_path(
-                source_symbol,
-                first_hop,
-                raw_symbols,
-                file_overrides,
-                kotlin_import_contexts_by_file,
-                deadline,
-            )?
+            .is_some_and(|bindings| bindings.contains(first_hop))
         {
+            if let Some(type_name) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.type_for(first_hop))
+            {
+                let Some(type_path) = resolve_kotlin_initializer_type_path(
+                    source_symbol,
+                    &type_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some((type_path, 1)));
+            }
+            if let Some(base) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.element_access_base_for(first_hop))
+                && let Some(component_path) =
+                    resolve_kotlin_element_access_base_component_type_path(
+                        source_symbol,
+                        &base,
+                        bindings.as_ref(),
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        kotlin_import_contexts_by_file,
+                        deadline,
+                    )?
+            {
+                return Ok(Some((component_path, 1)));
+            }
+            if let Some(chain) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.property_chain_base_for(first_hop))
+                && let Some(chain_path) = resolve_kotlin_property_chain_initializer_type_path(
+                    source_symbol,
+                    &chain,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+            {
+                return Ok(Some((chain_path, 1)));
+            }
+            return Ok(None);
+        }
+        if let Some(object_path) = resolve_kotlin_object_receiver_path(
+            source_symbol,
+            first_hop,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
             return Ok(Some((object_path, 1)));
         }
         if let Some((companion_root, consumed)) = kotlin_companion_chain_root(

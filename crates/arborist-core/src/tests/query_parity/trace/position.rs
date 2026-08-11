@@ -32601,6 +32601,154 @@ fn kotlin_property_chain_initializer_nullable_and_generic_roots_fail_closed_for_
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_local_binding_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n}\n\nfun makeItems(): Array<Holder> = arrayOf()\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass Util {\n    val group: Group = Group()\n    val items: Array<Holder> = arrayOf()\n    fun runConstructed(): Int {\n        val x = Holder()\n        val first = x.item\n        return first.helper(1)\n    }\n    fun runChainBinding(): Int {\n        val x = group.holder\n        val first = x.item\n        return first.helper(2)\n    }\n    fun runElementComponent(): Int {\n        val x = items[0]\n        val first = x.item\n        return first.helper(3)\n    }\n    fun runFactoryElement(): Int {\n        val x = makeItems()[0]\n        val first = x.item\n        return first.helper(4)\n    }\n    fun runShadowedObject(): Int {\n        val Registry = Holder()\n        val first = Registry.item\n        return first.helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A property-chain initializer whose leading bare hop is a body-local
+    // binding dispatches through the bound value: `val x = Holder()` then
+    // `val first = x.item` starts the chain on `Holder`, `val x =
+    // group.holder` on the terminal type of the recorded chain, `val x =
+    // items[0]` on the element component type, and `val x =
+    // makeItems()[0]` on the factory-returned array's component type; a
+    // local binding shadowing a same-named object (`val Registry =
+    // Holder()` then `Registry.item`) also dispatches through the local
+    // value. All five callers trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runConstructed",
+        "com::example::Util::runChainBinding",
+        "com::example::Util::runElementComponent",
+        "com::example::Util::runFactoryElement",
+        "com::example::Util::runShadowedObject",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runConstructed",
+        "com::example::Util::runChainBinding",
+        "com::example::Util::runElementComponent",
+        "com::example::Util::runFactoryElement",
+        "com::example::Util::runShadowedObject",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_local_binding_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n}\n\nclass Util {\n    val group: Group = Group()\n    fun runConstructed(): Int {\n        val x = Holder()\n        val first = x.item\n        return first.helper(1)\n    }\n    fun runChainBinding(): Int {\n        val x = group.holder\n        val first = x.item\n        return first.helper(2)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runConstructed",
+        "com::example::Util::runChainBinding",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runConstructed",
+        "com::example::Util::runChainBinding",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_local_binding_roots_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass Util {\n    fun failBoundUnknownType(): Int {\n        val x = Missing()\n        val first = x.item\n        return first.helper(1)\n    }\n    fun failBoundMissingHop(): Int {\n        val x = Holder()\n        val first = x.missing\n        return first.helper(2)\n    }\n    fun failBoundPrimitive(): Int {\n        val x: Int = 0\n        val first = x.item\n        return first.helper(3)\n    }\n    fun failShadowedObjectUnknown(): Int {\n        val Registry = Missing()\n        val first = Registry.holder.item\n        return first.helper(4)\n    }\n    fun control(): Int {\n        val x = Holder()\n        val first = x.item\n        return first.helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Locally bound property-chain initializer roots fail closed when the
+    // bound value's declared type is unknown (`val x = Missing()`), the
+    // chain walks an unknown hop (`x.missing`), the bound type is primitive
+    // (`val x: Int`), or a bound name shadows a same-named object but its
+    // declared type cannot resolve (`val Registry = Missing()` keeps the
+    // chain from dispatching through the object); only the resolvable local
+    // binding in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_object_and_companion_roots_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
