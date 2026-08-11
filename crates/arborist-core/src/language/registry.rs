@@ -488,7 +488,7 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "kotlin-nullable-declared-array-receiver-trace-v28",
+    analysis_revision: "kotlin-anonymous-companion-inline-element-access-receiver-trace-v29",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

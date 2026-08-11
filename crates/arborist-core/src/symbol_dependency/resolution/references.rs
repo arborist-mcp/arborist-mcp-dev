@@ -11934,6 +11934,60 @@ fn kotlin_companion_chain_root(
     }
 }
 
+/// Resolves an anonymous-companion chain root such as `Util` in
+/// `Util.items[0].helper(...)` or `Util.groups[0].inner().helper(...)` to the
+/// canonical `{type}::Companion` scope and the number of leading hops
+/// consumed. A class-name root that is not shadowed by a local binding and
+/// whose anonymous companion object exists (discovered through its
+/// `Type::Companion::` member scope or an indexed companion object) consumes
+/// one hop so the remaining hops resolve on the companion scope; classes
+/// without a companion object, unknown names, object roots, and shadowed
+/// roots fail closed. Callers must try `kotlin_companion_chain_root` first so
+/// explicit and nested companions keep their longer consumed counts.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_anonymous_companion_chain_root(
+    source_symbol: &IndexedSymbol,
+    hops: &[&str],
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, usize)>> {
+    if hops.len() < 2
+        || bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        return Ok(None);
+    }
+    let Some(type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let companion_scope_prefix = format!("{type_path}::Companion::");
+    let companion_exists = semantic_path_index.iter().any(|(path, indexes)| {
+        path.starts_with(&companion_scope_prefix)
+            || indexes.iter().copied().any(|index| {
+                let candidate = &raw_symbols[index];
+                candidate.node_kind == "companion_object"
+                    && candidate.scope_path.as_deref() == Some(type_path.as_str())
+            })
+    });
+    if !companion_exists {
+        return Ok(None);
+    }
+    Ok(Some((format!("{type_path}::Companion"), 1)))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_chained_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -12196,6 +12250,22 @@ fn resolve_kotlin_chained_receiver_call(
         deadline,
     )? {
         object_path
+    } else if let Some((companion_root, _)) = resolve_kotlin_anonymous_companion_chain_root(
+        source_symbol,
+        &hops,
+        bindings.as_ref(),
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        // An unbound first hop names a class whose terminal array property
+        // lives on its anonymous companion, the Kotlin analog of a static
+        // field such as `Util.items` in `Util.items[0].helper(...)`; start the
+        // chain on the canonical companion scope so the element-access hop
+        // resolves the component type.
+        companion_root
     } else if hops.len() >= 3
         && let Some((factory_hop, _)) = kotlin_array_access_spelling(hops[1])
         && kotlin_array_factory_call_root_spelling(factory_hop).is_some()
@@ -12760,6 +12830,18 @@ fn resolve_kotlin_receiver_chain_first_path(
         deadline,
     )? {
         return Ok(Some((object_path, 1)));
+    }
+    if let Some((companion_root, consumed)) = resolve_kotlin_anonymous_companion_chain_root(
+        source_symbol,
+        hops,
+        bindings,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some((companion_root, consumed)));
     }
     Ok(None)
 }

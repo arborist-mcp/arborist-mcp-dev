@@ -258,7 +258,7 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "kotlin-nullable-declared-array-receiver-trace-v28"
+        "kotlin-anonymous-companion-inline-element-access-receiver-trace-v29"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
