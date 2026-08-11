@@ -36,6 +36,13 @@ pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
     /// type declarations. The name stays bound (shadowing objects and types)
     /// but has no usable type until the chain is walked.
     element_access_bases: BTreeMap<String, String>,
+    /// Property-chain initializer spellings for names bound from an
+    /// initializer such as `val first = holder.item` or
+    /// `val first = this.holder.item`, whose terminal property type is
+    /// resolved at trace time because it can span type declarations. The name
+    /// stays bound (shadowing objects and types) but has no usable type until
+    /// the chain is walked.
+    property_chain_bases: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
     /// Names bound from companion-object members, which are shadowed by any
     /// higher-priority local, parameter, or instance-property binding of the
@@ -52,6 +59,7 @@ impl KotlinReceiverTypeBindings {
         self.types_by_name.contains_key(name)
             || self.array_component_types.contains_key(name)
             || self.element_access_bases.contains_key(name)
+            || self.property_chain_bases.contains_key(name)
             || self.ambiguous_names.contains(name)
     }
 
@@ -88,6 +96,19 @@ impl KotlinReceiverTypeBindings {
             return None;
         }
         self.element_access_bases.get(name).cloned()
+    }
+
+    /// Returns the recorded property-chain initializer spelling for a name
+    /// bound from an initializer such as `val first = holder.item`. Ambiguous
+    /// bindings and names without a recorded chain return `None`.
+    pub(in crate::symbol_dependency) fn property_chain_base_for(
+        &self,
+        name: &str,
+    ) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.property_chain_bases.get(name).cloned()
     }
 }
 
@@ -250,11 +271,13 @@ fn kotlin_receiver_type_bindings_for_node(
         let mut cursor = class_body.walk();
         for child in class_body.named_children(&mut cursor) {
             if child.kind() == "property_declaration"
-                && let Some((name, type_name, element_access_base)) =
+                && let Some((name, type_name, element_access_base, property_chain_base)) =
                     kotlin_property_binding(child, source, &bindings)?
             {
                 if let Some(base) = element_access_base {
                     insert_kotlin_element_access_base_binding(&mut bindings, name, base);
+                } else if let Some(chain) = property_chain_base {
+                    insert_kotlin_property_chain_base_binding(&mut bindings, name, chain);
                 } else {
                     insert_kotlin_receiver_binding(&mut bindings, name, type_name);
                 }
@@ -300,7 +323,7 @@ fn kotlin_receiver_type_bindings_for_node(
             let mut member_cursor = companion_body.walk();
             for member in companion_body.named_children(&mut member_cursor) {
                 if member.kind() == "property_declaration"
-                    && let Some((name, type_name, element_access_base)) =
+                    && let Some((name, type_name, element_access_base, property_chain_base)) =
                         kotlin_property_binding(member, source, &bindings)?
                 {
                     if let Some(base) = element_access_base {
@@ -308,6 +331,12 @@ fn kotlin_receiver_type_bindings_for_node(
                             &mut bindings,
                             name,
                             base,
+                        );
+                    } else if let Some(chain) = property_chain_base {
+                        insert_kotlin_shadowable_property_chain_base_binding(
+                            &mut bindings,
+                            name,
+                            chain,
                         );
                     } else {
                         insert_kotlin_shadowable_receiver_binding(&mut bindings, name, type_name);
@@ -350,11 +379,13 @@ fn collect_kotlin_body_property_bindings(
         return Ok(());
     }
     if node.kind() == "property_declaration"
-        && let Some((name, type_name, element_access_base)) =
+        && let Some((name, type_name, element_access_base, property_chain_base)) =
             kotlin_property_binding(node, source, bindings)?
     {
         if let Some(base) = element_access_base {
             insert_kotlin_element_access_base_binding(bindings, name, base);
+        } else if let Some(chain) = property_chain_base {
+            insert_kotlin_property_chain_base_binding(bindings, name, chain);
         } else {
             insert_kotlin_receiver_binding(bindings, name, type_name);
         }
@@ -417,11 +448,56 @@ fn kotlin_initializer_expression(mut initializer: Node<'_>) -> Option<Node<'_>> 
     }
 }
 
+/// Extracts the dotted spelling of a plain property-chain initializer such as
+/// `holder.item` in `val first = holder.item`, including `this`- and
+/// `super`-rooted chains such as `this.holder.item` or `super.baseItem`.
+/// Pure identifier chains (with an optional `this`/`super` root) return their
+/// spelling so trace-time resolution can walk each hop; parenthesized roots,
+/// call, element-access, and nullable or otherwise non-name shapes return
+/// `None` so property-chain bindings fail closed.
+fn kotlin_property_chain_initializer(
+    initializer: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    if initializer.kind() != "navigation_expression" {
+        return Ok(None);
+    }
+    let text = node_text(initializer, source)?.trim();
+    if text.is_empty() || text.contains(['(', '[', ' ', '?']) || text.contains("::") {
+        return Ok(None);
+    }
+    let hops = text.split('.').collect::<Vec<_>>();
+    let mut valid = true;
+    for (index, hop) in hops.iter().enumerate() {
+        let is_root = index == 0 && matches!(*hop, "this" | "super");
+        if hop.is_empty()
+            || (!is_root
+                && !hop
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_'))
+        {
+            valid = false;
+            break;
+        }
+    }
+    if !valid || hops.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// A property binding extracted from a `val`/`var` declaration: the bound
+/// name, its declared type name (empty when inferred), an optional
+/// element-access base spelling, and an optional property-chain base
+/// spelling. Exactly one of the declared type, element-access base, or
+/// property-chain base is set for a bound name.
+type KotlinPropertyBinding = (String, String, Option<String>, Option<String>);
+
 fn kotlin_property_binding(
     property: Node<'_>,
     source: &str,
     bindings: &KotlinReceiverTypeBindings,
-) -> Result<Option<(String, String, Option<String>)>> {
+) -> Result<Option<KotlinPropertyBinding>> {
     let mut cursor = property.walk();
     let children = property.named_children(&mut cursor).collect::<Vec<_>>();
     let Some(variable) = children
@@ -449,7 +525,7 @@ fn kotlin_property_binding(
         .find(|child| kotlin_is_type_node_kind(child.kind()))
         && let Some(type_name) = kotlin_declared_type_name(node_text(*type_node, source)?)
     {
-        return Ok(Some((name, type_name, None)));
+        return Ok(Some((name, type_name, None, None)));
     }
     // Fall back to a constructor-call initializer such as `val x = Other()` or
     // `val x = Outer.Inner()`, or an element-access initializer such as
@@ -466,6 +542,7 @@ fn kotlin_property_binding(
                 child.kind(),
                 "call_expression"
                     | "index_expression"
+                    | "navigation_expression"
                     | "parenthesized_expression"
                     | "unary_expression"
             )
@@ -482,7 +559,7 @@ fn kotlin_property_binding(
         && let Some(type_name) = kotlin_call_initializer_callee_name(callee, source)?
         && !type_name.is_empty()
     {
-        return Ok(Some((name, type_name, None)));
+        return Ok(Some((name, type_name, None, None)));
     }
     // An element-access initializer: a plain-identifier base already bound to
     // a single-level generic array binds the property to the base array's
@@ -502,11 +579,22 @@ fn kotlin_property_binding(
         && let Some(base_name) = kotlin_element_access_base(initializer, source)?
     {
         if let Some(component_type) = bindings.array_component_for(&base_name) {
-            return Ok(Some((name, component_type, None)));
+            return Ok(Some((name, component_type, None, None)));
         }
         if base_name.contains('.') || base_name.ends_with("()") {
-            return Ok(Some((name, String::new(), Some(base_name))));
+            return Ok(Some((name, String::new(), Some(base_name), None)));
         }
+    }
+    // A plain property-chain initializer such as `val first = holder.item`,
+    // `val first = this.holder.item`, or `val first = super.baseItem` records
+    // the dotted chain spelling so trace-time resolution can walk each hop to
+    // the terminal property type (including inherited properties). Unknown or
+    // unresolvable chains fail closed there; parenthesized and force-unwrapped
+    // spellings unwrap through `kotlin_initializer_expression` above.
+    if initializer.kind() == "navigation_expression"
+        && let Some(chain) = kotlin_property_chain_initializer(initializer, source)?
+    {
+        return Ok(Some((name, String::new(), None, Some(chain))));
     }
     Ok(None)
 }
@@ -816,6 +904,7 @@ fn insert_kotlin_receiver_binding(
         bindings.types_by_name.remove(&name);
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
     }
     // A generic array spelling such as `Array<Helper>` binds the element
     // component type so an element-access receiver such as `items[0]` can
@@ -870,9 +959,11 @@ fn insert_kotlin_element_access_base_binding(
         bindings.types_by_name.remove(&name);
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
     }
     if bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
         || bindings
             .element_access_bases
             .insert(name.clone(), base)
@@ -881,6 +972,44 @@ fn insert_kotlin_element_access_base_binding(
         bindings.types_by_name.remove(&name);
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
+        bindings.ambiguous_names.insert(name);
+    }
+}
+
+/// Records a name bound from a property-chain initializer such as
+/// `val first = holder.item` or `val first = this.holder.item` under its
+/// dotted chain spelling. The name shadows same-named objects and types; a
+/// duplicate declaration of the same name fails closed as ambiguous.
+fn insert_kotlin_property_chain_base_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    chain: String,
+) {
+    if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    // A higher-priority local, parameter, or instance-property binding
+    // replaces a same-named companion-member binding cleanly instead of
+    // creating a false ambiguity.
+    if bindings.shadowable_names.remove(&name) {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
+    }
+    if bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+        || bindings
+            .property_chain_bases
+            .insert(name.clone(), chain)
+            .is_some()
+    {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
         bindings.ambiguous_names.insert(name);
     }
 }
@@ -901,6 +1030,7 @@ fn insert_kotlin_shadowable_receiver_binding(
         || bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
         || bindings.element_access_bases.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
     {
         return;
     }
@@ -919,10 +1049,30 @@ fn insert_kotlin_shadowable_element_access_base_binding(
         || bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
         || bindings.element_access_bases.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
     {
         return;
     }
     insert_kotlin_element_access_base_binding(bindings, name.clone(), base);
+    bindings.shadowable_names.insert(name);
+}
+
+/// Inserts a companion-member property-chain base binding with the same
+/// shadowing discipline as `insert_kotlin_shadowable_receiver_binding`.
+fn insert_kotlin_shadowable_property_chain_base_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    chain: String,
+) {
+    if bindings.ambiguous_names.contains(&name)
+        || bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
+    {
+        return;
+    }
+    insert_kotlin_property_chain_base_binding(bindings, name.clone(), chain);
     bindings.shadowable_names.insert(name);
 }
 

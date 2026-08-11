@@ -10749,6 +10749,39 @@ fn resolve_kotlin_qualified_receiver_call(
         .as_ref()
         .is_some_and(|bindings| bindings.contains(receiver_name))
     {
+        // A `val` local bound from a property-chain initializer such as
+        // `val first = holder.item` (including `this`- and `super`-rooted
+        // chains and inherited first hops) has no usable type until the chain
+        // is walked; resolve the terminal property type here and dispatch the
+        // member on it. Unknown or unresolvable chains fail closed.
+        if !array_access
+            && let Some(chain) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.property_chain_base_for(receiver_name))
+            && let Some(type_path) = resolve_kotlin_property_chain_initializer_type_path(
+                source_symbol,
+                &chain,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            let type_name = type_path.rsplit("::").next().unwrap_or(method).to_string();
+            return resolve_kotlin_member_or_extension(
+                source_symbol,
+                &type_path,
+                &type_name,
+                method,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
+        }
         let type_name = if array_access {
             if let Some(component_type) = bindings
                 .as_ref()
@@ -12141,6 +12174,93 @@ fn resolve_kotlin_enclosing_companion_scope(
     companion_exists.then_some(companion_scope)
 }
 
+/// Returns the enclosing type path an implicit or explicit `this` receiver
+/// dispatches on: a declared type scope, or the companion scope of a declared
+/// type for callers inside a companion member. Package-level and
+/// extension-function scopes return `None` because `this` has no enclosing
+/// type to dispatch on.
+fn kotlin_enclosing_this_root<'a>(
+    source_symbol: &'a IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<&'a str> {
+    let scope_path = source_symbol.scope_path.as_deref()?;
+    if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+        Some(scope_path)
+    } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+        && kotlin_path_is_type_declaration(parent, raw_symbols)
+    {
+        Some(scope_path)
+    } else {
+        None
+    }
+}
+
+/// Resolves the terminal type path of a name bound from a property-chain
+/// initializer such as `val first = holder.item`, `val first =
+/// this.holder.item`, or `val first = super.baseItem`. A `this`-rooted chain
+/// starts on the enclosing type path, a `super`-rooted chain on the direct
+/// superclass path, and a bare chain on the enclosing type path as an
+/// implicit `this` receiver (so inherited first hops resolve the same way as
+/// an explicit `this.`-rooted chain); each following hop walks the same
+/// property, array-element, and method-call hop rules as chained receivers.
+/// Callers outside a type, unresolvable roots, and unknown or ambiguous hops
+/// return `None` so callers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_property_chain_initializer_type_path(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let (mut type_path, skip) = if hops[0] == "super" {
+        let Some(superclass_path) = resolve_kotlin_superclass_path(
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        (superclass_path, 1)
+    } else if hops[0] == "this" {
+        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
+            return Ok(None);
+        };
+        (this_root.to_string(), 1)
+    } else {
+        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
+            return Ok(None);
+        };
+        (this_root.to_string(), 0)
+    };
+    for hop in hops.iter().skip(skip) {
+        let Some(next_path) = kotlin_chained_receiver_hop_type_path(
+            &type_path,
+            hop,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path = next_path;
+    }
+    Ok(Some(type_path))
+}
+
 /// Resolves a bare member chain inside a member function (an implicit `this`
 /// receiver) such as `holder.item.helper(...)` or `holder.helper(...)` where
 /// `holder` is a property of the enclosing type or one of its superclasses.
@@ -12159,20 +12279,7 @@ fn resolve_kotlin_implicit_this_member_chain(
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
-        return Ok(None);
-    };
-    // An implicit `this` receiver dispatches on the enclosing type path: a
-    // declared type scope, or the companion scope of a declared type for
-    // callers inside a companion member. Package-level and extension-function
-    // scopes fail closed because `this` has no enclosing type to dispatch on.
-    let this_root = if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
-        scope_path
-    } else if let Some((parent, _)) = scope_path.rsplit_once("::")
-        && kotlin_path_is_type_declaration(parent, raw_symbols)
-    {
-        scope_path
-    } else {
+    let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
         return Ok(None);
     };
     resolve_kotlin_type_rooted_member_chain(
@@ -12385,6 +12492,23 @@ fn resolve_kotlin_chained_receiver_call(
             // the chain on that component type so trailing hops dispatch
             // through the same chain rules.
             component_path
+        } else if let Some(chain) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.property_chain_base_for(hops[0]))
+            && let Some(path) = resolve_kotlin_property_chain_initializer_type_path(
+                source_symbol,
+                &chain,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            // A `val` local bound from a property-chain initializer such as
+            // `val first = holder.item` starts the chain on the initializer's
+            // terminal property type.
+            path
         } else {
             return Ok(None);
         }
@@ -12975,6 +13099,21 @@ fn resolve_kotlin_receiver_chain_first_path(
             )?
         {
             return Ok(Some((component_path, 1)));
+        }
+        if let Some(chain) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.property_chain_base_for(hops[0]))
+            && let Some(path) = resolve_kotlin_property_chain_initializer_type_path(
+                source_symbol,
+                &chain,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some((path, 1)));
         }
         return Ok(None);
     }
