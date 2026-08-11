@@ -31905,6 +31905,185 @@ fn kotlin_bare_property_initializer_calls_fail_closed_for_unsupported_references
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_method_call_hops_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    fun make(): Holder = Holder()\n}\n\nopen class Base {\n    val holder: Holder = Holder()\n    fun make(): Holder = Holder()\n}\n\nclass Util : Base() {\n    fun runCallThenProp(): Int {\n        val first = make().item\n        return first.helper(1)\n    }\n    fun runThisCallProp(): Int {\n        val first = this.make().item\n        return first.helper(2)\n    }\n    fun runSuperCallProp(): Int {\n        val first = super.make().item\n        return first.helper(3)\n    }\n    fun runThisPropCallProp(): Int {\n        val first = this.holder.make().item\n        return first.helper(4)\n    }\n    fun runBarePropCallProp(): Int {\n        val first = holder.make().item\n        return first.helper(5)\n    }\n    fun runParen(): Int {\n        val first = (make().item)\n        return first.helper(6)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a property-chain initializer whose chain
+    // contains a method-call hop, such as `val first = make().item`,
+    // `val first = this.make().item`, `val first = super.make().item`, or
+    // `val first = this.holder.make().item`, dispatches through the
+    // enclosing type's own or inherited member function declared return type
+    // and each remaining property hop before its member calls resolve on the
+    // terminal property type; parenthesized spellings unwrap the same way.
+    // All six callers trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runCallThenProp",
+        "com::example::Util::runThisCallProp",
+        "com::example::Util::runSuperCallProp",
+        "com::example::Util::runThisPropCallProp",
+        "com::example::Util::runBarePropCallProp",
+        "com::example::Util::runParen",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runCallThenProp",
+        "com::example::Util::runThisCallProp",
+        "com::example::Util::runSuperCallProp",
+        "com::example::Util::runThisPropCallProp",
+        "com::example::Util::runBarePropCallProp",
+        "com::example::Util::runParen",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_method_call_hops_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nopen class Base {\n    fun make(): Holder = Holder()\n}\n\nclass Util : Base() {\n    fun run(): Int {\n        val first = make().item\n        return first.helper(1)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Util::run");
+}
+
+#[test]
+fn kotlin_property_chain_initializer_method_call_hops_shadowing_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Helper {}\n\nopen class Base {\n    fun make(): Holder = Holder()\n}\n\nclass ShadowCompanion : Base() {\n    companion object {\n        val first: Helper = Helper()\n    }\n    fun run(): Int {\n        val first = make().item\n        return first.helper(1)\n    }\n}\n\nclass Unshadowed : Base() {\n    fun run(): Int {\n        val first = make().item\n        return first.helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Kotlin scope rules let a body-local binding replace a same-named
+    // companion member: `ShadowCompanion`'s local `val first = make().item`
+    // wins over the companion `first: Helper`, so `first.helper(...)`
+    // dispatches on the chain terminal `Item` (the companion's `Helper` has
+    // no `helper`); the unshadowed control traces the same way.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowCompanion::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowCompanion::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_method_call_hops_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Box {\n    val count: Int = 0\n}\n\nopen class Base {\n    fun make(): Holder = Holder()\n    fun makeBox(): Box = Box()\n}\n\nclass Util : Base() {\n    fun failArity(): Int {\n        val first = make(1).item\n        return first.helper(1)\n    }\n    fun failUnknownRoot(): Int {\n        val first = missing().item\n        return first.helper(2)\n    }\n    fun failUnknownHop(): Int {\n        val first = make().missing\n        return first.helper(3)\n    }\n    fun failPrimitive(): Int {\n        val first = makeBox().count\n        return first.helper(4)\n    }\n    fun control(): Int {\n        val first = make().item\n        return first.helper(5)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = make().item\n    return first.helper(6)\n}\n",
+    )
+    .unwrap();
+
+    // Method-call-hop property-chain initializer bindings fail closed for
+    // non-zero-argument call spellings (`make(1).item` is not captured as a
+    // chain), unknown member functions (`missing().item`), unknown terminal
+    // properties (`make().missing`), chains whose terminal property type
+    // lacks the trailing member (`makeBox().count` resolves to `Int`), and
+    // chains in top-level functions with no enclosing type to dispatch on;
+    // only the resolvable chain in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();
