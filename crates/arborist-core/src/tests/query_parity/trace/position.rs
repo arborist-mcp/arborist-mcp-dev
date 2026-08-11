@@ -31555,6 +31555,182 @@ fn kotlin_property_chain_initializer_calls_fail_closed_for_unsupported_reference
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_array_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n    val groups: Array<Helper> = arrayOf()\n}\n\nopen class ItemHolder {\n    val inheritedItems: Array<Item> = arrayOf()\n}\n\nclass SubHolder : ItemHolder()\n\nopen class Base {\n    val holder: Holder = Holder()\n    val subHolder: SubHolder = SubHolder()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Util : Base() {\n    fun runQualified(): Int {\n        val first = holder.items\n        return first[0].helper(1)\n    }\n    fun runThis(): Int {\n        val first = this.holder.items\n        return first[0].helper(2)\n    }\n    fun runSuper(): Int {\n        val first = super.items\n        return first[0].helper(3)\n    }\n    fun runChained(): Int {\n        val first = holder.groups\n        return first[0].inner().helper(4)\n    }\n    fun runInheritedTerminal(): Int {\n        val first = subHolder.inheritedItems\n        return first[0].helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a property-chain initializer whose terminal
+    // property is a single-level array, such as `val first = holder.items`,
+    // dispatches an element access `first[0].helper(...)` on the terminal
+    // array's element component type, including `this`- and `super`-rooted
+    // chains, trailing method-call hops (`first[0].inner().helper(...)`), and
+    // inherited terminal array properties; all five callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runQualified",
+        "com::example::Util::runThis",
+        "com::example::Util::runSuper",
+        "com::example::Util::runChained",
+        "com::example::Util::runInheritedTerminal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runQualified",
+        "com::example::Util::runThis",
+        "com::example::Util::runSuper",
+        "com::example::Util::runChained",
+        "com::example::Util::runInheritedTerminal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val items: Array<Item> = arrayOf()\n}\n\nopen class Base {\n    val holder: Holder = Holder()\n}\n\nclass Util : Base() {\n    fun run(): Int {\n        val first = holder.items\n        return first[0].helper(1)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Util::run");
+}
+
+#[test]
+fn kotlin_property_chain_initializer_array_receiver_shadowing_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {}\n\nclass Holder {\n    val items: Array<Item> = arrayOf()\n}\n\nopen class Base {\n    val holder: Holder = Holder()\n}\n\nclass ShadowCompanion : Base() {\n    companion object {\n        val first: Array<Helper> = arrayOf()\n    }\n    fun run(): Int {\n        val first = holder.items\n        return first[0].helper(1)\n    }\n}\n\nclass Unshadowed : Base() {\n    fun run(): Int {\n        val first = holder.items\n        return first[0].helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Kotlin scope rules let a body-local chain binding replace a same-named
+    // companion member: `ShadowCompanion`'s local `val first = holder.items`
+    // wins over the companion `first: Array<Helper>`, so `first[0].helper(...)`
+    // dispatches on `Item` (the companion's `Helper` element has no `helper`);
+    // the unshadowed control traces the same way.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowCompanion::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowCompanion::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_array_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nopen class Base {\n    val holder: Holder = Holder()\n}\n\nclass Util : Base() {\n    fun failNonArray(): Int {\n        val first = holder.item\n        return first[0].helper(1)\n    }\n    fun failUnknownRoot(): Int {\n        val first = missing.items\n        return first[0].helper(2)\n    }\n    fun failUnknownTerminal(): Int {\n        val first = holder.missing\n        return first[0].helper(3)\n    }\n    fun failMemberOnArray(): Int {\n        val first = holder.items\n        return first.helper(4)\n    }\n    fun control(): Int {\n        val first = holder.items\n        return first[0].helper(5)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = holder.items\n    return first[0].helper(6)\n}\n",
+    )
+    .unwrap();
+
+    // Terminal-array element-access bindings fail closed for chains whose
+    // terminal property is not an array (`holder.item` with `first[0]`),
+    // unknown chain roots (`missing.items`), unknown terminal properties
+    // (`holder.missing`), direct member calls on the array (`first.helper`
+    // where `first` is an `Array<Item>`), and chains in top-level functions
+    // with no enclosing type to dispatch on; only the resolvable chain in
+    // `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();

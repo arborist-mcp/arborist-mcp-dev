@@ -10823,6 +10823,46 @@ fn resolve_kotlin_qualified_receiver_call(
                     kotlin_import_contexts_by_file,
                     deadline,
                 );
+            } else if let Some(chain) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.property_chain_base_for(receiver_name))
+                && let Some(component_path) =
+                    resolve_kotlin_property_chain_array_component_type_path(
+                        source_symbol,
+                        &chain,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        kotlin_import_contexts_by_file,
+                        deadline,
+                    )?
+            {
+                // A `val` local bound from a property-chain initializer whose
+                // terminal property is a single-level array such as
+                // `val first = holder.items` (including `this`- and
+                // `super`-rooted chains and inherited terminal arrays)
+                // dispatches an element access such as `first[0].helper(...)`
+                // on the terminal array's element component type through the
+                // same member rules as a directly bound array receiver;
+                // unknown chains, non-array terminals, and unresolvable hops
+                // fail closed.
+                let type_name = component_path
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(method)
+                    .to_string();
+                return resolve_kotlin_member_or_extension(
+                    source_symbol,
+                    &component_path,
+                    &type_name,
+                    method,
+                    call_arity,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
             } else {
                 return Ok(None);
             }
@@ -12219,28 +12259,16 @@ fn resolve_kotlin_property_chain_initializer_type_path(
     if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
     }
-    let (mut type_path, skip) = if hops[0] == "super" {
-        let Some(superclass_path) = resolve_kotlin_superclass_path(
-            source_symbol,
-            raw_symbols,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        (superclass_path, 1)
-    } else if hops[0] == "this" {
-        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
-            return Ok(None);
-        };
-        (this_root.to_string(), 1)
-    } else {
-        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
-            return Ok(None);
-        };
-        (this_root.to_string(), 0)
+    let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
     };
     for hop in hops.iter().skip(skip) {
         let Some(next_path) = kotlin_chained_receiver_hop_type_path(
@@ -12259,6 +12287,109 @@ fn resolve_kotlin_property_chain_initializer_type_path(
         type_path = next_path;
     }
     Ok(Some(type_path))
+}
+
+/// Resolves the starting type path for a property-chain initializer chain: a
+/// `super`-rooted chain starts on the direct superclass path, a `this`-rooted
+/// chain on the enclosing type path, and a bare chain on the enclosing type
+/// path as an implicit `this` receiver (so inherited first hops resolve the
+/// same way as an explicit `this.`-rooted chain). The returned skip count
+/// tells callers how many leading hops the root consumed. Callers outside a
+/// type return `None` so chains fail closed.
+fn kotlin_property_chain_initializer_root(
+    source_symbol: &IndexedSymbol,
+    first_hop: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, usize)>> {
+    if first_hop == "super" {
+        let Some(superclass_path) = resolve_kotlin_superclass_path(
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((superclass_path, 1)))
+    } else if first_hop == "this" {
+        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
+            return Ok(None);
+        };
+        Ok(Some((this_root.to_string(), 1)))
+    } else {
+        let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
+            return Ok(None);
+        };
+        Ok(Some((this_root.to_string(), 0)))
+    }
+}
+
+/// Resolves the terminal element component type path of a name bound from a
+/// property-chain initializer whose terminal property is a single-level
+/// array, such as `val first = holder.items` with `val items: Array<Item>`,
+/// including `this`- and `super`-rooted chains and inherited terminal array
+/// properties. Intermediate hops walk the same property, array-element, and
+/// method-call hop rules as chained receivers, and the terminal hop resolves
+/// its element component type so a trailing element access such as
+/// `first[0].helper(...)` dispatches on the component type. Non-array
+/// terminals, unresolvable roots, and unknown or ambiguous hops return `None`
+/// so callers fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_property_chain_array_component_type_path(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.len() < 2 || hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let terminal = hops[hops.len() - 1];
+    for hop in hops.iter().skip(skip).take(hops.len() - skip - 1) {
+        let Some(next_path) = kotlin_chained_receiver_hop_type_path(
+            &type_path,
+            hop,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path = next_path;
+    }
+    kotlin_array_property_component_type_path(
+        &type_path,
+        terminal,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
 }
 
 /// Resolves a bare member chain inside a member function (an implicit `this`
@@ -12527,6 +12658,27 @@ fn resolve_kotlin_chained_receiver_call(
         )?
     {
         path
+    } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(chain) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.property_chain_base_for(base_name))
+        && let Some(component_path) = resolve_kotlin_property_chain_array_component_type_path(
+            source_symbol,
+            &chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A `val` local bound from a property-chain initializer whose
+        // terminal property is a single-level array such as
+        // `val first = holder.items` starts the chain on the terminal array's
+        // element component type so trailing element-access and member hops
+        // dispatch through the same chain rules; unknown chains, non-array
+        // terminals, and unresolvable hops fail closed.
+        component_path
     } else if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
         && let Some(initializer_name) = bindings
             .as_ref()
@@ -13132,6 +13284,29 @@ fn resolve_kotlin_receiver_chain_first_path(
         )?
     {
         return Ok(Some((path, 1)));
+    }
+    if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(chain) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.property_chain_base_for(base_name))
+        && let Some(component_path) = resolve_kotlin_property_chain_array_component_type_path(
+            source_symbol,
+            &chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A `val` local bound from a property-chain initializer whose
+        // terminal property is a single-level array such as
+        // `val first = holder.items` starts the chain on the terminal array's
+        // element component type so a trailing element access such as
+        // `first[0].inner().helper(...)` dispatches through the same chain
+        // rules; unknown chains, non-array terminals, and unresolvable hops
+        // fail closed.
+        return Ok(Some((component_path, 1)));
     }
     // A `val` local initialized from a factory call whose declared return
     // type is a single-level array, such as `val items = this.ownMake()` or
