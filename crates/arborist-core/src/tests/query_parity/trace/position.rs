@@ -31032,6 +31032,199 @@ fn kotlin_implicit_member_function_receiver_calls_fail_closed_for_unsupported_re
 }
 
 #[test]
+fn traces_kotlin_implicit_inherited_property_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nopen class Base {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n    val holder: Holder = Holder()\n}\n\nopen class Mid : Base()\n\nclass Util : Mid() {\n    fun runDirect(): Int {\n        return item.helper(1)\n    }\n    fun runChain(): Int {\n        return holder.item.helper(2)\n    }\n    fun runArray(): Int {\n        return items[0].helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A bare property reference inside a member function (an implicit `this`
+    // receiver) whose property is inherited from a superclass, including a
+    // single-hop member call `item.helper(...)`, a member chain rooted at an
+    // inherited property `holder.item.helper(...)`, and an element access on
+    // an inherited array property `items[0].helper(...)`, dispatches through
+    // the same rules as an explicit `this.`-rooted chain, so all three callers
+    // trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runChain",
+        "com::example::Util::runArray",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runChain",
+        "com::example::Util::runArray",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_implicit_inherited_property_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nopen class Base {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n    val holder: Holder = Holder()\n}\n\nclass Util : Base() {\n    fun runDirect(): Int {\n        return item.helper(1)\n    }\n    fun runArray(): Int {\n        return items[0].helper(2)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runArray",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runArray",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_implicit_inherited_property_shadowing_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nopen class Base {\n    val item: Item = Item()\n}\n\nclass ShadowLocal : Base() {\n    fun run(): Int {\n        val item = Helper()\n        return item.helper(1)\n    }\n}\n\nclass ShadowMember : Base() {\n    val item: Helper = Helper()\n    fun run(): Int {\n        return item.inner().helper(2)\n    }\n}\n\nclass Unshadowed : Base() {\n    fun run(): Int {\n        return item.helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Kotlin scope rules let a local variable or a same-class property shadow
+    // an inherited property: `ShadowLocal`'s local `item: Helper` and
+    // `ShadowMember`'s own `item: Helper` both win over the inherited
+    // `item: Item`, so `ShadowLocal` does not trace (its `Helper` has no
+    // `helper`) while `ShadowMember` traces through `Helper::inner`; only
+    // `Unshadowed` dispatches directly on the inherited `item: Item`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowMember::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::ShadowMember::run",
+        "com::example::Unshadowed::run",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_implicit_inherited_property_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {}\n\nopen class Base {\n    val item: Item = Item()\n    val holder: Helper = Helper()\n    val plain = \"x\"\n}\n\nclass Util : Base() {\n    fun failUnknown(): Int {\n        return missing.helper(1)\n    }\n    fun failWrongType(): Int {\n        return holder.item.helper(1)\n    }\n    fun failPrimitive(): Int {\n        return plain.helper(1)\n    }\n    fun control(): Int {\n        return item.helper(1)\n    }\n}\n\nfun topLevelRun(): Int {\n    return item.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Implicit inherited property references fail closed for unknown
+    // properties (`missing`), inherited properties whose declared type lacks
+    // the trailing member or intermediate hop (`holder: Helper` with no
+    // `item`), properties without a usable declared type (`plain`), and bare
+    // references in top-level functions (`topLevelRun` has no enclosing type
+    // to dispatch on); only the resolvable chain in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();

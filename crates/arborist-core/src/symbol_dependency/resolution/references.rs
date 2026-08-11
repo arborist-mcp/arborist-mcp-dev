@@ -10847,6 +10847,25 @@ fn resolve_kotlin_qualified_receiver_call(
                 deadline,
             );
         }
+        // An unbound element-access base may also be a property of the
+        // enclosing type (an implicit `this` receiver), including an inherited
+        // array property such as `items` in `items[0].helper(...)` inside a
+        // subclass; the element-access hop resolves the inherited array
+        // property's element component type the same way as an explicit
+        // `this.`-rooted chain. Unknown bases and unresolvable components fail
+        // closed.
+        if let Some(target) = resolve_kotlin_implicit_this_member_chain(
+            source_symbol,
+            &format!("{receiver}.{method}"),
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(target));
+        }
         // An unbound element-access base fails closed instead of falling
         // through to a same-named object or type.
         return Ok(None);
@@ -10893,6 +10912,23 @@ fn resolve_kotlin_qualified_receiver_call(
         raw_symbols,
         semantic_path_index,
     ) {
+        return Ok(Some(target));
+    }
+    // An unbound receiver may also be a property of the enclosing type (an
+    // implicit `this` receiver), including an inherited property such as
+    // `holder.helper(...)` inside a subclass; the member resolves through the
+    // same direct and inherited rules as an explicit `this.`-rooted chain.
+    // Unknown properties and members fail closed.
+    if let Some(target) = resolve_kotlin_implicit_this_member_chain(
+        source_symbol,
+        &format!("{receiver}.{method}"),
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
         return Ok(Some(target));
     }
     Ok(None)
@@ -12086,6 +12122,53 @@ fn resolve_kotlin_enclosing_companion_scope(
     companion_exists.then_some(companion_scope)
 }
 
+/// Resolves a bare member chain inside a member function (an implicit `this`
+/// receiver) such as `holder.item.helper(...)` or `holder.helper(...)` where
+/// `holder` is a property of the enclosing type or one of its superclasses.
+/// The chain dispatches through the same direct, inherited, and extension
+/// rules as an explicit `this.`-rooted chain. Callers outside a type and
+/// unknown or unresolvable hops and members fail closed because an implicit
+/// `this` receiver has no enclosing type to dispatch on.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_implicit_this_member_chain(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    // An implicit `this` receiver dispatches on the enclosing type path: a
+    // declared type scope, or the companion scope of a declared type for
+    // callers inside a companion member. Package-level and extension-function
+    // scopes fail closed because `this` has no enclosing type to dispatch on.
+    let this_root = if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+        scope_path
+    } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+        && kotlin_path_is_type_declaration(parent, raw_symbols)
+    {
+        scope_path
+    } else {
+        return Ok(None);
+    };
+    resolve_kotlin_type_rooted_member_chain(
+        source_symbol,
+        this_root,
+        chain,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_chained_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -12377,6 +12460,23 @@ fn resolve_kotlin_chained_receiver_call(
         )?
     {
         class_path
+    } else if let Some(target) = resolve_kotlin_implicit_this_member_chain(
+        source_symbol,
+        reference_name,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        // An unbound first hop may also be a property of the enclosing type
+        // (an implicit `this` receiver), including an inherited property such
+        // as `holder` in `holder.item.helper(...)` inside a subclass; the
+        // whole chain dispatches through the same direct and inherited rules
+        // as an explicit `this.`-rooted chain. Unknown properties and members
+        // fail closed.
+        return Ok(Some(target));
     } else {
         return Ok(None);
     };
