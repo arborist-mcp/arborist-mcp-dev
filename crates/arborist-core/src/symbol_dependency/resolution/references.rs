@@ -11167,6 +11167,7 @@ fn resolve_kotlin_factory_array_element_component_type(
             source_symbol,
             function_name,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
@@ -13155,6 +13156,7 @@ fn resolve_kotlin_initializer_type_path(
         source_symbol,
         initializer_name,
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
@@ -13186,15 +13188,20 @@ fn resolve_kotlin_initializer_type_path(
 }
 
 /// Resolves an inferred property initializer callee such as `makeOther` in
-/// `val derived = makeOther()` to a unique top-level function whose declared
-/// return type can pin the property receiver. Same-file, same-package, and
-/// explicitly imported functions are eligible; unknown names, ambiguous
-/// candidates, and functions without a declared return type fail closed.
+/// `val derived = makeOther()` to a unique function whose declared return
+/// type can pin the property receiver. Same-file, same-package, and explicitly
+/// imported top-level functions are eligible; when none matches, a companion
+/// member function of the enclosing type such as `make` in `val derived =
+/// make()` inside a class whose companion declares `fun make()` resolves
+/// through the enclosing type's canonical companion scope the same way an
+/// unqualified companion property does. Unknown names, ambiguous candidates,
+/// and functions without a declared return type fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_property_initializer_function_path(
     source_symbol: &IndexedSymbol,
     function_name: &str,
     raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -13223,7 +13230,37 @@ fn resolve_kotlin_property_initializer_function_path(
         })
         .map(|candidate| candidate.symbol_id.clone())
         .collect::<Vec<_>>();
-    Ok((candidates.len() == 1).then(|| candidates[0].clone()))
+    if candidates.len() == 1 {
+        return Ok(Some(candidates[0].clone()));
+    }
+    if !candidates.is_empty() {
+        return Ok(None);
+    }
+    // A bare callee may also be an implicit companion member function of the
+    // enclosing type, visible unqualified inside member functions; resolve it
+    // through the enclosing type's canonical companion scope when no
+    // top-level or imported function matches. Callers outside a type, types
+    // without a companion object, and ambiguous companion members fail closed.
+    if let Some(companion_scope) =
+        resolve_kotlin_enclosing_companion_scope(source_symbol, raw_symbols, semantic_path_index)
+    {
+        let companion_candidates = semantic_path_index
+            .get(&format!("{companion_scope}::{function_name}"))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.scope_path.as_deref() == Some(companion_scope.as_str())
+                    && candidate.return_type.is_some()
+            })
+            .collect::<Vec<_>>();
+        if let [candidate_index] = companion_candidates.as_slice() {
+            return Ok(Some(raw_symbols[*candidate_index].symbol_id.clone()));
+        }
+    }
+    Ok(None)
 }
 
 /// Returns whether a Kotlin type declaration is an interface by inspecting its
