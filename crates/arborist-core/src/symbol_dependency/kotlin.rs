@@ -37,6 +37,11 @@ pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
     /// but has no usable type until the chain is walked.
     element_access_bases: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
+    /// Names bound from companion-object members, which are shadowed by any
+    /// higher-priority local, parameter, or instance-property binding of the
+    /// same name. Tracked separately so a higher-priority binding replaces the
+    /// companion binding cleanly instead of creating a false ambiguity.
+    shadowable_names: BTreeSet<String>,
 }
 
 impl KotlinReceiverTypeBindings {
@@ -234,13 +239,14 @@ fn kotlin_receiver_type_bindings_for_node(
     source: &str,
 ) -> Result<KotlinReceiverTypeBindings> {
     let mut bindings = KotlinReceiverTypeBindings::default();
-
-    // Enclosing-type properties are visible to member functions.
-    if let Some(type_node) = kotlin_enclosing_type_declaration(function)
-        && let Some(class_body) = type_node
+    let enclosing_body = kotlin_enclosing_type_declaration(function).and_then(|type_node| {
+        type_node
             .named_children(&mut type_node.walk())
             .find(|child| child.kind() == "class_body")
-    {
+    });
+
+    // Enclosing-type properties are visible to member functions.
+    if let Some(class_body) = enclosing_body {
         let mut cursor = class_body.walk();
         for child in class_body.named_children(&mut cursor) {
             if child.kind() == "property_declaration"
@@ -267,6 +273,46 @@ fn kotlin_receiver_type_bindings_for_node(
                 && let Some((name, type_name)) = kotlin_parameter_binding(parameter, source)?
             {
                 insert_kotlin_receiver_binding(&mut bindings, name, type_name);
+            }
+        }
+    }
+
+    // Companion-object properties are visible unqualified to members of the
+    // enclosing type, shadowed by any higher-priority local, parameter, or
+    // instance-property binding of the same name. Companion bindings are
+    // collected before body locals so a local whose initializer references a
+    // companion member (such as `val first = items[0]` for a companion
+    // `val items: Array<Item>`) can bind its element type; the shadowable
+    // insert discipline still lets locals, parameters, and instance
+    // properties replace companion bindings cleanly.
+    if let Some(class_body) = enclosing_body {
+        let mut cursor = class_body.walk();
+        for child in class_body.named_children(&mut cursor) {
+            if child.kind() != "companion_object" {
+                continue;
+            }
+            let Some(companion_body) = child
+                .named_children(&mut child.walk())
+                .find(|member| member.kind() == "class_body")
+            else {
+                continue;
+            };
+            let mut member_cursor = companion_body.walk();
+            for member in companion_body.named_children(&mut member_cursor) {
+                if member.kind() == "property_declaration"
+                    && let Some((name, type_name, element_access_base)) =
+                        kotlin_property_binding(member, source, &bindings)?
+                {
+                    if let Some(base) = element_access_base {
+                        insert_kotlin_shadowable_element_access_base_binding(
+                            &mut bindings,
+                            name,
+                            base,
+                        );
+                    } else {
+                        insert_kotlin_shadowable_receiver_binding(&mut bindings, name, type_name);
+                    }
+                }
             }
         }
     }
@@ -763,6 +809,14 @@ fn insert_kotlin_receiver_binding(
     if bindings.ambiguous_names.contains(&name) {
         return;
     }
+    // A higher-priority local, parameter, or instance-property binding
+    // replaces a same-named companion-member binding cleanly instead of
+    // creating a false ambiguity.
+    if bindings.shadowable_names.remove(&name) {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+    }
     // A generic array spelling such as `Array<Helper>` binds the element
     // component type so an element-access receiver such as `items[0]` can
     // dispatch on the element type; nested generic arrays such as
@@ -809,6 +863,14 @@ fn insert_kotlin_element_access_base_binding(
     if bindings.ambiguous_names.contains(&name) {
         return;
     }
+    // A higher-priority local, parameter, or instance-property binding
+    // replaces a same-named companion-member binding cleanly instead of
+    // creating a false ambiguity.
+    if bindings.shadowable_names.remove(&name) {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+    }
     if bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
         || bindings
@@ -821,6 +883,47 @@ fn insert_kotlin_element_access_base_binding(
         bindings.element_access_bases.remove(&name);
         bindings.ambiguous_names.insert(name);
     }
+}
+
+/// Inserts a companion-member receiver binding that is shadowed by any
+/// higher-priority local, parameter, instance-property, or enclosing-class
+/// binding of the same name, matching Kotlin's scope rules where locals
+/// shadow members and instance members shadow companion members. Names
+/// already bound (including ambiguous names) skip the companion binding
+/// instead of creating a false ambiguity; a companion member that does not
+/// collide binds like any other receiver.
+fn insert_kotlin_shadowable_receiver_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    type_name: String,
+) {
+    if bindings.ambiguous_names.contains(&name)
+        || bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+    {
+        return;
+    }
+    insert_kotlin_receiver_binding(bindings, name.clone(), type_name);
+    bindings.shadowable_names.insert(name);
+}
+
+/// Inserts a companion-member element-access base binding with the same
+/// shadowing discipline as `insert_kotlin_shadowable_receiver_binding`.
+fn insert_kotlin_shadowable_element_access_base_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    base: String,
+) {
+    if bindings.ambiguous_names.contains(&name)
+        || bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+    {
+        return;
+    }
+    insert_kotlin_element_access_base_binding(bindings, name.clone(), base);
+    bindings.shadowable_names.insert(name);
 }
 
 pub(in crate::symbol_dependency) fn resolve_kotlin_import_binding_for_reference(
@@ -1397,6 +1500,86 @@ mod tests {
             .unwrap();
         assert_eq!(caller_bindings.type_for("other"), None);
         assert_eq!(caller_bindings.type_for("unknown"), None);
+    }
+
+    #[test]
+    fn companion_property_receivers_bind_shadowably_and_feed_local_element_access() {
+        let file = write_test_file(
+            "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Util {\n    companion object {\n        val items: Array<Item> = arrayOf()\n        val nullableItems: Array<Item>? = arrayOf()\n        val groups: Array<Helper> = arrayOf()\n    }\n    fun run(): Int {\n        val first = items[0]\n        return first.helper(1)\n    }\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        // A companion array property binds its element component type, so a
+        // body local such as `val first = items[0]` binds the element type and
+        // direct element-access receivers can dispatch on it; nullability does
+        // not change the component type.
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("first") == Some("Item".to_string()))
+            .unwrap();
+        assert_eq!(
+            run_bindings.array_component_for("items"),
+            Some("Item".to_string())
+        );
+        assert_eq!(run_bindings.type_for("first"), Some("Item".to_string()));
+        assert_eq!(
+            run_bindings.array_component_for("nullableItems"),
+            Some("Item".to_string())
+        );
+        assert_eq!(
+            run_bindings.array_component_for("groups"),
+            Some("Helper".to_string())
+        );
+    }
+
+    #[test]
+    fn companion_property_receivers_are_shadowed_by_locals_parameters_and_instance_properties() {
+        let file = write_test_file(
+            "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Util {\n    companion object {\n        val items: Array<Item> = arrayOf()\n    }\n    fun run(): Int {\n        val items: Array<Helper> = arrayOf()\n        return items[0].inner().helper(1)\n    }\n}\n\nclass Shadowed {\n    val items: Array<Item> = arrayOf()\n    companion object {\n        val items: Array<Helper> = arrayOf()\n    }\n    fun run(): Int {\n        return items[0].helper(2)\n    }\n}\n\nfun topLevel(): Int {\n    return items[0].helper(3)\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        // A local with the same name replaces the companion binding cleanly
+        // instead of creating a false ambiguity.
+        let local_wins = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.array_component_for("items") == Some("Helper".to_string()))
+            .unwrap();
+        assert_eq!(
+            local_wins.array_component_for("items"),
+            Some("Helper".to_string())
+        );
+        // An instance property with the same name shadows the companion
+        // binding (the companion insert is skipped), so the instance
+        // component wins.
+        let instance_wins = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.array_component_for("items") == Some("Item".to_string()))
+            .unwrap();
+        assert_eq!(
+            instance_wins.array_component_for("items"),
+            Some("Item".to_string())
+        );
+        // A top-level function has no enclosing companion scope: the name
+        // stays unbound and fails closed.
+        let top_level = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| !bindings.contains("items"))
+            .unwrap();
+        assert_eq!(top_level.type_for("items"), None);
+        assert_eq!(top_level.array_component_for("items"), None);
     }
 
     #[test]

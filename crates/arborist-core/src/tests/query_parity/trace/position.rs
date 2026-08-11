@@ -30831,6 +30831,209 @@ fn kotlin_array_property_element_access_hop_receiver_calls_fail_closed_for_unsup
 }
 
 #[test]
+fn traces_kotlin_implicit_companion_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Util {\n    companion object {\n        val items: Array<Item> = arrayOf()\n        val nullableItems: Array<Item>? = arrayOf()\n        val groups: Array<Helper> = arrayOf()\n        val nullableGroups: Array<Helper>? = arrayOf()\n    }\n    fun runPlain(): Int {\n        return items[0].helper(1)\n    }\n    fun runNullableForce(): Int {\n        return nullableItems!![0].helper(2)\n    }\n    fun runHop(): Int {\n        return groups[0].inner().helper(3)\n    }\n    fun runNullableHop(): Int {\n        return nullableGroups!![0].inner().helper(4)\n    }\n    fun runVar(): Int {\n        val first = items[0]\n        return first.helper(5)\n    }\n}\n\nclass Holder {\n    companion object {\n        val items: Array<Item> = arrayOf()\n        fun runInCompanion(): Int {\n            return items[0].helper(6)\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    // An implicit companion member reference inside a type (bare `items` in
+    // `items[0].helper(...)`, `nullableItems!![0].helper(...)`,
+    // `groups[0].inner().helper(...)`, `nullableGroups!![0].inner().helper(...)`,
+    // and `val first = items[0]`) dispatches on the companion property's
+    // element component type, including from inside the companion object
+    // itself, so all six chains trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runNullableForce",
+        "com::example::Util::runHop",
+        "com::example::Util::runNullableHop",
+        "com::example::Util::runVar",
+        "com::example::Holder::Companion::runInCompanion",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runNullableForce",
+        "com::example::Util::runHop",
+        "com::example::Util::runNullableHop",
+        "com::example::Util::runVar",
+        "com::example::Holder::Companion::runInCompanion",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_implicit_companion_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Util {\n    companion object {\n        val items: Array<Item> = arrayOf()\n        val nullableItems: Array<Item>? = arrayOf()\n        val groups: Array<Helper> = arrayOf()\n    }\n    fun runPlain(): Int {\n        return items[0].helper(1)\n    }\n    fun runNullableForce(): Int {\n        return nullableItems!![0].helper(2)\n    }\n    fun runHop(): Int {\n        return groups[0].inner().helper(3)\n    }\n    fun runVar(): Int {\n        val first = items[0]\n        return first.helper(4)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runNullableForce",
+        "com::example::Util::runHop",
+        "com::example::Util::runVar",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runPlain",
+        "com::example::Util::runNullableForce",
+        "com::example::Util::runHop",
+        "com::example::Util::runVar",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_implicit_companion_receiver_shadowing_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Plain {\n    companion object {\n        val items: Array<Item> = arrayOf()\n    }\n    fun run(): Int {\n        return items[0].helper(1)\n    }\n}\n\nclass ShadowInstance {\n    val items: Array<Item> = arrayOf()\n    companion object {\n        val items: Array<Helper> = arrayOf()\n    }\n    fun run(): Int {\n        return items[0].helper(2)\n    }\n}\n\nclass ShadowParam {\n    companion object {\n        val items: Array<Helper> = arrayOf()\n    }\n    fun run(items: Array<Item>): Int {\n        return items[0].helper(3)\n    }\n}\n\nclass ShadowLocal {\n    companion object {\n        val items: Array<Helper> = arrayOf()\n    }\n    fun run(): Int {\n        val items: Array<Item> = arrayOf()\n        return items[0].helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Kotlin scope rules pick the local, parameter, or instance property over
+    // a same-named companion member; each shadowing function resolves its bare
+    // `items[0].helper(...)` to `Item::helper` (the companion's `Array<Helper>`
+    // would not have a `helper` member), so all four chains trace.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Plain::run",
+        "com::example::ShadowInstance::run",
+        "com::example::ShadowParam::run",
+        "com::example::ShadowLocal::run",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Plain::run",
+        "com::example::ShadowInstance::run",
+        "com::example::ShadowParam::run",
+        "com::example::ShadowLocal::run",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_implicit_companion_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass NoCompanion {\n    fun run(): Int {\n        return items[0].helper(1)\n    }\n}\n\nclass Util {\n    companion object {\n        val items: Array<Item> = arrayOf()\n        val item: Helper = Helper()\n        val matrix: Array<Array<Item>> = arrayOf()\n        val counts: IntArray = intArrayOf()\n    }\n    fun failUnknown(): Int {\n        return unknown[0].helper(1)\n    }\n    fun failNonArray(): Int {\n        return item[0].helper(1)\n    }\n    fun failMultiDim(): Int {\n        return matrix[0].helper(1)\n    }\n    fun failPrimitive(): Int {\n        return counts[0].helper(1)\n    }\n    fun control(): Int {\n        return items[0].helper(1)\n    }\n}\n\nfun failTopLevel(): Int {\n    return items[0].helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Implicit companion references fail closed for unknown properties
+    // (`unknown[0]`), non-array properties (`item[0]`), multi-dimensional
+    // arrays (`matrix[0]`), primitive arrays (`counts[0]`), types without a
+    // companion object (`NoCompanion`), and bare companion names in top-level
+    // functions, where there is no enclosing companion scope; only the
+    // resolvable chain in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_cross_file_array_property_element_access_hop_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

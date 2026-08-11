@@ -11619,6 +11619,25 @@ fn resolve_kotlin_element_access_base_component_type_path(
         };
         return Ok(Some(component_path));
     }
+    // A bare bound array name such as `items` in `val first = items[0]` where
+    // `items` is a parameter, local, enclosing-class property, or implicit
+    // companion property with a single-level array type dispatches directly on
+    // the bound element component type.
+    if !base.contains('.')
+        && let Some(component_type) =
+            bindings.and_then(|bindings| bindings.array_component_for(base))
+        && let Some(component_path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(Some(component_path));
+    }
     let Some((first_hop, chain)) = base.split_once('.') else {
         return Ok(None);
     };
