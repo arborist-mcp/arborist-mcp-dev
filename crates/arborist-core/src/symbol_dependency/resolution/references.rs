@@ -12261,7 +12261,7 @@ fn resolve_kotlin_property_chain_initializer_type_path(
     }
     let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
         source_symbol,
-        hops[0],
+        &hops,
         raw_symbols,
         semantic_path_index,
         file_overrides,
@@ -12301,19 +12301,24 @@ fn resolve_kotlin_property_chain_initializer_type_path(
 /// companion member function through the same rules as an unqualified
 /// initializer callee; when no such function exists, a plain constructor-call
 /// hop such as `Holder()` in `val first = Holder().item` starts the chain on
-/// the constructed type. The returned skip count tells callers how many
-/// leading hops the root consumed. Bare property and `this`-rooted chains
-/// outside a type return `None` so chains fail closed.
+/// the constructed type. A bare first hop that names a named object, a class
+/// with an explicit or named companion chain (`Config.Factory` or
+/// `Config.Companion`), or a class with an anonymous companion starts the
+/// chain on that object or companion scope before falling back to the
+/// enclosing type's own property. The returned skip count tells callers how
+/// many leading hops the root consumed. Bare property and `this`-rooted
+/// chains outside a type return `None` so chains fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_chain_initializer_root(
     source_symbol: &IndexedSymbol,
-    first_hop: &str,
+    hops: &[&str],
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<(String, usize)>> {
+    let first_hop = hops[0];
     if first_hop == "super" {
         let Some(superclass_path) = resolve_kotlin_superclass_path(
             source_symbol,
@@ -12390,6 +12395,55 @@ fn kotlin_property_chain_initializer_root(
         }
         Ok(None)
     } else {
+        let bindings = kotlin_receiver_type_bindings_for_function(
+            &source_symbol.file_path,
+            source_symbol.byte_range,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?;
+        // A locally bound first hop names a local value rather than a named
+        // object, so object roots are skipped when the name is shadowed; the
+        // companion resolvers below apply the same shadow check.
+        let first_hop_bound = bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(first_hop));
+        if !first_hop_bound
+            && let Some(object_path) = resolve_kotlin_object_receiver_path(
+                source_symbol,
+                first_hop,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some((object_path, 1)));
+        }
+        if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
+            source_symbol,
+            hops,
+            bindings.as_ref(),
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some((format!("{companion_root}::Companion"), consumed)));
+        }
+        if let Some((companion_root, _)) = resolve_kotlin_anonymous_companion_chain_root(
+            source_symbol,
+            hops,
+            bindings.as_ref(),
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some((companion_root, 1)));
+        }
         let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
             return Ok(None);
         };
@@ -12423,7 +12477,7 @@ fn resolve_kotlin_property_chain_array_component_type_path(
     }
     let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
         source_symbol,
-        hops[0],
+        &hops,
         raw_symbols,
         semantic_path_index,
         file_overrides,

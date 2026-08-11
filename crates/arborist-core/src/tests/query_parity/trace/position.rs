@@ -32601,6 +32601,204 @@ fn kotlin_property_chain_initializer_nullable_and_generic_roots_fail_closed_for_
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_object_and_companion_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass AnonymousHost {\n    companion object {\n        val holder: Holder = Holder()\n    }\n}\n\nclass NamedHost {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n\nclass Util {\n    fun runObject(): Int {\n        val first = Registry.holder.item\n        return first.helper(1)\n    }\n    fun runAnonymousCompanion(): Int {\n        val first = AnonymousHost.holder.item\n        return first.helper(2)\n    }\n    fun runExplicitCompanion(): Int {\n        val first = AnonymousHost.Companion.holder.item\n        return first.helper(3)\n    }\n    fun runNamedCompanion(): Int {\n        val first = NamedHost.Factory.holder.item\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Property-chain initializer roots dispatch through a named object
+    // (`Registry.holder.item`), an anonymous companion
+    // (`AnonymousHost.holder.item` and its explicit `AnonymousHost.Companion`
+    // spelling), and a named companion (`NamedHost.Factory.holder.item`) on
+    // the object or companion scope's declared property before falling back
+    // to the enclosing type's own property; all four callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runObject",
+        "com::example::Util::runAnonymousCompanion",
+        "com::example::Util::runExplicitCompanion",
+        "com::example::Util::runNamedCompanion",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runObject",
+        "com::example::Util::runAnonymousCompanion",
+        "com::example::Util::runExplicitCompanion",
+        "com::example::Util::runNamedCompanion",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_object_and_companion_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass AnonymousHost {\n    companion object {\n        val holder: Holder = Holder()\n    }\n}\n\nclass NamedHost {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n\nclass Util {\n    fun runObject(): Int {\n        val first = Registry.holder.item\n        return first.helper(1)\n    }\n    fun runAnonymousCompanion(): Int {\n        val first = AnonymousHost.holder.item\n        return first.helper(2)\n    }\n    fun runNamedCompanion(): Int {\n        val first = NamedHost.Factory.holder.item\n        return first.helper(3)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runObject",
+        "com::example::Util::runAnonymousCompanion",
+        "com::example::Util::runNamedCompanion",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runObject",
+        "com::example::Util::runAnonymousCompanion",
+        "com::example::Util::runNamedCompanion",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_object_and_companion_roots_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass PlainHost {}\n\nclass EmptyHost {\n    companion object {}\n}\n\nclass Util {\n    fun failPlainHost(): Int {\n        val first = PlainHost.holder.item\n        return first.helper(1)\n    }\n    fun failUnknownObject(): Int {\n        val first = MissingRegistry.holder.item\n        return first.helper(2)\n    }\n    fun failMissingCompanionMember(): Int {\n        val first = EmptyHost.holder.item\n        return first.helper(3)\n    }\n    fun failShadowedObject(): Int {\n        val Registry = Holder()\n        val first = Registry.holder.item\n        return first.helper(4)\n    }\n    fun control(): Int {\n        val first = Registry.holder.item\n        return first.helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Object/companion property-chain initializer roots fail closed for a
+    // class without a companion (`PlainHost.holder.item`), an unknown object
+    // (`MissingRegistry.holder.item`), a companion scope that lacks the
+    // terminal property (`EmptyHost.holder.item`), and a first hop shadowed
+    // by a local binding (`val Registry = Holder()` keeps the chain from
+    // dispatching through the object); only the resolvable object root in
+    // `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_object_and_companion_array_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nobject Registry {\n    val items: Array<Item> = arrayOf()\n}\n\nclass AnonymousHost {\n    companion object {\n        val items: Array<Item> = arrayOf()\n    }\n}\n\nclass Util {\n    fun runObjectArray(): Int {\n        val first = Registry.items\n        return first[0].helper(1)\n    }\n    fun runAnonymousArray(): Int {\n        val first = AnonymousHost.items\n        return first[0].helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Object and anonymous-companion roots also start property-chain
+    // initializers whose terminal property is a single-level array, so
+    // `Registry.items` and `AnonymousHost.items` dispatch a trailing element
+    // access on the array's element component type and both callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runObjectArray",
+        "com::example::Util::runAnonymousArray",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runObjectArray",
+        "com::example::Util::runAnonymousArray",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();
