@@ -13190,12 +13190,15 @@ fn resolve_kotlin_initializer_type_path(
 /// Resolves an inferred property initializer callee such as `makeOther` in
 /// `val derived = makeOther()` to a unique function whose declared return
 /// type can pin the property receiver. Same-file, same-package, and explicitly
-/// imported top-level functions are eligible; when none matches, a companion
-/// member function of the enclosing type such as `make` in `val derived =
-/// make()` inside a class whose companion declares `fun make()` resolves
-/// through the enclosing type's canonical companion scope the same way an
-/// unqualified companion property does. Unknown names, ambiguous candidates,
-/// and functions without a declared return type fail closed.
+/// imported top-level functions are eligible; when none matches, a member
+/// function of the enclosing type such as `make` in `val derived = make()`
+/// inside a class that declares `fun make()` resolves as an implicit `this`
+/// receiver through the same rules as a `this`-rooted call, and then a
+/// companion member function of the enclosing type such as `make` in a class
+/// whose companion declares `fun make()` resolves through the enclosing
+/// type's canonical companion scope the same way an unqualified companion
+/// property does. Unknown names, ambiguous candidates, and functions without
+/// a declared return type fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_property_initializer_function_path(
     source_symbol: &IndexedSymbol,
@@ -13236,11 +13239,30 @@ fn resolve_kotlin_property_initializer_function_path(
     if !candidates.is_empty() {
         return Ok(None);
     }
+    // A bare callee may also be a member function of the enclosing type,
+    // visible unqualified inside member functions as an implicit `this`
+    // receiver; resolve it through the same rules as a `this`-rooted call and
+    // prefer it over a same-named companion member. Callers outside a type and
+    // unknown or ambiguous member functions fail closed.
+    if !function_name.contains('.')
+        && let Some(member_path) = resolve_kotlin_this_super_rooted_member_function_path(
+            source_symbol,
+            &format!("this.{function_name}"),
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(Some(member_path));
+    }
     // A bare callee may also be an implicit companion member function of the
     // enclosing type, visible unqualified inside member functions; resolve it
     // through the enclosing type's canonical companion scope when no
-    // top-level or imported function matches. Callers outside a type, types
-    // without a companion object, and ambiguous companion members fail closed.
+    // top-level, imported, or enclosing-type member function matches. Callers
+    // outside a type, types without a companion object, and ambiguous
+    // companion members fail closed.
     if let Some(companion_scope) =
         resolve_kotlin_enclosing_companion_scope(source_symbol, raw_symbols, semantic_path_index)
     {
