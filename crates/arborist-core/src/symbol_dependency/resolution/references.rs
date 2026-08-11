@@ -12350,7 +12350,7 @@ fn resolve_kotlin_property_chain_array_component_type_path(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     let hops = chain.split('.').collect::<Vec<_>>();
-    if hops.len() < 2 || hops.iter().any(|hop| hop.is_empty()) {
+    if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
     }
     let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(

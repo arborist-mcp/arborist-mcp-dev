@@ -545,6 +545,7 @@ fn kotlin_property_binding(
                     | "navigation_expression"
                     | "parenthesized_expression"
                     | "unary_expression"
+                    | "identifier"
             )
         })
         .copied();
@@ -595,6 +596,19 @@ fn kotlin_property_binding(
         && let Some(chain) = kotlin_property_chain_initializer(initializer, source)?
     {
         return Ok(Some((name, String::new(), None, Some(chain))));
+    }
+    // A bare property initializer such as `val first = item` or
+    // `val first = items` records the property name as a single-hop property
+    // chain so trace-time resolution can walk the enclosing type's own or
+    // inherited property (including terminal array element access) to the
+    // declared type; parenthesized and force-unwrapped spellings unwrap
+    // through `kotlin_initializer_expression` above, and unknown or
+    // unresolvable properties fail closed there.
+    if initializer.kind() == "identifier" {
+        let chain = node_text(initializer, source)?.trim().to_string();
+        if !chain.is_empty() {
+            return Ok(Some((name, String::new(), None, Some(chain))));
+        }
     }
     Ok(None)
 }
