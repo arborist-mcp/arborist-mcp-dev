@@ -466,13 +466,20 @@ fn kotlin_call_initializer_callee_name(node: Node<'_>, source: &str) -> Result<O
 }
 
 /// Returns the callee spelling of a factory-call element-access base such as
-/// `makeItems` in `makeItems()[0]` or `Util.makeItems` in
-/// `Util.makeItems()[0]`. Plain-identifier and safe dotted navigation callees
-/// are accepted; `this`/`super` roots, parenthesized roots, and other
-/// non-name callees return `None` so qualified factory element-access bases
-/// fail closed only for genuinely unsupported shapes.
+/// `makeItems` in `makeItems()[0]`, `Util.makeItems` in
+/// `Util.makeItems()[0]`, `this.ownMake` in `this.ownMake()[0]`, or
+/// `super.inheritedMake` in `super.inheritedMake()[0]`. Plain-identifier,
+/// safe dotted navigation, and `this`/`super`-rooted callees are accepted
+/// (the root is kept so trace-time resolution can dispatch the member
+/// function on the enclosing type or the direct superclass); parenthesized
+/// roots and other non-name callees return `None` so factory element-access
+/// bases fail closed only for genuinely unsupported shapes.
 fn kotlin_factory_call_callee_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if node.kind() == "identifier" {
+        let name = node_text(node, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
+    }
+    if matches!(node.kind(), "this_expression" | "super_expression") {
         let name = node_text(node, source)?.trim().to_string();
         return Ok((!name.is_empty()).then_some(name));
     }
@@ -500,14 +507,15 @@ fn kotlin_factory_call_callee_name(node: Node<'_>, source: &str) -> Result<Optio
 
 /// Extracts the base of a single-level element-access initializer such as
 /// `items[0]`, `this.groups[0]`, `super.inheritedItems[0]`, `makeItems()[0]`,
-/// or `Util.makeItems()[0]`.
+/// `Util.makeItems()[0]`, `this.ownMake()[0]`, or
+/// `super.inheritedMake()[0]`.
 /// Plain-identifier and dotted field-chain bases (including `this`- and
 /// `super`-rooted chains) return their spelling, and a factory-call base with
-/// a plain or safe dotted callee returns the callee with a trailing `()`
-/// marker so trace-time resolution can walk the factory's declared return
-/// array. `this`/`super`-rooted call callees, parenthesized roots, nested
-/// element access, and function-call, multi-index, or nullable subscripts
-/// return `None` so element-access-inferred bindings fail closed.
+/// a plain, safe dotted, or `this`/`super`-rooted callee returns the callee
+/// with a trailing `()` marker so trace-time resolution can walk the
+/// factory's declared return array. Parenthesized roots, nested element
+/// access, and function-call, multi-index, or nullable subscripts return
+/// `None` so element-access-inferred bindings fail closed.
 fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
     if initializer.kind() != "index_expression" {
         return Ok(None);
@@ -521,10 +529,11 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
     if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
         return Ok(None);
     }
-    // A factory-call base such as `makeItems()` or `Util.makeItems()` records
-    // the callee with a trailing `()` marker so trace-time resolution can walk
-    // the factory's declared return array. Plain-identifier and safe dotted
-    // callees are accepted; `this`/`super` roots, parenthesized roots, and
+    // A factory-call base such as `makeItems()`, `Util.makeItems()`,
+    // `this.ownMake()`, or `super.inheritedMake()` records the callee with a
+    // trailing `()` marker so trace-time resolution can walk the factory's
+    // declared return array. Plain-identifier, safe dotted, and
+    // `this`/`super`-rooted callees are accepted; parenthesized roots and
     // other non-name callees fail closed.
     if children[0].kind() == "call_expression" {
         let Some(callee) = children[0].named_child(0) else {

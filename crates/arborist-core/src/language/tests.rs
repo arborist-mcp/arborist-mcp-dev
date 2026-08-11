@@ -258,7 +258,7 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "kotlin-this-super-rooted-factory-call-inferred-member-chain-receiver-trace-v25"
+        "kotlin-var-this-super-rooted-factory-element-access-base-inferred-member-chain-receiver-trace-v26"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
