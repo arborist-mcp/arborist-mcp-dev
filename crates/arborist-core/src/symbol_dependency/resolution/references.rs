@@ -10555,6 +10555,25 @@ fn resolve_kotlin_reference_with_deadline(
         if same_scope_candidates.len() > 1 {
             return Ok(None);
         }
+        // A bare call inside a member function may also dispatch to a member
+        // function inherited from a direct or transitive superclass (an
+        // implicit `this` receiver) such as `helper(...)` inside a subclass
+        // of a base class that declares `fun helper(...)`, through the same
+        // direct, inherited, and extension rules as an explicit `this.`-rooted
+        // call. Callers outside a type and unknown or ambiguous inherited
+        // members fail closed.
+        if let Some(target) = resolve_kotlin_implicit_this_member_chain(
+            source_symbol,
+            reference_name,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(target));
+        }
         // Companion members are callable unqualified from within the enclosing
         // class, so a type-scoped caller falls back to `Type::Companion::name`
         // before package-level and imported functions.

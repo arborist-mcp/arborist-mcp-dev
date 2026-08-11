@@ -31225,6 +31225,169 @@ fn kotlin_implicit_inherited_property_receiver_calls_fail_closed_for_unsupported
 }
 
 #[test]
+fn traces_kotlin_implicit_inherited_member_function_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun helper(value: Int): Int = value\n}\n\nopen class Mid : Base()\n\nclass Util : Mid() {\n    fun runDirect(): Int {\n        return helper(1)\n    }\n    fun runThis(): Int {\n        return this.helper(2)\n    }\n}\n\nclass Other : Base() {\n    fun run(): Int {\n        return helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A bare member function call inside a member function (an implicit `this`
+    // receiver) whose function is declared on a direct or transitive
+    // superclass, such as `helper(...)` inside `Util : Mid() : Base()` or
+    // `Other : Base()`, dispatches through the same direct and inherited rules
+    // as an explicit `this.`-rooted call, so all three callers trace to
+    // `Base::helper`.
+    let helper_path = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runThis",
+        "com::example::Other::run",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runDirect",
+        "com::example::Util::runThis",
+        "com::example::Other::run",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_implicit_inherited_member_function_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nopen class Base {\n    fun helper(value: Int): Int = value\n}\n\nclass Util : Base() {\n    fun run(): Int {\n        return helper(1)\n    }\n}\n";
+    let helper_path = "com::example::Base::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Util::run");
+}
+
+#[test]
+fn traces_kotlin_implicit_inherited_member_function_shadowing_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun helper(value: Int): Int = value\n}\n\nclass Shadow : Base() {\n    fun helper(value: Int): Int = value * 2\n    fun run(): Int {\n        return helper(1)\n    }\n}\n\nclass Unshadowed : Base() {\n    fun run(): Int {\n        return helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Kotlin scope rules let the enclosing type's own member function shadow a
+    // same-named inherited function: `Shadow::run` resolves to its own
+    // `helper`, so `Base::helper` only gains the `Unshadowed::run` caller while
+    // `Shadow::helper` gains `Shadow::run`.
+    let base_path = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, base_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Unshadowed::run");
+
+    let shadow_path = "com::example::Shadow::helper";
+    let live_shadow = trace_symbol_graph(&dir, shadow_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_shadow.callers.len(), 1);
+    assert_eq!(
+        live_shadow.callers[0].symbol_id,
+        "com::example::Shadow::run"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Unshadowed::run"
+    );
+    let persisted_shadow =
+        trace_symbol_graph_from_index(&db_path, shadow_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_shadow.callers.len(), 1);
+    assert_eq!(
+        persisted_shadow.callers[0].symbol_id,
+        "com::example::Shadow::run"
+    );
+}
+
+#[test]
+fn kotlin_implicit_inherited_member_function_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun helper(value: Int): Int = value\n}\n\nclass Util : Base() {\n    fun failArity(): Int {\n        return helper(1, 2)\n    }\n    fun failUnknown(): Int {\n        return missing(1)\n    }\n    fun control(): Int {\n        return helper(1)\n    }\n}\n\nfun topLevelRun(): Int {\n    return helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Implicit inherited member function references fail closed for arity
+    // mismatches (`helper(1, 2)` with no two-parameter inherited overload),
+    // unknown functions (`missing`), and bare references in top-level
+    // functions (`topLevelRun` has no enclosing type to dispatch on); only the
+    // resolvable chain in `control` traces.
+    let helper_path = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();
