@@ -10407,6 +10407,37 @@ fn resolve_kotlin_reference_with_deadline(
             deadline,
         );
     }
+    // A bare `Companion` root such as `Companion.items[0].helper(...)` or
+    // `Companion.groups[0].inner().helper(...)` inside a type dispatches on
+    // the enclosing type's canonical companion scope, so the trailing member
+    // chain resolves companion array properties and method-call hops the same
+    // way as `this` inside a companion member. Callers outside a type
+    // (top-level functions, extension functions) and types without a
+    // companion object fail closed because `Companion` has no enclosing
+    // companion object to dispatch on.
+    if let Some(chain) = reference_name.strip_prefix("Companion.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(companion_scope) = resolve_kotlin_enclosing_companion_scope(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+        ) else {
+            return Ok(None);
+        };
+        return resolve_kotlin_type_rooted_member_chain(
+            source_symbol,
+            &companion_scope,
+            chain,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // A constructor-call receiver such as `Outer.Inner().helper(...)` or
     // `Group().member.helper(...)` resolves the constructed type path first and
     // then dispatches the member chain like any other instance receiver. The
@@ -11629,6 +11660,19 @@ fn resolve_kotlin_element_access_base_component_type_path(
             return Ok(None);
         };
         (this_root.to_string(), 0)
+    } else if first_hop == "Companion" {
+        // A bare `Companion` root such as `val x = Companion.items[0]` inside
+        // a type starts on the enclosing type's canonical companion scope, the
+        // same target as `this` inside a companion member; callers outside a
+        // type and types without a companion object fail closed.
+        let Some(companion_scope) = resolve_kotlin_enclosing_companion_scope(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+        ) else {
+            return Ok(None);
+        };
+        (companion_scope, 0)
     } else if let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop))
     {
         let Some(type_path) = resolve_kotlin_initializer_type_path(
@@ -11986,6 +12030,40 @@ fn resolve_kotlin_anonymous_companion_chain_root(
         return Ok(None);
     }
     Ok(Some((format!("{type_path}::Companion"), 1)))
+}
+
+/// Resolves the canonical companion scope of the type enclosing
+/// `source_symbol`, such as `com::example::Util::Companion` for a member of
+/// class `Util` or a member of its companion object, so a bare `Companion`
+/// root dispatches on the same scope as `this` inside a companion member.
+/// Callers outside a type (top-level and extension functions) and types
+/// without a companion object fail closed.
+fn resolve_kotlin_enclosing_companion_scope(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    let scope_path = source_symbol.scope_path.as_deref()?;
+    let companion_root = if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+        scope_path
+    } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+        && kotlin_path_is_type_declaration(parent, raw_symbols)
+    {
+        parent
+    } else {
+        return None;
+    };
+    let companion_scope = format!("{companion_root}::Companion");
+    let companion_scope_prefix = format!("{companion_scope}::");
+    let companion_exists = semantic_path_index.iter().any(|(path, indexes)| {
+        path.starts_with(&companion_scope_prefix)
+            || indexes.iter().copied().any(|index| {
+                let candidate = &raw_symbols[index];
+                candidate.node_kind == "companion_object"
+                    && candidate.scope_path.as_deref() == Some(companion_root)
+            })
+    });
+    companion_exists.then_some(companion_scope)
 }
 
 #[allow(clippy::too_many_arguments)]
