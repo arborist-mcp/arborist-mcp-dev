@@ -12263,6 +12263,7 @@ fn resolve_kotlin_property_chain_initializer_type_path(
         source_symbol,
         hops[0],
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
@@ -12291,15 +12292,22 @@ fn resolve_kotlin_property_chain_initializer_type_path(
 
 /// Resolves the starting type path for a property-chain initializer chain: a
 /// `super`-rooted chain starts on the direct superclass path, a `this`-rooted
-/// chain on the enclosing type path, and a bare chain on the enclosing type
-/// path as an implicit `this` receiver (so inherited first hops resolve the
-/// same way as an explicit `this.`-rooted chain). The returned skip count
-/// tells callers how many leading hops the root consumed. Callers outside a
+/// chain on the enclosing type path, a bare property chain on the enclosing
+/// type path as an implicit `this` receiver (so inherited first hops resolve
+/// the same way as an explicit `this.`-rooted chain), and a leading
+/// method-call hop such as `make()` in `val first = make().item` on the
+/// declared return type of a unique same-file, same-package, or explicitly
+/// imported top-level function, falling back to an enclosing-type member or
+/// companion member function through the same rules as an unqualified
+/// initializer callee. The returned skip count tells callers how many leading
+/// hops the root consumed. Bare property and `this`-rooted chains outside a
 /// type return `None` so chains fail closed.
+#[allow(clippy::too_many_arguments)]
 fn kotlin_property_chain_initializer_root(
     source_symbol: &IndexedSymbol,
     first_hop: &str,
     raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -12321,6 +12329,50 @@ fn kotlin_property_chain_initializer_root(
             return Ok(None);
         };
         Ok(Some((this_root.to_string(), 1)))
+    } else if let Some(function_name) = kotlin_method_call_hop_spelling(first_hop) {
+        // A leading method-call hop such as `make()` in `val first =
+        // make().item` resolves as a unique initializer callee (same-file,
+        // same-package, or explicitly imported top-level function, then an
+        // enclosing-type member or companion member function) whose declared
+        // return type starts the chain; unknown or ambiguous callees fail
+        // closed.
+        let Some(function_path) = resolve_kotlin_property_initializer_function_path(
+            source_symbol,
+            &function_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(function) = raw_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == function_path)
+        else {
+            return Ok(None);
+        };
+        let Some(return_type) = function
+            .return_type
+            .as_deref()
+            .and_then(kotlin_dotted_type_name)
+        else {
+            return Ok(None);
+        };
+        let Some(type_path) = resolve_kotlin_receiver_type_path(
+            function,
+            &return_type,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((type_path, 1)))
     } else {
         let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
             return Ok(None);
@@ -12357,6 +12409,7 @@ fn resolve_kotlin_property_chain_array_component_type_path(
         source_symbol,
         hops[0],
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
