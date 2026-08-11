@@ -32084,6 +32084,99 @@ fn kotlin_property_chain_initializer_method_call_hops_fail_closed_for_unsupporte
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_method_call_hop_array_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    fun inner(): Item = Item()\n}\n\nclass Holder {\n    val items: Array<Item> = arrayOf()\n    val groups: Array<Helper> = arrayOf()\n    fun make(): Holder = Holder()\n}\n\nopen class Base {\n    fun make(): Holder = Holder()\n}\n\nclass Util : Base() {\n    fun runCallThenElem(): Int {\n        val first = make().items\n        return first[0].helper(1)\n    }\n    fun runThisCallElem(): Int {\n        val first = this.make().items\n        return first[0].helper(2)\n    }\n    fun runSuperCallElem(): Int {\n        val first = super.make().items\n        return first[0].helper(3)\n    }\n    fun runCallThenChainedElem(): Int {\n        val first = make().groups\n        return first[0].inner().helper(4)\n    }\n    fun runThisCallChainedElem(): Int {\n        val first = this.make().groups\n        return first[0].inner().helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a property-chain initializer whose chain
+    // contains a method-call hop and whose terminal property is a single-level
+    // array, such as `val first = make().items`, dispatches an element access
+    // `first[0].helper(...)` on the terminal array's element component type,
+    // including `this`- and `super`-rooted chains and trailing method-call
+    // hops (`first[0].inner().helper(...)`); all five callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runCallThenElem",
+        "com::example::Util::runThisCallElem",
+        "com::example::Util::runSuperCallElem",
+        "com::example::Util::runCallThenChainedElem",
+        "com::example::Util::runThisCallChainedElem",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runCallThenElem",
+        "com::example::Util::runThisCallElem",
+        "com::example::Util::runSuperCallElem",
+        "com::example::Util::runCallThenChainedElem",
+        "com::example::Util::runThisCallChainedElem",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_method_call_hop_array_receiver_calls_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nopen class Base {\n    fun make(): Holder = Holder()\n}\n\nclass Util : Base() {\n    fun failArity(): Int {\n        val first = make(1).items\n        return first[0].helper(1)\n    }\n    fun failUnknownRoot(): Int {\n        val first = missing().items\n        return first[0].helper(2)\n    }\n    fun failNonArrayTerminal(): Int {\n        val first = make().item\n        return first[0].helper(3)\n    }\n    fun failMemberOnArray(): Int {\n        val first = make().items\n        return first.helper(4)\n    }\n    fun control(): Int {\n        val first = make().items\n        return first[0].helper(5)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = make().items\n    return first[0].helper(6)\n}\n",
+    )
+    .unwrap();
+
+    // Method-call-hop array-terminal property-chain initializer bindings fail
+    // closed for non-zero-argument call spellings (`make(1).items`), unknown
+    // member functions (`missing().items`), non-array terminals
+    // (`make().item` with `first[0]`), direct member calls on the array
+    // (`first.helper` where `first` is an `Array<Item>`), and chains in
+    // top-level functions with no enclosing type to dispatch on; only the
+    // resolvable chain in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_implicit_companion_function_receiver_calls_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();
