@@ -10770,6 +10770,7 @@ fn resolve_kotlin_qualified_receiver_call(
             source_symbol,
             &type_name,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
@@ -10888,6 +10889,75 @@ fn kotlin_scope_function_path(
     (candidates.len() == 1).then(|| candidates[0].clone())
 }
 
+/// Resolves the symbol path of a member function called through a `this`- or
+/// `super`-rooted call initializer such as `this.ownMake` in
+/// `val items = this.ownMake()` or `super.inheritedMake` in
+/// `val items = super.inheritedMake()`. A `this` root dispatches on the
+/// enclosing type path (or its companion scope inside a companion member),
+/// and a `super` root on the direct superclass path; the member function
+/// resolves through the same direct, inherited, and extension rules as
+/// method-call hops. Callers outside a type, unresolvable superclass paths,
+/// and unknown or ambiguous member functions fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_this_super_rooted_member_function_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((root, function_name)) = reference_name.split_once('.') else {
+        return Ok(None);
+    };
+    if function_name.is_empty() || !matches!(root, "this" | "super") {
+        return Ok(None);
+    }
+    let root_path = if root == "super" {
+        // A `super`-rooted callee starts on the direct superclass path; a
+        // class without a resolvable superclass fails closed.
+        let Some(superclass_path) = resolve_kotlin_superclass_path(
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        superclass_path
+    } else {
+        // A `this`-rooted callee starts on the enclosing type path: a
+        // declared type scope, or the companion scope of a declared type for
+        // `this` inside a companion member. Callers outside a type fail
+        // closed because `this` has no enclosing type to dispatch on.
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        if kotlin_path_is_type_declaration(scope_path, raw_symbols) {
+            scope_path.to_string()
+        } else if let Some((parent, _)) = scope_path.rsplit_once("::")
+            && kotlin_path_is_type_declaration(parent, raw_symbols)
+        {
+            scope_path.to_string()
+        } else {
+            return Ok(None);
+        }
+    };
+    resolve_kotlin_member_function_path(
+        &root_path,
+        function_name,
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Resolves a `val` local's qualified factory-call initializer callee such as
 /// `Util.makeItems` in `val items = Util.makeItems()` to a unique function
 /// symbol path. Object-declaration roots such as `Factory.makeItems` dispatch
@@ -10913,6 +10983,20 @@ fn resolve_kotlin_qualified_initializer_function_path(
     };
     if receiver_ref.is_empty() || function_name.is_empty() {
         return Ok(None);
+    }
+    // A `this`- or `super`-rooted callee such as `this.ownMake` or
+    // `super.inheritedMake` dispatches the member function on the enclosing
+    // type (or its companion scope) or the direct superclass path.
+    if matches!(receiver_ref, "this" | "super") {
+        return resolve_kotlin_this_super_rooted_member_function_path(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
     }
     // A bound receiver shadows any same-named type; resolve the receiver's
     // declared type path and look up the member function on it.
@@ -11551,6 +11635,7 @@ fn resolve_kotlin_element_access_base_component_type_path(
             source_symbol,
             &first_type_name,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
@@ -12016,6 +12101,7 @@ fn resolve_kotlin_chained_receiver_call(
                 source_symbol,
                 &type_name,
                 raw_symbols,
+                semantic_path_index,
                 file_overrides,
                 kotlin_import_contexts_by_file,
                 deadline,
@@ -12056,6 +12142,7 @@ fn resolve_kotlin_chained_receiver_call(
             source_symbol,
             &component_type,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
@@ -12238,15 +12325,17 @@ fn kotlin_method_call_hop_spelling(hop: &str) -> Option<String> {
     Some(method_name.to_string())
 }
 
-/// Resolves the declared return type path of a method-call hop such as
-/// `inner()` in `group.inner().entry.helper(...)`. The hop dispatches as a
-/// unique member or extension function on the receiver type with a declared
-/// return type (member functions shadow extensions, and an ambiguous overload
-/// or extension set fails closed); the declared return type then resolves in
-/// the method's own file and enclosing scope. Unknown, ambiguous, or
-/// undeclared-return hops fail closed.
+/// Resolves the symbol path of a uniquely declared member or extension
+/// function named `method_name` on `owner_type_path` with a declared return
+/// type. Direct members win; an interface-typed owner falls back to a parent
+/// interface in its extends chain, a class-typed owner to a parent class in
+/// its direct superclass chain or an implemented interface, and finally to a
+/// unique top-level extension function for the receiver type resolved in the
+/// caller's file, package, or explicit imports. Member functions shadow
+/// extensions, and an ambiguous overload or extension set, blocked chains,
+/// and unknown members fail closed as `None`.
 #[allow(clippy::too_many_arguments)]
-fn kotlin_method_call_hop_type_path(
+fn resolve_kotlin_member_function_path(
     owner_type_path: &str,
     method_name: &str,
     source_symbol: &IndexedSymbol,
@@ -12272,14 +12361,51 @@ fn kotlin_method_call_hop_type_path(
                 && candidate.return_type.is_some()
         })
         .collect::<Vec<_>>();
-    let method_path = if member_candidates.len() == 1 {
-        Some(raw_symbols[member_candidates[0]].symbol_id.clone())
-    } else if member_candidates.is_empty() {
-        // An interface-typed owner dispatches a method-call hop declared on a
-        // parent interface in its extends chain before falling back to
-        // extensions; inherited interface methods shadow extensions, and
-        // blocked chains fail closed instead of guessing an extension target.
-        match resolve_kotlin_inherited_member_index(
+    if member_candidates.len() == 1 {
+        return Ok(Some(raw_symbols[member_candidates[0]].symbol_id.clone()));
+    }
+    if !member_candidates.is_empty() {
+        return Ok(None);
+    }
+    // An interface-typed owner dispatches a member function declared on a
+    // parent interface in its extends chain before falling back to
+    // extensions; inherited interface members shadow extensions, and blocked
+    // chains fail closed instead of guessing an extension target.
+    match resolve_kotlin_inherited_member_index(
+        owner_type_path,
+        method_name,
+        "function_declaration",
+        None,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        KotlinInheritedMemberResolution::Resolved(index) => {
+            return Ok(Some(raw_symbols[index].symbol_id.clone()));
+        }
+        KotlinInheritedMemberResolution::Blocked => return Ok(None),
+        KotlinInheritedMemberResolution::NoMember => {}
+    }
+    // A class-typed owner dispatches a member function declared on a parent
+    // class in its direct superclass chain, or on an implemented interface
+    // when the class hierarchy does not declare it; inherited class and
+    // interface members shadow extensions, and ambiguous chains fail closed.
+    let inherited_member = resolve_kotlin_superclass_chain_member(
+        owner_type_path,
+        method_name,
+        "function_declaration",
+        None,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let inherited_member = match inherited_member {
+        Some(index) => Some(index),
+        None => resolve_kotlin_class_receiver_interface_member(
             owner_type_path,
             method_name,
             "function_declaration",
@@ -12289,94 +12415,81 @@ fn kotlin_method_call_hop_type_path(
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )? {
-            KotlinInheritedMemberResolution::Resolved(index) => {
-                Some(raw_symbols[index].symbol_id.clone())
-            }
-            KotlinInheritedMemberResolution::Blocked => None,
-            KotlinInheritedMemberResolution::NoMember => {
-                // A class-typed owner dispatches a method-call hop declared on
-                // a parent class in its direct superclass chain, or on an
-                // implemented interface when the class hierarchy does not
-                // declare it, before falling back to extensions; inherited
-                // class and interface members shadow extensions, and
-                // ambiguous chains fail closed.
-                let inherited_member = resolve_kotlin_superclass_chain_member(
-                    owner_type_path,
-                    method_name,
-                    "function_declaration",
-                    None,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                    kotlin_import_contexts_by_file,
-                    deadline,
-                )?;
-                let inherited_member = match inherited_member {
-                    Some(index) => Some(index),
-                    None => resolve_kotlin_class_receiver_interface_member(
-                        owner_type_path,
-                        method_name,
-                        "function_declaration",
-                        None,
-                        raw_symbols,
-                        semantic_path_index,
-                        file_overrides,
-                        kotlin_import_contexts_by_file,
-                        deadline,
-                    )?,
-                };
-                if let Some(index) = inherited_member {
-                    Some(raw_symbols[index].symbol_id.clone())
-                } else {
-                    // An extension fallback requires a unique top-level extension
-                    // function for the receiver type with a declared return type,
-                    // resolved in the caller's file, package, or explicit imports
-                    // like any other extension; ambiguous extension sets fail
-                    // closed.
-                    let owner_type_name = owner_type_path
-                        .rsplit("::")
-                        .next()
-                        .unwrap_or(owner_type_path);
-                    let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
-                    let imported_binding = resolve_kotlin_import_binding_for_reference(
-                        &source_symbol.file_path,
-                        method_name,
-                        file_overrides,
-                        kotlin_import_contexts_by_file,
-                        deadline,
-                    )?;
-                    let extension_candidates = raw_symbols
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, candidate)| {
-                            candidate.node_kind == "function_declaration"
-                                && candidate.extension_receiver.as_deref() == Some(owner_type_name)
-                                && candidate.base_name == method_name
-                                && candidate.return_type.is_some()
-                                && kotlin_symbol_is_top_level(candidate, raw_symbols)
-                                && (candidate.file_path == source_symbol.file_path
-                                    || package_scope.is_some_and(|scope| {
-                                        candidate.scope_path.as_deref() == Some(scope)
-                                    })
-                                    || imported_binding.as_ref().is_some_and(|binding| {
-                                        binding.semantic_path == candidate.semantic_path
-                                    }))
-                        })
-                        .map(|(index, _)| index)
-                        .collect::<Vec<_>>();
-                    if extension_candidates.len() == 1 {
-                        Some(raw_symbols[extension_candidates[0]].symbol_id.clone())
-                    } else {
-                        None
-                    }
-                }
-            }
-        }
-    } else {
-        None
+        )?,
     };
-    let Some(method_path) = method_path else {
+    if let Some(index) = inherited_member {
+        return Ok(Some(raw_symbols[index].symbol_id.clone()));
+    }
+    // An extension fallback requires a unique top-level extension function for
+    // the receiver type with a declared return type, resolved in the caller's
+    // file, package, or explicit imports like any other extension; ambiguous
+    // extension sets fail closed.
+    let owner_type_name = owner_type_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(owner_type_path);
+    let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        method_name,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let extension_candidates = raw_symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.node_kind == "function_declaration"
+                && candidate.extension_receiver.as_deref() == Some(owner_type_name)
+                && candidate.base_name == method_name
+                && candidate.return_type.is_some()
+                && kotlin_symbol_is_top_level(candidate, raw_symbols)
+                && (candidate.file_path == source_symbol.file_path
+                    || package_scope
+                        .is_some_and(|scope| candidate.scope_path.as_deref() == Some(scope))
+                    || imported_binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.semantic_path == candidate.semantic_path))
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    Ok((extension_candidates.len() == 1)
+        .then(|| raw_symbols[extension_candidates[0]].symbol_id.clone()))
+}
+
+/// Resolves the declared return type path of a method-call hop such as
+/// `inner()` in `group.inner().entry.helper(...)`. The hop dispatches as a
+/// unique member or extension function on the receiver type with a declared
+/// return type (member functions shadow extensions, and an ambiguous overload
+/// or extension set fails closed); the declared return type then resolves in
+/// the method's own file and enclosing scope. Unknown, ambiguous, or
+/// undeclared-return hops fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_method_call_hop_type_path(
+    owner_type_path: &str,
+    method_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if method_name.is_empty() {
+        return Ok(None);
+    }
+    let Some(method_path) = resolve_kotlin_member_function_path(
+        owner_type_path,
+        method_name,
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
         return Ok(None);
     };
     let Some(method) = raw_symbols
@@ -12550,6 +12663,7 @@ fn resolve_kotlin_receiver_chain_first_path(
                 source_symbol,
                 &type_name,
                 raw_symbols,
+                semantic_path_index,
                 file_overrides,
                 kotlin_import_contexts_by_file,
                 deadline,
@@ -12585,12 +12699,45 @@ fn resolve_kotlin_receiver_chain_first_path(
             source_symbol,
             &component_type,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
         )?
     {
         return Ok(Some((path, 1)));
+    }
+    // A `val` local initialized from a factory call whose declared return
+    // type is a single-level array, such as `val items = this.ownMake()` or
+    // `val items = Util.makeItems()`, dispatches an element access on the
+    // array's element component type through the same factory rules as a
+    // direct factory-call element-access receiver; unknown factories and
+    // non-array return types fail closed.
+    if let Some((base_name, _)) = kotlin_array_access_spelling(hops[0])
+        && let Some(initializer_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(base_name))
+        && !initializer_name.is_empty()
+        && resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &initializer_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        .is_none()
+        && let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
+            source_symbol,
+            &initializer_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(Some((component_path, 1)));
     }
     if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
         source_symbol,
@@ -12730,6 +12877,7 @@ fn kotlin_property_type_path(
             &raw_symbols[index],
             &type_name,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
@@ -12748,6 +12896,7 @@ fn kotlin_property_type_path(
         &raw_symbols[candidates[0]],
         &type_name,
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
@@ -12767,6 +12916,7 @@ fn resolve_kotlin_initializer_type_path(
     source_symbol: &IndexedSymbol,
     initializer_name: &str,
     raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -12780,6 +12930,47 @@ fn resolve_kotlin_initializer_type_path(
         deadline,
     )? {
         return Ok(Some(path));
+    }
+    // A `this`- or `super`-rooted factory-call initializer such as
+    // `val value = this.make()` or `val value = super.make()` resolves the
+    // callee as a member function on the enclosing type or the direct
+    // superclass and pins the receiver to its declared return type, resolved
+    // in the method's own file and enclosing scope; unknown or ambiguous
+    // member functions fail closed.
+    if initializer_name.starts_with("this.") || initializer_name.starts_with("super.") {
+        let Some(function_path) = resolve_kotlin_this_super_rooted_member_function_path(
+            source_symbol,
+            initializer_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(function) = raw_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == function_path)
+        else {
+            return Ok(None);
+        };
+        let Some(function_return_type) = function
+            .return_type
+            .as_deref()
+            .and_then(kotlin_dotted_type_name)
+        else {
+            return Ok(None);
+        };
+        return resolve_kotlin_receiver_type_path(
+            function,
+            &function_return_type,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
     }
     let Some(function_path) = resolve_kotlin_property_initializer_function_path(
         source_symbol,
@@ -13925,6 +14116,7 @@ fn resolve_kotlin_constructor_receiver_call(
         source_symbol,
         type_path_text,
         raw_symbols,
+        semantic_path_index,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,

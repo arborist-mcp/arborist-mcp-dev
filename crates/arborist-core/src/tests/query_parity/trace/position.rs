@@ -28714,6 +28714,244 @@ fn kotlin_var_this_rooted_element_access_receiver_calls_fail_closed_for_unsuppor
 }
 
 #[test]
+fn traces_kotlin_var_this_super_rooted_factory_call_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n}\n\nclass Derived : Base() {\n    fun ownMake(): Array<Helper> = arrayOf()\n    fun makeGroup(): Helper = Helper()\n    fun runThisOwn(): Int {\n        val items = this.ownMake()\n        return items[0].inner().helper(1)\n    }\n    fun runThisInherited(): Int {\n        val items = this.inheritedMake()\n        return items[0].inner().helper(2)\n    }\n    fun runSuper(): Int {\n        val items = super.inheritedMake()\n        return items[0].inner().helper(3)\n    }\n    fun runThisValue(): Int {\n        val group = this.makeGroup()\n        return group.inner().helper(4)\n    }\n}\n\nclass CompanionHolder {\n    companion object {\n        fun ownMake(): Array<Helper> = arrayOf()\n        fun runCompanionThis(): Int {\n            val items = this.ownMake()\n            return items[0].inner().helper(5)\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local initialized from a `this`- or `super`-rooted factory call
+    // such as `val items = this.ownMake()` or `val items = super.inheritedMake()`
+    // dispatches an element access on the member function's declared return
+    // array element component type, with the member function resolved on the
+    // enclosing type (or its companion scope inside a companion member) or the
+    // direct superclass chain, including inherited factories; a trailing
+    // property or method-call hop then dispatches on the hop's declared type.
+    // A non-array this-rooted factory such as `val group = this.makeGroup()`
+    // pins the receiver to the declared return type.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisOwn")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisValue")
+    );
+    assert!(
+        live.callers.iter().any(|caller| caller.symbol_id
+            == "com::example::CompanionHolder::Companion::runCompanionThis")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisOwn")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisValue")
+    );
+    assert!(
+        persisted.callers.iter().any(|caller| caller.symbol_id
+            == "com::example::CompanionHolder::Companion::runCompanionThis")
+    );
+}
+
+#[test]
+fn traces_kotlin_var_this_super_rooted_factory_call_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\n\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n}\n\nclass Derived : Base() {\n    fun ownMake(): Array<Helper> = arrayOf()\n    fun runThisOwn(): Int {\n        val items = this.ownMake()\n        return items[0].inner().helper(1)\n    }\n    fun runThisInherited(): Int {\n        val items = this.inheritedMake()\n        return items[0].inner().helper(2)\n    }\n    fun runSuper(): Int {\n        val items = super.inheritedMake()\n        return items[0].inner().helper(3)\n    }\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisOwn")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisOwn")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_var_this_super_rooted_factory_call_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let base_path = dir.join("Base.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Base\nimport org.util.Helper\n\nclass Derived : Base() {\n    fun runThisInherited(): Int {\n        val items = this.inheritedMake()\n        return items[0].inner().helper(1)\n    }\n    fun runSuper(): Int {\n        val items = super.inheritedMake()\n        return items[0].inner().helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Helper {\n    val item: Item = Item()\n    fun inner(): Item = item\n}\nopen class Base {\n    fun inheritedMake(): Array<Helper> = arrayOf()\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local initialized from a `this`- or `super`-rooted factory call
+    // whose member function is inherited from an imported parent class
+    // dispatches an element access on the imported return array's element
+    // component type, resolved in the factory's own package scope.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        live.callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runThisInherited")
+    );
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|caller| caller.symbol_id == "com::example::Derived::runSuper")
+    );
+}
+
+#[test]
+fn kotlin_var_this_super_rooted_factory_call_receiver_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    fun makeCounts(): IntArray = intArrayOf()\n    fun makeMatrix(): Array<Array<Helper>> = arrayOf()\n    fun makeOther(): Other = Other()\n}\n\nclass Caller : Base() {\n    fun makeItems(): Array<Helper> = arrayOf()\n    fun run(): Int {\n        val fromUnknown = this.unknownMake()\n        val fromCounts = this.makeCounts()\n        val fromMatrix = this.makeMatrix()\n        val fromOther = this.makeOther()\n        val fromSuperCounts = super.makeCounts()\n        val fromElement = this.makeItems()[0]\n        return fromUnknown[0].helper(1) + fromCounts[0].helper(2) + fromMatrix[0].helper(3) + fromOther[0].helper(4) + fromSuperCounts[0].helper(5) + fromElement.helper(6)\n    }\n}\n\nfun topLevel(): Int {\n    val items = this.unknownMake()\n    return items[0].helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // `val` locals initialized from `this`/`super`-rooted factory calls whose
+    // callee is unknown, primitive-returning, multi-dimensional-returning, or
+    // non-array-returning all fail closed, including inherited super-rooted
+    // factories with those shapes; a `val` local bound from a `this`-rooted
+    // factory element-access base such as `val fromElement = this.makeItems()[0]`
+    // stays unbound, and a top-level function has no enclosing type for
+    // `this`, so its `this`-rooted factory fails closed too.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+
+    let other_path = "com::example::Other::helper";
+    let other_live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_var_companion_object_element_access_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

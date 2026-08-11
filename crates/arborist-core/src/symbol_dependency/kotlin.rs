@@ -9,7 +9,7 @@ use crate::language::{
     read_source,
 };
 use crate::model::LanguageId;
-use crate::semantic::kotlin::{is_kotlin_semantic_symbol_node, kotlin_constructor_callee_name};
+use crate::semantic::kotlin::is_kotlin_semantic_symbol_node;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,7 +392,7 @@ fn kotlin_property_binding(
     };
     if initializer.kind() == "call_expression"
         && let Some(callee) = initializer.named_child(0)
-        && let Some(type_name) = kotlin_constructor_callee_name(callee, source)?
+        && let Some(type_name) = kotlin_call_initializer_callee_name(callee, source)?
         && !type_name.is_empty()
     {
         return Ok(Some((name, type_name, None)));
@@ -422,6 +422,47 @@ fn kotlin_property_binding(
         }
     }
     Ok(None)
+}
+
+/// Returns the callee spelling of a call-initializer such as `Other` in
+/// `val x = Other()`, `Util.makeItems` in `val x = Util.makeItems()`,
+/// `this.ownMake` in `val x = this.ownMake()`, or
+/// `super.inheritedMake` in `val x = super.inheritedMake()`. Plain-identifier
+/// and safe dotted navigation callees keep their spelling, and
+/// `this`/`super`-rooted dotted callees keep the root so trace-time
+/// resolution can dispatch the member function on the enclosing type or the
+/// direct superclass. Parenthesized roots and other non-name callees return
+/// `None` so call-initializer bindings fail closed for genuinely unsupported
+/// shapes.
+fn kotlin_call_initializer_callee_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() == "identifier" {
+        let name = node_text(node, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
+    }
+    if matches!(node.kind(), "this_expression" | "super_expression") {
+        let name = node_text(node, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
+    }
+    if node.kind() != "navigation_expression" {
+        return Ok(None);
+    }
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 || children[1].kind() != "identifier" {
+        return Ok(None);
+    }
+    let text = node_text(node, source)?.trim();
+    if text.contains('?') || text.contains("::") {
+        return Ok(None);
+    }
+    let Some(prefix) = kotlin_call_initializer_callee_name(children[0], source)? else {
+        return Ok(None);
+    };
+    let member = node_text(children[1], source)?.trim().to_string();
+    if member.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("{prefix}.{member}")))
 }
 
 /// Returns the callee spelling of a factory-call element-access base such as
