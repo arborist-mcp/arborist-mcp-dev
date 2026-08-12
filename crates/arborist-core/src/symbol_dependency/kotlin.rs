@@ -1156,34 +1156,39 @@ fn kotlin_scope_lambda_result_spelling_text(
     }
 }
 
-/// Rewrites a single branch expression of a scope-function lambda result that
-/// is an `if`/`when` or elvis expression to the receiver-qualified spelling
-/// of a direct branch initializer. A branch that is itself a scope-function
-/// call (such as `it.make().let { g -> g }` or `g1.run { g -> g }` with a
-/// local `g1`) first resolves through the same nested receiver rules as a
+/// Resolves a single expression of a scope-function lambda to its
+/// receiver-qualified binding shape: one branch of an `if`/`when`/elvis
+/// result, or the single result expression of a `let`/`run`/`with` body. An
+/// expression that is itself a scope-function call (such as
+/// `it.make().let { g -> g }` or `g1.run { g -> g }` with a local `g1`)
+/// first resolves through the same nested receiver rules as a
 /// scope-function initializer to its lambda-result spelling, then expands its
-/// `val` local roots; other branches keep their text. The resulting text is
-/// rewritten through the outer lambda's receiver rules
+/// `val` local roots; other expressions keep their text. The resulting text
+/// is rewritten through the outer lambda's receiver rules
 /// (`it.`/`{param}.`/`this`/unqualified), and classifies into a dotted
 /// factory callee (`h.make`), a property chain (`h.make().items[0].item`), or
-/// a bare receiver (`h`). Unsupported branches return `None` so scope-function
-/// branch results fail closed.
-fn kotlin_scope_lambda_branch_spelling(
-    branch: Node<'_>,
+/// a bare receiver (`h`). A nested factory-call callee keeps its type-name
+/// form through the outer rewrite so trace time resolves it as a factory call
+/// rather than a property chain. Unsupported expressions return `None` so
+/// scope-function bindings fail closed.
+fn kotlin_scope_lambda_expression_binding(
+    expression: Node<'_>,
     locals: &BTreeMap<String, String>,
     scope_name: &str,
     param_name: Option<&str>,
     receiver: &str,
     source: &str,
-) -> Result<Option<String>> {
-    // A branch that is itself a scope-function call binds its
+) -> Result<Option<KotlinScopeFunctionBinding>> {
+    // An expression that is itself a scope-function call binds its
     // receiver-qualified lambda result first (a dotted factory callee such as
     // `it.make`, a property chain, or the nested receiver itself), so the
     // outer lambda can continue through the nested call's result type.
-    if branch.kind() == "call_expression"
-        && let Some((nested_type, _, nested_chain)) = kotlin_scope_function_binding(branch, source)?
+    if expression.kind() == "call_expression"
+        && let Some((nested_type, _, nested_chain)) =
+            kotlin_scope_function_binding(expression, source)?
     {
-        let spelling = if !nested_type.is_empty() {
+        let nested_is_type = !nested_type.is_empty();
+        let spelling = if nested_is_type {
             nested_type
         } else if let Some(chain) = nested_chain {
             chain
@@ -1201,42 +1206,50 @@ fn kotlin_scope_lambda_branch_spelling(
             && kotlin_scope_function_body_rewrite(&expanded, scope_name, param_name, receiver)
                 .is_none()
         {
-            let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&expanded)
-            else {
-                return Ok(None);
-            };
-            if !type_name.is_empty() {
-                return Ok(Some(type_name));
+            if nested_is_type {
+                return Ok(Some((expanded, None, None)));
             }
-            if let Some(chain) = property_chain_base {
-                return Ok(Some(chain));
-            }
-            return Ok(None);
+            return Ok(kotlin_scope_body_binding(&expanded));
         }
         let Some(rewritten) =
             kotlin_scope_function_body_rewrite(&expanded, scope_name, param_name, receiver)
         else {
             return Ok(None);
         };
-        let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&rewritten)
-        else {
-            return Ok(None);
-        };
-        if !type_name.is_empty() {
-            return Ok(Some(type_name));
+        if nested_is_type {
+            return Ok(Some((rewritten, None, None)));
         }
-        if let Some(chain) = property_chain_base {
-            return Ok(Some(chain));
-        }
+        return Ok(kotlin_scope_body_binding(&rewritten));
+    }
+    let text = kotlin_scope_lambda_result_spelling(expression, locals, source)?;
+    if text.is_empty() {
         return Ok(None);
     }
-    let text = kotlin_scope_lambda_result_spelling(branch, locals, source)?;
     let Some(rewritten) =
         kotlin_scope_function_body_rewrite(&text, scope_name, param_name, receiver)
     else {
         return Ok(None);
     };
-    let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&rewritten) else {
+    Ok(kotlin_scope_body_binding(&rewritten))
+}
+
+/// Rewrites a single expression of a scope-function lambda to its
+/// receiver-qualified spelling string (the factory callee, property-chain
+/// base, or bare receiver of
+/// [`kotlin_scope_lambda_expression_binding`]), used for each branch of an
+/// `if`/`when`/elvis result.
+fn kotlin_scope_lambda_branch_spelling(
+    branch: Node<'_>,
+    locals: &BTreeMap<String, String>,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some((type_name, _, property_chain_base)) = kotlin_scope_lambda_expression_binding(
+        branch, locals, scope_name, param_name, receiver, source,
+    )?
+    else {
         return Ok(None);
     };
     if !type_name.is_empty() {
@@ -1605,19 +1618,21 @@ fn kotlin_scope_function_binding(
             let Some(locals) = kotlin_scope_lambda_locals(&statements, source)? else {
                 return Ok(None);
             };
-            let body_text = kotlin_scope_lambda_result_spelling(result, &locals, source)?;
-            if body_text.is_empty() {
-                return Ok(None);
-            }
-            let Some(rewritten) = kotlin_scope_function_body_rewrite(
-                &body_text,
+            // The result expression resolves through the same rules as a
+            // branch: a result that is itself a scope-function call (such as
+            // `it.make().let { g -> g }` or the enclosing-member-rooted
+            // `nullableH?.let { it.make() }`) binds its nested
+            // receiver-qualified binding first, then expands local roots and
+            // applies the outer receiver rewrite (a `let` keeps an
+            // already-qualified enclosing-scope spelling).
+            Ok(kotlin_scope_lambda_expression_binding(
+                result,
+                &locals,
                 &scope_name,
                 param_name.as_deref(),
                 &receiver,
-            ) else {
-                return Ok(None);
-            };
-            Ok(kotlin_scope_body_binding(&rewritten))
+                source,
+            )?)
         }
         _ => Ok(None),
     }
