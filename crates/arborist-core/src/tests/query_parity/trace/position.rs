@@ -51360,3 +51360,132 @@ fn traces_kotlin_property_chain_initializer_scope_function_explicit_parameter_bi
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_chain_receiver_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runFactoryLet(): Int {\n        val group = h.make().let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runConstructorLet(): Int {\n        val group = Holder().let { it.make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runFactoryRun(): Int {\n        val group = h.make().run { make() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runFactoryApply(): Int {\n        val holder = h.make().apply { }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runFactoryLetDirect(): Int {\n        val first = h.make().let { it.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runChainedFactoryLet(): Int {\n        val group = h.make().make().let { it.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runFactoryElemAccessLet(): Int {\n        val inner = h.make().let { it.make().items[0] }\n        val first = inner.item\n        return first.helper(7)\n    }\n    fun runWithFactoryReceiver(): Int {\n        val group = with(h.make()) { make() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runFactoryLetUnknownFailsClosed(): Int {\n        val group = h.make().let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImportedCtorLet(): Int {\n        val group = ImportedHolder().let { it.make() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runImportedFactoryLet(): Int {\n        val holder = ImportedHolder()\n        val group = holder.make().let { it.make() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Scope functions whose receiver is itself a factory or constructor call
+    // pin a `val` local through the receiver-qualified lambda result: a
+    // member-factory receiver (`h.make().let { it.make() }`,
+    // `h.make().run { make() }`), a constructor receiver
+    // (`Holder().let { it.make() }`), a chained factory receiver
+    // (`h.make().make().let { it.make() }`), an `apply` on a factory receiver
+    // (`h.make().apply { }`), a direct chain initializer
+    // (`h.make().let { it.make().items[0].item }`), an element-access
+    // terminal (`h.make().let { it.make().items[0] }`), a `with` factory
+    // receiver (`with(h.make()) { make() }`), and cross-file imported
+    // constructor and member-factory receivers (`ImportedHolder().let {
+    // it.make() }`, `holder.make().let { it.make() }`). An unknown terminal
+    // method (`h.make().let { it.missing() }`) fails closed, so the eight
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the two imported callers in `Util2` dispatch on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::runFactoryLet",
+        "com::example::Util::runConstructorLet",
+        "com::example::Util::runFactoryRun",
+        "com::example::Util::runFactoryApply",
+        "com::example::Util::runFactoryLetDirect",
+        "com::example::Util::runChainedFactoryLet",
+        "com::example::Util::runFactoryElemAccessLet",
+        "com::example::Util::runWithFactoryReceiver",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::runFactoryLetUnknownFailsClosed"),
+        "unexpected caller runFactoryLetUnknownFailsClosed"
+    );
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedCtorLet",
+        "com::example::Util2::runImportedFactoryLet",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::runFactoryLet",
+        "com::example::Util::runConstructorLet",
+        "com::example::Util::runFactoryRun",
+        "com::example::Util::runFactoryApply",
+        "com::example::Util::runFactoryLetDirect",
+        "com::example::Util::runChainedFactoryLet",
+        "com::example::Util::runFactoryElemAccessLet",
+        "com::example::Util::runWithFactoryReceiver",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::runFactoryLetUnknownFailsClosed"),
+        "unexpected persisted caller runFactoryLetUnknownFailsClosed"
+    );
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedCtorLet",
+        "com::example::Util2::runImportedFactoryLet",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}

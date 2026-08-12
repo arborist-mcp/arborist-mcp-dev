@@ -778,18 +778,15 @@ type KotlinPropertyBinding = (String, String, Option<String>, Option<String>);
 type KotlinScopeFunctionBinding = (String, Option<String>, Option<String>);
 
 /// Returns whether a scope-function receiver spelling is a plain identifier
-/// or dotted identifier chain such as `h` or `this.h`, without calls, element
-/// access, nullability, spaces, or qualified-name operators.
-fn kotlin_plain_receiver_spelling(receiver: &str) -> bool {
+/// chain such as `h` or `this.h`, or a receiver-chain spelling such as
+/// `h.make()`, `Holder()`, or `h.make().items[0]` (each hop a valid
+/// identifier, zero-argument call, or single-level element access), without
+/// spaces, nullability, or qualified-name operators.
+fn kotlin_scope_receiver_spelling(receiver: &str) -> bool {
     !receiver.is_empty()
-        && !receiver.contains(['(', '[', '?', ' '])
+        && !receiver.contains([' ', '?'])
         && !receiver.contains("::")
-        && receiver.split('.').all(|segment| {
-            !segment.is_empty()
-                && segment
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
-        })
+        && receiver.split('.').all(kotlin_property_chain_hop_valid)
 }
 
 /// Returns the receiver spelling and scope-function name of a scope-function
@@ -812,7 +809,7 @@ fn kotlin_scope_function_callee(
         let scope_name = node_text(children[1], source)?.trim().to_string();
         if receiver.is_empty()
             || scope_name.is_empty()
-            || !kotlin_plain_receiver_spelling(&receiver)
+            || !kotlin_scope_receiver_spelling(&receiver)
         {
             return Ok(None);
         }
@@ -855,7 +852,7 @@ fn kotlin_scope_function_with_receiver(
         return Ok(None);
     }
     let receiver = node_text(children[0], source)?.trim().to_string();
-    if !kotlin_plain_receiver_spelling(&receiver) {
+    if !kotlin_scope_receiver_spelling(&receiver) {
         return Ok(None);
     }
     Ok(Some(receiver))
