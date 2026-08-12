@@ -49914,3 +49914,95 @@ fn traces_kotlin_property_chain_initializer_element_access_hop_bindings_in_live_
         );
     }
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_top_level_array_element_access_hop_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nval itemGroup: Array<Maker> = arrayOf()\nval itemGroup2: Array<Maker> = arrayOf()\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Maker {\n    fun make(): Array<Item> = arrayOf()\n}\n\nclass Util {\n    val itemGroup: Array<Maker> = arrayOf()\n    val itemGroup2: Maker = Maker()\n\n    fun runMemberArrayShadowing(): Int {\n        val x = itemGroup[0].make()\n        val first = x\n        return first[0].helper(1)\n    }\n    fun runMemberNonArrayShadowingFailsClosed(): Int {\n        val x = itemGroup2[0].make()\n        val first = x\n        return first[0].helper(2)\n    }\n}\n\nclass Util2 {\n    fun runTopLevelElemHop(): Int {\n        val x = itemGroup[0].make()\n        val first = x\n        return first[0].helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nval sharedGroup: Array<Maker> = arrayOf()\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Maker {\n    fun make(): Array<Item> = arrayOf()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.sharedGroup\n\nclass Util3 {\n    fun runImportedTopLevelElemHop(): Int {\n        val x = sharedGroup[0].make()\n        val first = x\n        return first[0].helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A leading single-level element-access hop in a property-chain
+    // initializer may index a same-package top-level array property
+    // (`val x = itemGroup[0].make()` with `val itemGroup: Array<Maker>` at
+    // package scope) or an explicitly imported top-level array property from
+    // another package (`val x = sharedGroup[0].make()`); the terminal
+    // factory hop's declared return array element component type dispatches
+    // `first[0].helper(...)`. An own member array shadows the same-named
+    // top-level property and still traces, while an own non-array member
+    // shadows the top-level property and fails closed, so the same-package
+    // callers in `Util`/`Util2` dispatch on `com::example::Item::helper`,
+    // the imported caller in `Util3` dispatches on `org::util::Item::helper`,
+    // and `Util::runMemberNonArrayShadowingFailsClosed` traces neither.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMemberArrayShadowing",
+        "com::example::Util2::runTopLevelElemHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::Item::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert!(
+        live_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id
+                == "com::example::Util3::runImportedTopLevelElemHop")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMemberArrayShadowing",
+        "com::example::Util2::runTopLevelElemHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert!(
+        persisted_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id
+                == "com::example::Util3::runImportedTopLevelElemHop")
+    );
+}

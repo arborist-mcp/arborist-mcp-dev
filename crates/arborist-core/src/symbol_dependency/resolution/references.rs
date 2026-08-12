@@ -12521,6 +12521,55 @@ fn kotlin_property_chain_initializer_root(
             }
             return Ok(None);
         }
+        // A leading element-access hop such as `itemGroup[0]` in
+        // `val x = itemGroup[0].make()` may index an own or inherited member
+        // array of the enclosing type (the implicit `this` receiver) or a
+        // same-package or explicitly imported top-level array property; the
+        // member array shadows the top-level property (Kotlin scope: local
+        // binding, then member, then package), so when the enclosing type
+        // declares the base name at all the member wins and the hop walk
+        // resolves it (failing closed for non-array members), and only an
+        // undeclared base falls back to the top-level array property's
+        // element component. Unknown bases and unresolvable components fail
+        // closed.
+        if let Some((base_name, _)) = kotlin_array_access_spelling(first_hop)
+            && !base_name.contains('(')
+        {
+            let this_root = kotlin_enclosing_this_root(source_symbol, raw_symbols);
+            let member_shadows = if let Some(root) = this_root {
+                kotlin_type_declares_property(
+                    root,
+                    base_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                false
+            };
+            if member_shadows {
+                let Some(this_root) = this_root else {
+                    return Ok(None);
+                };
+                return Ok(Some((this_root.to_string(), 0)));
+            }
+            if let Some(component_path) = resolve_kotlin_top_level_property_array_component_path(
+                source_symbol,
+                base_name,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )? {
+                return Ok(Some((component_path, 1)));
+            }
+            let Some(this_root) = this_root else {
+                return Ok(None);
+            };
+            return Ok(Some((this_root.to_string(), 0)));
+        }
         if let Some(object_path) = resolve_kotlin_object_receiver_path(
             source_symbol,
             first_hop,
