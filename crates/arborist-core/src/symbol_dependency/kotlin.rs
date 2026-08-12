@@ -816,8 +816,11 @@ fn kotlin_scope_receiver_spelling(receiver: &str) -> bool {
 /// call callee such as `h.let` in `h.let { ... }` (a navigation expression
 /// whose receiver is the leading expression) or `with(h)` in
 /// `with(h) { ... }` (a call whose first argument is the receiver). Receivers
-/// must be plain identifier chains; other callee shapes return `None` so
-/// scope-function initializers fail closed.
+/// must be plain identifier chains; a nested scope-function call receiver
+/// such as `h.let { it.make() }` in `h.let { it.make() }.let { ... }`
+/// resolves recursively to its receiver-qualified lambda-result spelling;
+/// other callee shapes return `None` so scope-function initializers fail
+/// closed.
 fn kotlin_scope_function_callee(
     callee: Node<'_>,
     source: &str,
@@ -828,8 +831,35 @@ fn kotlin_scope_function_callee(
         if children.len() != 2 || children[1].kind() != "identifier" {
             return Ok(None);
         }
-        let receiver = node_text(children[0], source)?.trim().to_string();
         let scope_name = node_text(children[1], source)?.trim().to_string();
+        // A nested scope-function chain such as `h.let { it.make() }.let { ... }`
+        // or `h.apply { }.let { ... }` has a scope-function call as the
+        // navigation receiver; resolve it recursively and reuse its
+        // receiver-qualified lambda-result spelling as the receiver chain so
+        // the outer scope function binds through the inner call's result
+        // type. Other receiver shapes keep their plain spelling.
+        let receiver = if children[0].kind() == "call_expression" {
+            match kotlin_scope_function_binding(children[0], source)? {
+                Some((type_name, _, property_chain_base)) => {
+                    if !type_name.is_empty() {
+                        // The inner lambda result is a factory call such as
+                        // `h.make`; keep its method-call marker so the outer
+                        // chain walks the hop as a call (`h.make().make`)
+                        // rather than a property.
+                        format!("{type_name}()")
+                    } else if let Some(chain) = property_chain_base {
+                        chain
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                // A non-scope call receiver such as `Holder()` in
+                // `Holder().let { ... }` keeps its plain spelling.
+                None => node_text(children[0], source)?.trim().to_string(),
+            }
+        } else {
+            node_text(children[0], source)?.trim().to_string()
+        };
         if receiver.is_empty()
             || scope_name.is_empty()
             || !kotlin_scope_receiver_spelling(&receiver)
@@ -858,8 +888,11 @@ fn kotlin_scope_function_callee(
 
 /// Returns the receiver spelling of a `with(receiver) { ... }` call's value
 /// arguments: exactly one plain identifier-chain argument such as `h` in
-/// `with(h) { make() }`. Zero, multiple, or non-plain arguments return `None`
-/// so `with` initializers fail closed.
+/// `with(h) { make() }`, or a nested scope-function call argument such as
+/// `h.let { it.make() }` in `with(h.let { it.make() }) { make() }` resolved
+/// recursively to its receiver-qualified lambda-result spelling. Zero,
+/// multiple, or non-plain arguments return `None` so `with` initializers fail
+/// closed.
 fn kotlin_scope_function_with_receiver(
     value_arguments: Node<'_>,
     source: &str,
@@ -874,7 +907,36 @@ fn kotlin_scope_function_with_receiver(
     if children.len() != 1 {
         return Ok(None);
     }
-    let receiver = node_text(children[0], source)?.trim().to_string();
+    // A nested scope-function chain such as `with(h.let { it.make() }) { ... }`
+    // has a scope-function call as the single value argument (wrapped in a
+    // `value_argument` node); resolve it recursively to its
+    // receiver-qualified lambda-result spelling, and keep the plain spelling
+    // of other receiver shapes.
+    let Some(argument) = children[0].named_children(&mut children[0].walk()).next() else {
+        return Ok(None);
+    };
+    let receiver = if argument.kind() == "call_expression" {
+        match kotlin_scope_function_binding(argument, source)? {
+            Some((type_name, _, property_chain_base)) => {
+                if !type_name.is_empty() {
+                    // The inner lambda result is a factory call such as
+                    // `h.make`; keep its method-call marker so the outer
+                    // chain walks the hop as a call (`h.make().make`) rather
+                    // than a property.
+                    format!("{type_name}()")
+                } else if let Some(chain) = property_chain_base {
+                    chain
+                } else {
+                    return Ok(None);
+                }
+            }
+            // A non-scope call argument such as `Holder()` in
+            // `with(Holder()) { ... }` keeps its plain spelling.
+            None => node_text(argument, source)?.trim().to_string(),
+        }
+    } else {
+        node_text(argument, source)?.trim().to_string()
+    };
     if !kotlin_scope_receiver_spelling(&receiver) {
         return Ok(None);
     }

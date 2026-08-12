@@ -51731,3 +51731,125 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
         "com::example::Util2::runImportedNullableCtorLet"
     );
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_nested_chain_receiver_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runNestedLetLet(): Int {\n        val group = h.let { it.make() }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runNestedRunRun(): Int {\n        val group = h.run { make() }.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNestedApplyLet(): Int {\n        val group = h.apply { }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runNestedLetWith(): Int {\n        val group = with(h.let { it.make() }) { make() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runNestedChainBody(): Int {\n        val first = h.let { it.make() }.let { it.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runNestedCtorLet(): Int {\n        val group = Holder().let { it.make() }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runNestedMissingFailsClosed(): Int {\n        val group = h.let { it.make() }.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runNestedUnknownFailsClosed(): Int {\n        val group = h.custom { it.make() }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImportedNestedLet(): Int {\n        val group = ImportedHolder().let { it.make() }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A scope-function call whose receiver is itself a scope-function call
+    // resolves the inner call's receiver-qualified lambda result (a factory
+    // callee such as `h.make` keeping its method-call marker, an `apply`
+    // receiver, or a constructor chain) and continues the outer chain through
+    // that result type: `h.let { it.make() }.let { it.make() }`,
+    // `h.run { make() }.run { make() }`, `h.apply { }.let { it.make() }`,
+    // `with(h.let { it.make() }) { make() }`, a direct chain body
+    // (`h.let { it.make() }.let { it.make().items[0].item }`), a constructor
+    // root (`Holder().let { it.make() }.let { it.make() }`), and a cross-file
+    // imported constructor root (`ImportedHolder().let { it.make() }.let {
+    // it.make() }`). An unknown terminal method (`h.let { it.make() }.let {
+    // it.missing() }`) and an unknown inner scope name (`h.custom { ... }.let
+    // { ... }`) fail closed, so the six same-package callers in `Util`
+    // dispatch on `com::example::Item::helper` and the one imported caller in
+    // `Util2` dispatches on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runNestedLetLet",
+        "com::example::Util::runNestedRunRun",
+        "com::example::Util::runNestedApplyLet",
+        "com::example::Util::runNestedLetWith",
+        "com::example::Util::runNestedChainBody",
+        "com::example::Util::runNestedCtorLet",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runNestedMissingFailsClosed",
+        "com::example::Util::runNestedUnknownFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert_eq!(
+        live_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedNestedLet"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runNestedLetLet",
+        "com::example::Util::runNestedRunRun",
+        "com::example::Util::runNestedApplyLet",
+        "com::example::Util::runNestedLetWith",
+        "com::example::Util::runNestedChainBody",
+        "com::example::Util::runNestedCtorLet",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runNestedMissingFailsClosed",
+        "com::example::Util::runNestedUnknownFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert_eq!(
+        persisted_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedNestedLet"
+    );
+}
