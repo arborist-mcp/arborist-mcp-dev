@@ -12570,15 +12570,19 @@ fn kotlin_property_chain_initializer_root(
 /// property-chain initializer whose terminal property is a single-level
 /// array, such as `val first = holder.items` with `val items: Array<Item>`,
 /// including `this`- and `super`-rooted chains, inherited terminal array
-/// properties, and a single-hop chain that names a same-package or explicitly
+/// properties, a single-hop chain that names a bound value declared as or
+/// derived from a single-level array (an own or inherited member property, a
+/// parameter or explicitly typed local, a name re-bound from another chain or
+/// element-access base such as `val group = itemGroup` then `val first =
+/// group`), and a single-hop chain that names a same-package or explicitly
 /// imported top-level array property such as `val first = itemGroup` with
 /// `val itemGroup: Array<Holder>` at package scope. Intermediate hops walk
 /// the same property, array-element, and method-call hop rules as chained
 /// receivers, and the terminal hop resolves its element component type so a
 /// trailing element access such as `first[0].helper(...)` dispatches on the
 /// component type. Non-array terminals, unresolvable roots, bound or member
-/// names that shadow the top-level property, and unknown or ambiguous hops
-/// return `None` so callers fail closed.
+/// names that shadow the top-level property, bound non-array values, and
+/// unknown or ambiguous hops return `None` so callers fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_property_chain_array_component_type_path(
     source_symbol: &IndexedSymbol,
@@ -12594,23 +12598,90 @@ fn resolve_kotlin_property_chain_array_component_type_path(
     if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
     }
-    // A single-hop chain that names a same-package or explicitly imported
+    // A single-hop chain resolves directly from the bound value when the hop
+    // names a locally bound or enclosing-member value declared as a
+    // single-level generic array (`val items: Array<Item>`), a name bound
+    // from another property chain (`val x = itemGroup` then `val first = x`)
+    // or element-access base, or an ambiguous binding; a bound non-array
+    // value fails closed because element access on it is invalid. An unbound
+    // single hop may instead name a same-package or explicitly imported
     // top-level array property such as `itemGroup` in `val first = itemGroup`
-    // with `val itemGroup: Array<Holder>` at package scope resolves directly
-    // to the property's element component type; a locally bound or member
-    // name shadows the top-level property and is not eligible.
-    if hops.len() == 1
-        && !bindings.is_some_and(|bindings| bindings.contains(hops[0]))
-        && let Some(component_path) = resolve_kotlin_top_level_property_array_component_path(
+    // with `val itemGroup: Array<Holder>` at package scope.
+    if hops.len() == 1 {
+        if bindings.is_some_and(|bindings| bindings.contains(hops[0])) {
+            if let Some(component_type) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.array_component_for(hops[0]))
+            {
+                return resolve_kotlin_initializer_type_path(
+                    source_symbol,
+                    &component_type,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            }
+            if let Some(type_name) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.type_for(hops[0]))
+            {
+                let Some(component_name) = kotlin_array_type_component_name(&type_name) else {
+                    return Ok(None);
+                };
+                return resolve_kotlin_initializer_type_path(
+                    source_symbol,
+                    &component_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            }
+            if let Some(base) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.element_access_base_for(hops[0]))
+            {
+                return resolve_kotlin_element_access_base_component_type_path(
+                    source_symbol,
+                    &base,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            }
+            if let Some(chain) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.property_chain_base_for(hops[0]))
+            {
+                return resolve_kotlin_property_chain_array_component_type_path(
+                    source_symbol,
+                    &chain,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            }
+            return Ok(None);
+        }
+        if let Some(component_path) = resolve_kotlin_top_level_property_array_component_path(
             source_symbol,
             hops[0],
             raw_symbols,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?
-    {
-        return Ok(Some(component_path));
+        )? {
+            return Ok(Some(component_path));
+        }
     }
     let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
         source_symbol,

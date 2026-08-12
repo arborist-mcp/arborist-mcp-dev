@@ -33144,6 +33144,72 @@ fn traces_kotlin_property_chain_initializer_top_level_array_property_shadowing_f
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_bound_array_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nval itemGroup: Array<Item> = arrayOf()\n\nopen class Base {\n    val inherited: Array<Item> = arrayOf()\n}\n\nclass MemberHost : Base() {\n    val own: Array<Item> = arrayOf()\n    fun runOwnMember(): Int {\n        val first = own\n        return first[0].helper(1)\n    }\n    fun runInheritedMember(): Int {\n        val first = inherited\n        return first[0].helper(2)\n    }\n    fun runParameter(items: Array<Item>): Int {\n        val first = items\n        return first[0].helper(3)\n    }\n    fun runLocalExplicit(): Int {\n        val local: Array<Item> = arrayOf()\n        val first = local\n        return first[0].helper(4)\n    }\n    fun runBoundChain(): Int {\n        val group = itemGroup\n        val first = group\n        return first[0].helper(5)\n    }\n    fun runElementAccessBase(): Int {\n        val holder = Holder()\n        val first = holder.items[0]\n        return first.helper(6)\n    }\n    fun runReboundElementAccessBase(): Int {\n        val holder = Holder()\n        val x = holder.items[0]\n        val first = x\n        return first.helper(7)\n    }\n    fun failNonArrayChain(): Int {\n        val holder = Holder()\n        val first = holder.item\n        return first[0].helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A single-hop array terminal also resolves when the terminal name is
+    // bound directly: an own or inherited member property (`val first = own`,
+    // `val first = inherited`), a parameter or explicitly typed local
+    // (`val first = items`, `val first = local`), a name bound from another
+    // chain (`val group = itemGroup` then `val first = group`), and a name
+    // bound from an element-access base, direct or re-bound
+    // (`val first = holder.items[0]` or `val x = holder.items[0]` then
+    // `val first = x`). Element access on a bound non-array chain
+    // (`val first = holder.item` then `first[0]`) fails closed, so only the
+    // seven array-rooted callers dispatch on `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::MemberHost::runOwnMember",
+        "com::example::MemberHost::runInheritedMember",
+        "com::example::MemberHost::runParameter",
+        "com::example::MemberHost::runLocalExplicit",
+        "com::example::MemberHost::runBoundChain",
+        "com::example::MemberHost::runElementAccessBase",
+        "com::example::MemberHost::runReboundElementAccessBase",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::MemberHost::runOwnMember",
+        "com::example::MemberHost::runInheritedMember",
+        "com::example::MemberHost::runParameter",
+        "com::example::MemberHost::runLocalExplicit",
+        "com::example::MemberHost::runBoundChain",
+        "com::example::MemberHost::runElementAccessBase",
+        "com::example::MemberHost::runReboundElementAccessBase",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_bound_root_hop_and_var_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
