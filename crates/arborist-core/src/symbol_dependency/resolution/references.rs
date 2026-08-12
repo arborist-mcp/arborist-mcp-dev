@@ -10754,6 +10754,39 @@ fn resolve_kotlin_qualified_receiver_call(
         .as_ref()
         .is_some_and(|bindings| bindings.contains(receiver_name))
     {
+        // A `val` local bound from an `if`/`when` expression initializer such
+        // as `val first = if (flag) h.make().items[0].item else
+        // Holder().make().items[0].item` has no usable type until all branch
+        // spellings resolve to a common declared type; resolve the common
+        // type here and dispatch the member on it. Divergent or unresolvable
+        // branches fail closed.
+        if !array_access
+            && let Some(bindings) = bindings.as_ref()
+            && let Some(type_path) = resolve_kotlin_branch_initializer_type_path(
+                source_symbol,
+                receiver_name,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            let type_name = type_path.rsplit("::").next().unwrap_or(method).to_string();
+            return resolve_kotlin_member_or_extension(
+                source_symbol,
+                &type_path,
+                &type_name,
+                method,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
+        }
         // A `val` local bound from a property-chain initializer such as
         // `val first = holder.item` (including `this`- and `super`-rooted
         // chains and inherited first hops) has no usable type until the chain
@@ -12469,6 +12502,25 @@ fn kotlin_property_chain_initializer_root(
             .as_ref()
             .is_some_and(|bindings| bindings.contains(first_hop))
         {
+            // A name bound from an `if`/`when` expression initializer such as
+            // `val group = if (flag) h.make() else Holder().make()` resolves
+            // all branch spellings to a common declared type path before any
+            // other bound-first-hop inference; divergent or unresolvable
+            // branches fail closed.
+            if let Some(bindings) = bindings.as_ref()
+                && let Some(path) = resolve_kotlin_branch_initializer_type_path(
+                    source_symbol,
+                    first_hop,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+            {
+                return Ok(Some((path, 1)));
+            }
             if let Some(type_name) = bindings
                 .as_ref()
                 .and_then(|bindings| bindings.type_for(first_hop))
@@ -13818,6 +13870,25 @@ fn resolve_kotlin_receiver_chain_first_path(
         .as_ref()
         .is_some_and(|bindings| bindings.contains(hops[0]))
     {
+        // A name bound from an `if`/`when` expression initializer such as
+        // `val group = if (flag) h.make() else Holder().make()` resolves all
+        // branch spellings to a common declared type path before any other
+        // bound-receiver inference; divergent or unresolvable branches fail
+        // closed.
+        if let Some(bindings) = bindings.as_ref()
+            && let Some(path) = resolve_kotlin_branch_initializer_type_path(
+                source_symbol,
+                hops[0],
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some((path, 1)));
+        }
         if let Some(type_name) = bindings
             .as_ref()
             .and_then(|bindings| bindings.type_for(hops[0]))
@@ -14334,6 +14405,60 @@ fn resolve_kotlin_initializer_type_path(
         kotlin_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Resolves the common declared type path of a name bound from an `if`/`when`
+/// expression initializer such as `val group = if (flag) h.make() else
+/// Holder().make()`. Every branch spelling resolves through the same rules as
+/// a bound initializer (a directly declared type or dotted factory call
+/// first, then a property-chain initializer walk), and all branches must
+/// resolve to the same type path; a branch that cannot resolve or branches
+/// that disagree fail closed so callers never guess a target from a
+/// divergent `if`/`when` expression.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_branch_initializer_type_path(
+    source_symbol: &IndexedSymbol,
+    name: &str,
+    bindings: &KotlinReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(branches) = bindings.branch_initializers_for(name) else {
+        return Ok(None);
+    };
+    let mut common_path = None;
+    for spelling in branches {
+        let Some(path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &spelling,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        .or(resolve_kotlin_property_chain_initializer_type_path(
+            source_symbol,
+            &spelling,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?) else {
+            return Ok(None);
+        };
+        if let Some(existing) = common_path.as_ref()
+            && existing != &path
+        {
+            return Ok(None);
+        }
+        common_path = Some(path);
+    }
+    Ok(common_path)
 }
 
 /// Resolves an inferred property initializer callee such as `makeOther` in

@@ -43,6 +43,13 @@ pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
     /// stays bound (shadowing objects and types) but has no usable type until
     /// the chain is walked.
     property_chain_bases: BTreeMap<String, String>,
+    /// Branch initializer spellings for names bound from an `if`/`when`
+    /// expression initializer such as `val group = if (flag) h.make() else
+    /// Holder().make()`, whose common declared type is resolved at trace time
+    /// by resolving every branch spelling and requiring them all to agree. The
+    /// name stays bound (shadowing objects and types) but has no usable type
+    /// until the branches are walked.
+    branch_initializers_by_name: BTreeMap<String, Vec<String>>,
     ambiguous_names: BTreeSet<String>,
     /// Names bound from companion-object members, which are shadowed by any
     /// higher-priority local, parameter, or instance-property binding of the
@@ -60,6 +67,7 @@ impl KotlinReceiverTypeBindings {
             || self.array_component_types.contains_key(name)
             || self.element_access_bases.contains_key(name)
             || self.property_chain_bases.contains_key(name)
+            || self.branch_initializers_by_name.contains_key(name)
             || self.ambiguous_names.contains(name)
     }
 
@@ -109,6 +117,20 @@ impl KotlinReceiverTypeBindings {
             return None;
         }
         self.property_chain_bases.get(name).cloned()
+    }
+
+    /// Returns the recorded branch initializer spellings for a name bound
+    /// from an `if`/`when` expression initializer such as
+    /// `val group = if (flag) h.make() else Holder().make()`. Ambiguous
+    /// bindings and names without recorded branches return `None`.
+    pub(in crate::symbol_dependency) fn branch_initializers_for(
+        &self,
+        name: &str,
+    ) -> Option<Vec<String>> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.branch_initializers_by_name.get(name).cloned()
     }
 }
 
@@ -271,6 +293,10 @@ fn kotlin_receiver_type_bindings_for_node(
         let mut cursor = class_body.walk();
         for child in class_body.named_children(&mut cursor) {
             if child.kind() == "property_declaration"
+                && let Some((name, branches)) = kotlin_branch_initializer_binding(child, source)?
+            {
+                insert_kotlin_branch_initializer_binding(&mut bindings, name, branches);
+            } else if child.kind() == "property_declaration"
                 && let Some((name, type_name, element_access_base, property_chain_base)) =
                     kotlin_property_binding(child, source, &bindings)?
             {
@@ -323,6 +349,15 @@ fn kotlin_receiver_type_bindings_for_node(
             let mut member_cursor = companion_body.walk();
             for member in companion_body.named_children(&mut member_cursor) {
                 if member.kind() == "property_declaration"
+                    && let Some((name, branches)) =
+                        kotlin_branch_initializer_binding(member, source)?
+                {
+                    insert_kotlin_shadowable_branch_initializer_binding(
+                        &mut bindings,
+                        name,
+                        branches,
+                    );
+                } else if member.kind() == "property_declaration"
                     && let Some((name, type_name, element_access_base, property_chain_base)) =
                         kotlin_property_binding(member, source, &bindings)?
                 {
@@ -379,6 +414,10 @@ fn collect_kotlin_body_property_bindings(
         return Ok(());
     }
     if node.kind() == "property_declaration"
+        && let Some((name, branches)) = kotlin_branch_initializer_binding(node, source)?
+    {
+        insert_kotlin_branch_initializer_binding(bindings, name, branches);
+    } else if node.kind() == "property_declaration"
         && let Some((name, type_name, element_access_base, property_chain_base)) =
             kotlin_property_binding(node, source, bindings)?
     {
@@ -550,6 +589,177 @@ fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
     }
     hop.chars()
         .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+/// A branch initializer binding extracted from a `val`/`var` declaration
+/// whose initializer is an `if`/`when` expression: the bound name and the
+/// deduplicated branch initializer spellings whose common declared type is
+/// resolved at trace time.
+type KotlinBranchInitializerBinding = (String, Vec<String>);
+
+/// Returns the initializer spelling of an `if`/`when` expression branch: a
+/// call callee such as `h.make` or `Holder().make`, a property-chain spelling
+/// such as `h.make().items[0].item`, or a bare property name such as `item`.
+/// Parenthesized and force-unwrapped branches unwrap to the same inner
+/// expression; other branch shapes return `None` so branch bindings fail
+/// closed.
+fn kotlin_initializer_branch_spelling(branch: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(branch) = kotlin_initializer_expression(branch) else {
+        return Ok(None);
+    };
+    if branch.kind() == "call_expression"
+        && let Some(callee) = branch.named_child(0)
+        && let Some(name) = kotlin_call_initializer_callee_name(callee, source)?
+        && !name.is_empty()
+    {
+        return Ok(Some(name));
+    }
+    if matches!(
+        branch.kind(),
+        "navigation_expression" | "index_expression" | "call_expression"
+    ) && let Some(chain) = kotlin_property_chain_initializer(branch, source)?
+    {
+        return Ok(Some(chain));
+    }
+    if branch.kind() == "identifier" {
+        let name = node_text(branch, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
+    }
+    Ok(None)
+}
+
+/// Collects the deduplicated branch initializer spellings of an `if`/`when`
+/// expression initializer. `if` expression branches come from the then arm,
+/// any `else if` arms (recursively), and the else arm; an `if` without an
+/// `else` arm has no value type (`Unit`), so the expression must yield at
+/// least two branches or the whole binding fails closed. `when` expression
+/// branches come from each `when_entry` body (its last named child), and the
+/// expression must include an `else` arm (a `when` without `else` has no
+/// value type to bind). A branch that is not a call callee, property chain,
+/// or bare identifier makes the whole binding fail closed.
+fn kotlin_if_when_branch_spellings(
+    initializer: Node<'_>,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let mut branches = Vec::new();
+    let mut seen = BTreeSet::new();
+    if initializer.kind() == "if_expression" {
+        let mut cursor = initializer.walk();
+        let children = initializer.named_children(&mut cursor).collect::<Vec<_>>();
+        // The first named child is the condition; the rest are then/else arms
+        // (an `else if` arm is itself a nested `if_expression`).
+        for branch in children.iter().skip(1) {
+            if matches!(branch.kind(), "if_expression" | "when_expression") {
+                let Some(nested) = kotlin_if_when_branch_spellings(*branch, source)? else {
+                    return Ok(None);
+                };
+                for spelling in nested {
+                    if seen.insert(spelling.clone()) {
+                        branches.push(spelling);
+                    }
+                }
+            } else if let Some(spelling) = kotlin_initializer_branch_spelling(*branch, source)? {
+                if seen.insert(spelling.clone()) {
+                    branches.push(spelling);
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+        // An `if` without an `else` arm has no value type to bind.
+        if branches.len() < 2 {
+            return Ok(None);
+        }
+        return Ok(Some(branches));
+    }
+    if initializer.kind() == "when_expression" {
+        let mut cursor = initializer.walk();
+        let mut has_else = false;
+        for entry in initializer.named_children(&mut cursor) {
+            if entry.kind() != "when_entry" {
+                continue;
+            }
+            let mut entry_cursor = entry.walk();
+            let entry_children = entry.named_children(&mut entry_cursor).collect::<Vec<_>>();
+            // An `else` arm has no condition child, only the body expression.
+            has_else |= entry_children.len() == 1;
+            let Some(body) = entry_children.last().copied() else {
+                return Ok(None);
+            };
+            let Some(spelling) = kotlin_initializer_branch_spelling(body, source)? else {
+                return Ok(None);
+            };
+            if seen.insert(spelling.clone()) {
+                branches.push(spelling);
+            }
+        }
+        // A `when` used as an expression without an `else` arm has no value
+        // type to bind (its type includes `Unit`), so it fails closed.
+        if !has_else || branches.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(branches));
+    }
+    Ok(None)
+}
+
+/// Extracts a branch initializer binding from a `val`/`var` declaration whose
+/// initializer is an `if`/`when` expression, such as
+/// `val group = if (flag) h.make() else Holder().make()` or
+/// `val first = when (flag) { true -> h.make().items[0].item; else ->
+/// Holder().make().items[0].item }`. Every branch must yield a call-callee,
+/// property-chain, or bare-property spelling and an `if` expression must have
+/// an `else` arm, otherwise the whole binding fails closed; an explicitly
+/// typed declaration binds through the declared type instead. The bound name
+/// shadows same-named objects and types at trace time.
+fn kotlin_branch_initializer_binding(
+    property: Node<'_>,
+    source: &str,
+) -> Result<Option<KotlinBranchInitializerBinding>> {
+    let mut cursor = property.walk();
+    let children = property.named_children(&mut cursor).collect::<Vec<_>>();
+    let Some(variable) = children
+        .iter()
+        .find(|child| child.kind() == "variable_declaration")
+    else {
+        return Ok(None);
+    };
+    let mut variable_cursor = variable.walk();
+    let variable_children = variable
+        .named_children(&mut variable_cursor)
+        .collect::<Vec<_>>();
+    let Some(name_node) = variable_children
+        .iter()
+        .find(|child| child.kind() == "identifier")
+    else {
+        return Ok(None);
+    };
+    let name = node_text(*name_node, source)?.trim().to_string();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    // An explicitly typed declaration binds through the declared type, not
+    // the initializer branches.
+    if variable_children
+        .iter()
+        .any(|child| kotlin_is_type_node_kind(child.kind()))
+    {
+        return Ok(None);
+    }
+    let Some(initializer) = children
+        .iter()
+        .find(|child| matches!(child.kind(), "if_expression" | "when_expression"))
+        .copied()
+    else {
+        return Ok(None);
+    };
+    let Some(branches) = kotlin_if_when_branch_spellings(initializer, source)? else {
+        return Ok(None);
+    };
+    if branches.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((name, branches)))
 }
 
 /// A property binding extracted from a `val`/`var` declaration: the bound
@@ -1011,6 +1221,7 @@ fn insert_kotlin_receiver_binding(
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
         bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
     }
     // A generic array spelling such as `Array<Helper>` binds the element
     // component type so an element-access receiver such as `items[0]` can
@@ -1066,10 +1277,12 @@ fn insert_kotlin_element_access_base_binding(
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
         bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
     }
     if bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
         || bindings.property_chain_bases.contains_key(&name)
+        || bindings.branch_initializers_by_name.contains_key(&name)
         || bindings
             .element_access_bases
             .insert(name.clone(), base)
@@ -1079,6 +1292,7 @@ fn insert_kotlin_element_access_base_binding(
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
         bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
         bindings.ambiguous_names.insert(name);
     }
 }
@@ -1103,10 +1317,12 @@ fn insert_kotlin_property_chain_base_binding(
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
         bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
     }
     if bindings.types_by_name.contains_key(&name)
         || bindings.array_component_types.contains_key(&name)
         || bindings.element_access_bases.contains_key(&name)
+        || bindings.branch_initializers_by_name.contains_key(&name)
         || bindings
             .property_chain_bases
             .insert(name.clone(), chain)
@@ -1116,8 +1332,69 @@ fn insert_kotlin_property_chain_base_binding(
         bindings.array_component_types.remove(&name);
         bindings.element_access_bases.remove(&name);
         bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
         bindings.ambiguous_names.insert(name);
     }
+}
+
+/// Records a name bound from an `if`/`when` expression initializer such as
+/// `val group = if (flag) h.make() else Holder().make()` under its branch
+/// initializer spellings. The name shadows same-named objects and types; a
+/// duplicate declaration of the same name fails closed as ambiguous.
+fn insert_kotlin_branch_initializer_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    branches: Vec<String>,
+) {
+    if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    // A higher-priority local, parameter, or instance-property binding
+    // replaces a same-named companion-member binding cleanly instead of
+    // creating a false ambiguity.
+    if bindings.shadowable_names.remove(&name) {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
+    }
+    if bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
+        || bindings
+            .branch_initializers_by_name
+            .insert(name.clone(), branches)
+            .is_some()
+    {
+        bindings.types_by_name.remove(&name);
+        bindings.array_component_types.remove(&name);
+        bindings.element_access_bases.remove(&name);
+        bindings.property_chain_bases.remove(&name);
+        bindings.branch_initializers_by_name.remove(&name);
+        bindings.ambiguous_names.insert(name);
+    }
+}
+
+/// Inserts a companion-member branch-initializer binding with the same
+/// shadowing discipline as `insert_kotlin_shadowable_receiver_binding`.
+fn insert_kotlin_shadowable_branch_initializer_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    branches: Vec<String>,
+) {
+    if bindings.ambiguous_names.contains(&name)
+        || bindings.types_by_name.contains_key(&name)
+        || bindings.array_component_types.contains_key(&name)
+        || bindings.element_access_bases.contains_key(&name)
+        || bindings.property_chain_bases.contains_key(&name)
+        || bindings.branch_initializers_by_name.contains_key(&name)
+    {
+        return;
+    }
+    insert_kotlin_branch_initializer_binding(bindings, name.clone(), branches);
+    bindings.shadowable_names.insert(name);
 }
 
 /// Inserts a companion-member receiver binding that is shadowed by any
