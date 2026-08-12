@@ -32752,6 +32752,88 @@ fn traces_kotlin_cross_file_property_chain_initializer_local_binding_roots_in_li
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_parameter_roots_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Util {\n    fun runMemberParameter(holder: Holder): Int {\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n\nfun runTopLevelParameter(holder: Holder): Int {\n    val first = holder.item\n    return first.helper(2)\n}\n",
+    )
+    .unwrap();
+
+    // A property-chain initializer whose leading bare hop is a parameter
+    // dispatches through the parameter's declared type even in top-level
+    // functions with no enclosing type to fall back on: `holder.item` in
+    // `fun runTopLevelParameter(holder: Holder)` starts the chain on
+    // `Holder`. Both callers trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMemberParameter",
+        "com::example::runTopLevelParameter",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMemberParameter",
+        "com::example::runTopLevelParameter",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_parameter_root_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass ShadowHost {\n    val holder: Holder = Holder()\n    fun failShadowedInstanceProperty(): Int {\n        val holder = Holder()\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n\nclass Util {\n    fun failUnknownParameterType(value: Missing): Int {\n        val first = value.item\n        return first.helper(2)\n    }\n    fun control(holder: Holder): Int {\n        val first = holder.item\n        return first.helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Parameter roots fail closed when the parameter's declared type is
+    // unknown (`value: Missing`), and a body-local binding that duplicates
+    // a same-named instance property makes the name ambiguous, so the chain
+    // fails closed instead of guessing either binding; only the resolvable
+    // parameter root in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_local_binding_roots_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
