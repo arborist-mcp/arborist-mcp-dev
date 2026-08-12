@@ -6,7 +6,8 @@ param(
     [switch]$ListSuites,
     [switch]$ShowPlan,
     [ValidateSet("auto", "always", "never")]
-    [string]$SyncExtension = "auto"
+    [string]$SyncExtension = "auto",
+    [int]$Jobs = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -240,17 +241,27 @@ function Ensure-GatewayExtension {
 function Invoke-RustTests {
     param(
         [AllowEmptyString()]
-        [string]$RustFilter
+        [string]$RustFilter,
+        [AllowEmptyString()]
+        [string]$Package = "",
+        [int]$Jobs = 0
     )
 
     $arguments = @("test", "--locked")
+    if (-not [string]::IsNullOrWhiteSpace($Package)) {
+        $arguments += @("-p", $Package)
+    }
+    if ($Jobs -gt 0) {
+        $arguments += @("--jobs", "$Jobs")
+    }
     if (-not [string]::IsNullOrWhiteSpace($RustFilter)) {
         $arguments += $RustFilter
     }
 
-    $description = "Running Rust tests..."
+    $targetLabel = if ([string]::IsNullOrWhiteSpace($Package)) { "Rust" } else { $Package }
+    $description = "Running $targetLabel tests..."
     if (-not [string]::IsNullOrWhiteSpace($RustFilter)) {
-        $description = "Running Rust tests (filter: $RustFilter)..."
+        $description = "Running $targetLabel tests (filter: $RustFilter)..."
     }
 
     Invoke-NativeOrThrow $description "cargo" $arguments
@@ -314,6 +325,10 @@ function Show-PythonExecutionPlan {
             Write-Host ("rust    <- {0}" -f ($selectionNames -join ", "))
             continue
         }
+        if ($kind -eq "rust-core") {
+            Write-Host ("rust-core <- {0}" -f ($selectionNames -join ", "))
+            continue
+        }
 
         $moduleNames = @($step.module_names)
         $requiresExtension = [bool]$step.requires_extension
@@ -339,13 +354,18 @@ function Invoke-ExecutionPlan {
         [AllowEmptyString()]
         [string]$RustFilter,
         [Parameter(Mandatory = $true)]
-        [string]$SyncExtension
+        [string]$SyncExtension,
+        [int]$Jobs = 0
     )
 
     foreach ($step in @($ExecutionPlan.steps)) {
         $kind = [string]$step.kind
         if ($kind -eq "rust") {
-            Invoke-RustTests $RustFilter
+            Invoke-RustTests -RustFilter $RustFilter -Jobs $Jobs
+            continue
+        }
+        if ($kind -eq "rust-core") {
+            Invoke-RustTests -Package "arborist-core" -RustFilter $RustFilter -Jobs $Jobs
             continue
         }
 
@@ -389,7 +409,7 @@ if ($ShowPlan) {
 
 Push-Location $repoRoot
 try {
-    Invoke-ExecutionPlan $executionPlan $Python $RustFilter $SyncExtension
+    Invoke-ExecutionPlan -ExecutionPlan $executionPlan -Python $Python -RustFilter $RustFilter -SyncExtension $SyncExtension -Jobs $Jobs
 } finally {
     Pop-Location
 }

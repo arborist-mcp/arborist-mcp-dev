@@ -176,6 +176,7 @@ class TestWorkflowTests(unittest.TestCase):
 
         expected = [
             f"{'rust':<32} Run all Rust tests via cargo test --locked.",
+            f"{'core':<32} Run only the arborist-core Rust tests via cargo test -p arborist-core --locked.",
             f"{'python':<32} {snapshot['groups']['python']['description']}",
             f"{'inner-loop':<32} Run Rust tests plus the python-fast group for the default local loop.",
             f"{'all':<32} Run Rust tests plus the full Python suite set.",

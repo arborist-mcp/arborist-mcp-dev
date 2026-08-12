@@ -76,6 +76,7 @@ class CheckWorkflowTests(unittest.TestCase):
             [
                 "sanity",
                 "rust",
+                "rust-core",
                 "fuzz-manifest",
                 "gateway-fast",
                 "python-fast",

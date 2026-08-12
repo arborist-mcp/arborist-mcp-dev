@@ -21,6 +21,10 @@ def build_selection_descriptions(snapshot: dict[str, object] | None = None) -> l
 
     descriptions: list[tuple[str, str]] = [
         ("rust", "Run all Rust tests via cargo test --locked."),
+        (
+            "core",
+            "Run only the arborist-core Rust tests via cargo test -p arborist-core --locked.",
+        ),
         ("python", str(groups["python"]["description"])),
         ("inner-loop", "Run Rust tests plus the python-fast group for the default local loop."),
         ("all", "Run Rust tests plus the full Python suite set."),
@@ -65,6 +69,8 @@ def _expand_selection(
 
     if selection_name == "rust":
         return [{"kind": "rust", "selection_name": "rust"}]
+    if selection_name == "core":
+        return [{"kind": "rust-core", "selection_name": "core"}]
     if selection_name == "inner-loop":
         return _expand_selection("rust", snapshot=snapshot) + _expand_selection(
             "python-fast", snapshot=snapshot
@@ -114,6 +120,7 @@ def build_execution_plan(selection_names: list[str]) -> dict[str, object]:
     snapshot = build_manifest_snapshot()
     steps: list[dict[str, object]] = []
     rust_step: dict[str, object] | None = None
+    rust_core_step: dict[str, object] | None = None
     python_step: dict[str, object] | None = None
     seen_python_modules: set[str] = set()
     seen_python_selections: set[str] = set()
@@ -134,6 +141,20 @@ def build_execution_plan(selection_names: list[str]) -> dict[str, object]:
                 selection_label = str(fragment["selection_name"])
                 if selection_label not in rust_step["selection_names"]:
                     rust_step["selection_names"].append(selection_label)
+                continue
+
+            if kind == "rust-core":
+                if rust_core_step is None:
+                    rust_core_step = {
+                        "key": "rust-core",
+                        "kind": "rust-core",
+                        "selection_names": [],
+                    }
+                    steps.append(rust_core_step)
+
+                selection_label = str(fragment["selection_name"])
+                if selection_label not in rust_core_step["selection_names"]:
+                    rust_core_step["selection_names"].append(selection_label)
                 continue
 
             if python_step is None:

@@ -303,6 +303,11 @@ function Invoke-CheckProfile {
             Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
             return
         }
+        "rust-core" {
+            Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
+            Invoke-ScriptOrThrow "Running arborist-core Rust tests..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite core -Quiet }
+            return
+        }
         "fuzz-manifest" {
             Invoke-FuzzManifestCheck $RepoRoot
             return

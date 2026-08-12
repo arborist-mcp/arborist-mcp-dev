@@ -68,6 +68,7 @@ Focused profiles are available:
 .\scripts\check.ps1 -ListProfiles
 .\scripts\check.ps1 -Profile sanity
 .\scripts\check.ps1 -Profile rust
+.\scripts\check.ps1 -Profile rust-core
 .\scripts\check.ps1 -Profile gateway-fast
 .\scripts\check.ps1 -Profile python-fast
 .\scripts\check.ps1 -Profile gateway-native
@@ -94,10 +95,31 @@ The default `inner-loop` suite runs Rust plus the `python-fast` group. Native
 extension suites build and sync the PyO3 module automatically unless
 `-SyncExtension never` is supplied.
 
+When only `arborist-core` changes, `-Suite core` runs just that crate's tests
+via `cargo test -p arborist-core --locked`, skipping the PyO3/`arborist-py`
+build and the Python suites. It is the fastest everyday loop for core work;
+reserve the full `rust`/`inner-loop`/`check.ps1` gates for checkpoints before
+committing or pushing. Pass `-Jobs N` to `test.ps1` to cap Cargo's parallel
+build jobs (for example `-Jobs 2`) when you want to keep the machine
+responsive while tests run.
+
+The Rust unit suite is large and a few C++ trace scenarios are slow, so prefer
+a targeted filter during development and run the full suite at checkpoints:
+
+```powershell
+.\scripts\test.ps1 -Suite core -RustFilter tests::trace_semantics
+.\scripts\test.ps1 -Suite core -RustFilter tests::c_symbol_graph
+.\scripts\test.ps1 -Suite core -RustFilter property_chain
+```
+
+`-RustFilter` is forwarded to `cargo test -p arborist-core --locked <filter>`,
+so any libtest filter (module path or name substring) works.
+
 Useful suite selectors:
 
 ```powershell
 .\scripts\test.ps1 -Suite rust
+.\scripts\test.ps1 -Suite core
 .\scripts\test.ps1 -Suite python-fast
 .\scripts\test.ps1 -Suite python-native
 .\scripts\test.ps1 -Suite gateway

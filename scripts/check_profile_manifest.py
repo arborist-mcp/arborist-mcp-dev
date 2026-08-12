@@ -78,7 +78,7 @@ def _load_profiles(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
             if handler == "sanity":
                 profile["needs_python"] = True
                 profile["needs_rust"] = False
-            elif handler in {"rust", "fuzz-manifest"}:
+            elif handler in {"rust", "fuzz-manifest", "rust-core"}:
                 profile["needs_python"] = False
                 profile["needs_rust"] = True
             elif handler == "gateway-smoke":
