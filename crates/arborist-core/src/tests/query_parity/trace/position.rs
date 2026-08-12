@@ -32601,6 +32601,157 @@ fn kotlin_property_chain_initializer_nullable_and_generic_roots_fail_closed_for_
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_local_binding_composition_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n    val items: Array<Holder> = arrayOf()\n}\n\nclass AnonymousHost {\n    companion object {\n        val holder: Holder = Holder()\n    }\n}\n\nclass Util {\n    val group: Group = Group()\n    fun runArrayTerminal(): Int {\n        val x = Holder()\n        val first = x.items\n        return first[0].helper(1)\n    }\n    fun runChainBindingArrayTerminal(): Int {\n        val x = group.holder\n        val first = x.items\n        return first[0].helper(2)\n    }\n    fun runQualifiedElementBase(): Int {\n        val x = group.items[0]\n        val first = x.item\n        return first.helper(3)\n    }\n    fun runShadowedCompanion(): Int {\n        val AnonymousHost = Holder()\n        val first = AnonymousHost.item\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Locally bound property-chain initializer roots compose with the same
+    // terminal and base shapes as other roots: `val x = Holder()` then
+    // `val first = x.items` dispatches a trailing element access on the
+    // array's element component type, `val x = group.holder` then
+    // `x.items` walks the recorded chain before the array terminal, `val x =
+    // group.items[0]` starts on the qualified element-access component type,
+    // and a local binding shadowing a companion class name (`val
+    // AnonymousHost = Holder()`) dispatches through the local value. All
+    // four callers trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runArrayTerminal",
+        "com::example::Util::runChainBindingArrayTerminal",
+        "com::example::Util::runQualifiedElementBase",
+        "com::example::Util::runShadowedCompanion",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runArrayTerminal",
+        "com::example::Util::runChainBindingArrayTerminal",
+        "com::example::Util::runQualifiedElementBase",
+        "com::example::Util::runShadowedCompanion",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_local_binding_composition_roots_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Holder> = arrayOf()\n}\n\nclass Util {\n    val group: Group = Group()\n    fun failNonArrayElement(): Int {\n        val x = Holder()\n        val first = x.item\n        return first[0].helper(1)\n    }\n    fun failBoundArrayMissingHop(): Int {\n        val x = Holder()\n        val first = x.missing\n        return first.helper(2)\n    }\n    fun failQualifiedElementUnknownBase(): Int {\n        val x = group.missing[0]\n        val first = x.item\n        return first.helper(3)\n    }\n    fun control(): Int {\n        val x = Holder()\n        val first = x.item\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Composed locally bound roots fail closed for element access on a
+    // non-array terminal (`val first = x.item` then `first[0]`), unknown
+    // hops on a bound root (`x.missing`), and qualified element-access bases
+    // whose chain cannot resolve (`group.missing[0]`); only the resolvable
+    // local binding in `control` traces.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::control"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_local_binding_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.kt");
+    let caller_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Group {\n    val holder: Holder = Holder()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Holder\nimport org.util.Group\n\nclass Util {\n    val group: Group = Group()\n    fun runImportedConstructed(): Int {\n        val x = Holder()\n        val first = x.item\n        return first.helper(1)\n    }\n    fun runImportedChainBinding(): Int {\n        val x = group.holder\n        val first = x.item\n        return first.helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Locally bound property-chain initializer roots also resolve through
+    // explicitly imported types: `val x = Holder()` with `Holder` imported
+    // from another package starts the chain on the imported constructed
+    // type, and `val x = group.holder` with `group` typed by an imported
+    // `Group` starts on the imported chain terminal; both callers trace to
+    // `Item::helper`.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runImportedConstructed",
+        "com::example::Util::runImportedChainBinding",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runImportedConstructed",
+        "com::example::Util::runImportedChainBinding",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_local_binding_roots_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
