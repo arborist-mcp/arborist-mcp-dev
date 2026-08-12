@@ -51622,7 +51622,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun runNullableLet(): Int {\n        val group = nullableH?.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runNullableRun(): Int {\n        val group = nullableH?.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNullableApply(): Int {\n        val group = nullableH?.apply { }\n        val first = group.make().items[0].item\n        return first.helper(3)\n    }\n    fun runNullableBareIt(): Int {\n        val group = nullableH?.let { it }\n        val first = group.make().items[0].item\n        return first.helper(4)\n    }\n    fun runNullableChainBody(): Int {\n        val first = nullableH?.let { it.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runNullableCtorLet(): Int {\n        val group = Holder()?.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runNullableMissingFailsClosed(): Int {\n        val group = nullableH?.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runNullableElvisFailsClosed(): Int {\n        val group = nullableH?.let { it.make() } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n}\n",
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun runNullableLet(): Int {\n        val group = nullableH?.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runNullableRun(): Int {\n        val group = nullableH?.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNullableApply(): Int {\n        val group = nullableH?.apply { }\n        val first = group.make().items[0].item\n        return first.helper(3)\n    }\n    fun runNullableBareIt(): Int {\n        val group = nullableH?.let { it }\n        val first = group.make().items[0].item\n        return first.helper(4)\n    }\n    fun runNullableChainBody(): Int {\n        val first = nullableH?.let { it.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runNullableCtorLet(): Int {\n        val group = Holder()?.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runNullableMissingFailsClosed(): Int {\n        val group = nullableH?.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runNullableElvis(): Int {\n        val group = nullableH?.let { it.make() } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n}\n",
     )
     .unwrap();
     fs::write(
@@ -51643,15 +51643,16 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
     // constructor-call receiver (`Holder()?.let { it.make() }`), and a
     // cross-file imported constructor receiver (`ImportedHolder()?.let {
     // it.make() }`) pin the same lambda-result type as their non-nullable
-    // forms. An unknown terminal method (`nullableH?.let { it.missing() }`)
-    // and an elvis-wrapped scope call (`nullableH?.let { it.make() } ?:
-    // Holder().make()`) fail closed, so the six same-package callers in
-    // `Util` dispatch on `com::example::Item::helper` and the one imported
+    // forms, and an elvis fallback (`nullableH?.let { it.make() } ?:
+    // Holder().make()`) resolves both operands to the common group type, so
+    // all seven same-package callers in `Util` dispatch on
+    // `com::example::Item::helper`; an unknown terminal method
+    // (`nullableH?.let { it.missing() }`) fails closed. The one imported
     // caller in `Util2` dispatches on `org::util::ImportedItem::helper`.
     let item_path = "com::example::Item::helper";
     let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.symbol.symbol_id, item_path);
-    assert_eq!(live.callers.len(), 6);
+    assert_eq!(live.callers.len(), 7);
     for caller in [
         "com::example::Util::runNullableLet",
         "com::example::Util::runNullableRun",
@@ -51659,6 +51660,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
         "com::example::Util::runNullableBareIt",
         "com::example::Util::runNullableChainBody",
         "com::example::Util::runNullableCtorLet",
+        "com::example::Util::runNullableElvis",
     ] {
         assert!(
             live.callers
@@ -51667,18 +51669,14 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
             "missing caller {caller}"
         );
     }
-    for caller in [
-        "com::example::Util::runNullableMissingFailsClosed",
-        "com::example::Util::runNullableElvisFailsClosed",
-    ] {
-        assert!(
-            !live
-                .callers
-                .iter()
-                .any(|candidate| candidate.symbol_id == caller),
-            "unexpected caller {caller}"
-        );
-    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id
+                == "com::example::Util::runNullableMissingFailsClosed"),
+        "unexpected caller runNullableMissingFailsClosed"
+    );
 
     let imported_item_path = "org::util::ImportedItem::helper";
     let live_imported =
@@ -51693,7 +51691,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 6);
+    assert_eq!(persisted.callers.len(), 7);
     for caller in [
         "com::example::Util::runNullableLet",
         "com::example::Util::runNullableRun",
@@ -51701,6 +51699,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
         "com::example::Util::runNullableBareIt",
         "com::example::Util::runNullableChainBody",
         "com::example::Util::runNullableCtorLet",
+        "com::example::Util::runNullableElvis",
     ] {
         assert!(
             persisted
@@ -51710,18 +51709,14 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_receiver_bin
             "missing persisted caller {caller}"
         );
     }
-    for caller in [
-        "com::example::Util::runNullableMissingFailsClosed",
-        "com::example::Util::runNullableElvisFailsClosed",
-    ] {
-        assert!(
-            !persisted
-                .callers
-                .iter()
-                .any(|candidate| candidate.symbol_id == caller),
-            "unexpected persisted caller {caller}"
-        );
-    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id
+                == "com::example::Util::runNullableMissingFailsClosed"),
+        "unexpected persisted caller runNullableMissingFailsClosed"
+    );
     let persisted_imported =
         trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
             .unwrap();
@@ -51851,5 +51846,128 @@ fn traces_kotlin_property_chain_initializer_scope_function_nested_chain_receiver
     assert_eq!(
         persisted_imported.callers[0].symbol_id,
         "com::example::Util2::runImportedNestedLet"
+    );
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_elvis_expression_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun runElvisScopeLet(): Int {\n        val group = nullableH?.let { it.make() } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runElvisScopeRun(): Int {\n        val group = nullableH?.run { make() } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runElvisScopeApply(): Int {\n        val group = nullableH?.apply { } ?: Holder()\n        val first = group.make().items[0].item\n        return first.helper(3)\n    }\n    fun runElvisFactoryBoth(): Int {\n        val group = h.make() ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runElvisChainBody(): Int {\n        val first = nullableH?.let { it.make().items[0].item } ?: Holder().make().items[0].item\n        return first.helper(5)\n    }\n    fun runElvisDivergentFailsClosed(): Int {\n        val group = nullableH?.let { it.make() } ?: Item()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runElvisMissingFailsClosed(): Int {\n        val group = nullableH?.let { it.missing() } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runElvisArithmeticFailsClosed(): Int {\n        val group = nullableH?.let { it.make() } ?: 0\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImportedElvisScope(): Int {\n        val group = ImportedHolder()?.let { it.make() } ?: ImportedHolder().make()\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // An elvis (`?:`) expression initializer pins the common type of both
+    // operands through the same branch rules as an `if`/`when` expression: a
+    // safe-call scope-function left operand (`nullableH?.let { it.make() } ?:
+    // Holder().make()`), a `run` operand, an `apply` receiver operand
+    // (`nullableH?.apply { } ?: Holder()`), two factory operands
+    // (`h.make() ?: Holder().make()`), a direct chain body
+    // (`nullableH?.let { it.make().items[0].item } ?:
+    // Holder().make().items[0].item`), and a cross-file imported constructor
+    // pair (`ImportedHolder()?.let { it.make() } ?: ImportedHolder().make()`).
+    // Divergent operand types (`nullableH?.let { it.make() } ?: Item()`), an
+    // unresolvable left operand (`nullableH?.let { it.missing() } ?:
+    // Holder().make()`), and non-`?:` binary operands (`nullableH?.let {
+    // it.make() } ?: 0` fails because the right operand is a literal) fail
+    // closed, so the five same-package callers in `Util` dispatch on
+    // `com::example::Item::helper` and the one imported caller in `Util2`
+    // dispatches on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runElvisScopeLet",
+        "com::example::Util::runElvisScopeRun",
+        "com::example::Util::runElvisScopeApply",
+        "com::example::Util::runElvisFactoryBoth",
+        "com::example::Util::runElvisChainBody",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runElvisDivergentFailsClosed",
+        "com::example::Util::runElvisMissingFailsClosed",
+        "com::example::Util::runElvisArithmeticFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert_eq!(
+        live_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedElvisScope"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runElvisScopeLet",
+        "com::example::Util::runElvisScopeRun",
+        "com::example::Util::runElvisScopeApply",
+        "com::example::Util::runElvisFactoryBoth",
+        "com::example::Util::runElvisChainBody",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runElvisDivergentFailsClosed",
+        "com::example::Util::runElvisMissingFailsClosed",
+        "com::example::Util::runElvisArithmeticFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert_eq!(
+        persisted_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedElvisScope"
     );
 }

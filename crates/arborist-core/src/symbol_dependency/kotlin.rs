@@ -726,15 +726,53 @@ fn kotlin_if_when_branch_spellings(
     Ok(None)
 }
 
+/// Collects the two operand spellings of an elvis (`?:`) binary-expression
+/// initializer such as `val group = nullableH?.let { it.make() } ?:
+/// Holder().make()`. Both operands must yield a call-callee, property-chain,
+/// scope-function, or bare-property spelling through the same rules as an
+/// `if`/`when` branch, otherwise the whole binding fails closed; other binary
+/// operators (arithmetic, comparison, logic) fail closed because they
+/// transform the value rather than selecting between two receiver spellings.
+fn kotlin_elvis_branch_spellings(binary: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
+    if binary.kind() != "binary_expression" {
+        return Ok(None);
+    }
+    let mut cursor = binary.walk();
+    let children = binary.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 {
+        return Ok(None);
+    }
+    // The `?:` operator sits between the two operand nodes; other binary
+    // operators fail closed.
+    let operator = source
+        .get(children[0].end_byte()..children[1].start_byte())
+        .unwrap_or_default()
+        .trim();
+    if operator != "?:" {
+        return Ok(None);
+    }
+    let mut branches = Vec::new();
+    for operand in [children[0], children[1]] {
+        let Some(spelling) = kotlin_initializer_branch_spelling(operand, source)? else {
+            return Ok(None);
+        };
+        branches.push(spelling);
+    }
+    Ok(Some(branches))
+}
+
 /// Extracts a branch initializer binding from a `val`/`var` declaration whose
-/// initializer is an `if`/`when` expression, such as
+/// initializer is an `if`/`when` expression such as
 /// `val group = if (flag) h.make() else Holder().make()` or
 /// `val first = when (flag) { true -> h.make().items[0].item; else ->
-/// Holder().make().items[0].item }`. Every branch must yield a call-callee,
-/// property-chain, or bare-property spelling and an `if` expression must have
-/// an `else` arm, otherwise the whole binding fails closed; an explicitly
-/// typed declaration binds through the declared type instead. The bound name
-/// shadows same-named objects and types at trace time.
+/// Holder().make().items[0].item }`, or an elvis (`?:`) expression such as
+/// `val group = nullableH?.let { it.make() } ?: Holder().make()`. Every
+/// branch must yield a call-callee, property-chain, scope-function, or
+/// bare-property spelling, an `if` expression must have an `else` arm, and an
+/// elvis expression must use the `?:` operator, otherwise the whole binding
+/// fails closed; an explicitly typed declaration binds through the declared
+/// type instead. The bound name shadows same-named objects and types at trace
+/// time.
 fn kotlin_branch_initializer_binding(
     property: Node<'_>,
     source: &str,
@@ -771,12 +809,21 @@ fn kotlin_branch_initializer_binding(
     }
     let Some(initializer) = children
         .iter()
-        .find(|child| matches!(child.kind(), "if_expression" | "when_expression"))
+        .find(|child| {
+            matches!(
+                child.kind(),
+                "if_expression" | "when_expression" | "binary_expression"
+            )
+        })
         .copied()
     else {
         return Ok(None);
     };
-    let Some(branches) = kotlin_if_when_branch_spellings(initializer, source)? else {
+    let Some(branches) = (if initializer.kind() == "binary_expression" {
+        kotlin_elvis_branch_spellings(initializer, source)?
+    } else {
+        kotlin_if_when_branch_spellings(initializer, source)?
+    }) else {
         return Ok(None);
     };
     if branches.is_empty() {
