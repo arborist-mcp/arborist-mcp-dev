@@ -51089,3 +51089,129 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_this_rooted_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runThisBody(): Int {\n        val group = h.run { this.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun withThisBody(): Int {\n        val group = with(h) { this.make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runThisChained(): Int {\n        val first = h.run { this.make().items[0].item }\n        return first.helper(3)\n    }\n    fun withThisChained(): Int {\n        val first = with(h) { this.make().items[0].item }\n        return first.helper(4)\n    }\n    fun runThisBare(): Int {\n        val holder = h.run { this }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runThisElemAccess(): Int {\n        val inner = h.run { this.make().items[0] }\n        val first = inner.item\n        return first.helper(6)\n    }\n    fun runThisUnknownFailsClosed(): Int {\n        val group = h.run { this.missing() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    val h: ImportedHolder = ImportedHolder()\n    fun runImportedRunThis(): Int {\n        val group = h.run { this.make() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runImportedWithThis(): Int {\n        val group = with(h) { this.make() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // `run`/`with` scope-function lambdas that reference the receiver through
+    // an explicit `this` root pin a `val` local through the same
+    // receiver-qualified lambda result as unqualified bodies: a factory call
+    // (`h.run { this.make() }`, `with(h) { this.make() }`), a direct property
+    // chain (`h.run { this.make().items[0].item }`,
+    // `with(h) { this.make().items[0].item }`), a bare `this` body
+    // (`h.run { this }`), an element-access terminal
+    // (`h.run { this.make().items[0] }`), and cross-file imported holder
+    // receivers (`h.run { this.make() }` and `with(h) { this.make() }` in an
+    // imported package). An unknown terminal method
+    // (`h.run { this.missing() }`) fails closed, so the six same-package
+    // callers in `Util` dispatch on `com::example::Item::helper` and the two
+    // imported callers in `Util2` dispatch on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runThisBody",
+        "com::example::Util::withThisBody",
+        "com::example::Util::runThisChained",
+        "com::example::Util::withThisChained",
+        "com::example::Util::runThisBare",
+        "com::example::Util::runThisElemAccess",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util::runThisUnknownFailsClosed"),
+        "unexpected caller runThisUnknownFailsClosed"
+    );
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedRunThis",
+        "com::example::Util2::runImportedWithThis",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runThisBody",
+        "com::example::Util::withThisBody",
+        "com::example::Util::runThisChained",
+        "com::example::Util::withThisChained",
+        "com::example::Util::runThisBare",
+        "com::example::Util::runThisElemAccess",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util::runThisUnknownFailsClosed"),
+        "unexpected persisted caller runThisUnknownFailsClosed"
+    );
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedRunThis",
+        "com::example::Util2::runImportedWithThis",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}

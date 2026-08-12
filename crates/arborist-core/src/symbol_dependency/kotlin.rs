@@ -977,16 +977,24 @@ fn kotlin_scope_function_binding(
                 }
             } else {
                 // `run` and `with` lambdas reference the receiver as `this`,
-                // so unqualified bodies are rewritten with a leading receiver
-                // hop; bodies that already use an explicit root fail closed.
+                // so unqualified bodies and `this`-rooted bodies such as
+                // `this.make()` are rewritten with a leading receiver hop
+                // (a bare `this` body rewrites to the receiver itself, since
+                // `run`/`with` return the lambda result); bodies that use
+                // another explicit root fail closed.
                 if body_text.starts_with("it.")
                     || body_text == "it"
-                    || body_text.starts_with("this.")
                     || body_text.starts_with("super.")
                 {
                     return Ok(None);
                 }
-                format!("{receiver}.{body_text}")
+                if let Some(rest) = body_text.strip_prefix("this.") {
+                    format!("{receiver}.{rest}")
+                } else if body_text == "this" {
+                    receiver
+                } else {
+                    format!("{receiver}.{body_text}")
+                }
             };
             Ok(kotlin_scope_body_binding(&rewritten))
         }
