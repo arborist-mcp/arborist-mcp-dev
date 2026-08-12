@@ -12667,6 +12667,29 @@ fn kotlin_property_chain_initializer_root(
         )? {
             return Ok(Some((object_path, 1)));
         }
+        // A nested constructor-call chain root such as `Outer.Nested()` in
+        // `val group = Outer.Nested().make().items[0]` or
+        // `Outer.Nested.Inner()` in `val group = Outer.Nested.Inner().make()`
+        // resolves the first hop as a type path, walks each following
+        // non-`()` hop through uniquely declared nested types, and constructs
+        // the first `()`-marked hop as a uniquely constructible nested class,
+        // consuming all hops up to and including the constructor hop so the
+        // remaining chain dispatches on the constructed nested type. Unknown,
+        // ambiguous, and non-constructible nested classes and unresolvable
+        // intermediate hops return `None` so the companion-chain roots below
+        // still resolve `Outer.Nested.make()` and `Outer.Nested` chains.
+        if let Some((nested_path, consumed)) = resolve_kotlin_nested_constructor_chain_root(
+            source_symbol,
+            hops,
+            bindings.as_ref(),
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some((nested_path, consumed)));
+        }
         if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
             source_symbol,
             hops,
@@ -13649,7 +13672,7 @@ fn kotlin_chain_hop_type_path(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(method_name) = kotlin_method_call_hop_spelling(hop) {
-        return kotlin_method_call_hop_type_path(
+        if let Some(path) = kotlin_method_call_hop_type_path(
             owner_type_path,
             &method_name,
             source_symbol,
@@ -13658,7 +13681,24 @@ fn kotlin_chain_hop_type_path(
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        );
+        )? {
+            return Ok(Some(path));
+        }
+        // A `()`-marked hop that is not a member function may construct a
+        // uniquely declared nested class, such as `Nested()` in
+        // `Outer.Nested().make()` or `Inner()` in
+        // `Outer.Nested.Inner().make()`; the constructed nested class path
+        // continues the chain. Unknown, ambiguous, and non-constructible
+        // nested classes fail closed.
+        if let Some(nested_path) = kotlin_constructor_hop_path(
+            owner_type_path,
+            &method_name,
+            raw_symbols,
+            semantic_path_index,
+        ) {
+            return Ok(Some(nested_path));
+        }
+        return Ok(None);
     }
     if let Some((base_name, _)) = kotlin_array_access_spelling(hop)
         && !base_name.contains('(')
@@ -13900,6 +13940,48 @@ fn resolve_kotlin_receiver_chain_first_path(
         )?
     {
         return Ok(Some((component_path, 1)));
+    }
+    // A leading constructor-call hop such as `Holder()` in
+    // `val group = Holder().make()` resolves to the uniquely constructible
+    // class path and consumes one hop so the terminal method-call hop
+    // dispatches on the constructed type; unknown, ambiguous, and
+    // non-constructible names fail closed.
+    if let Some(constructor_name) = kotlin_method_call_hop_spelling(hops[0])
+        && let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &constructor_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        && kotlin_constructible_class_indexes(&type_path, raw_symbols, semantic_path_index).len()
+            == 1
+    {
+        return Ok(Some((type_path, 1)));
+    }
+    // A nested constructor-call chain root such as `Outer.Nested()` in
+    // `val group = Outer.Nested().make()` or `Outer.Nested.Inner()` in
+    // `val group = Outer.Nested.Inner().make()` resolves the first hop as a
+    // type path, walks each following non-`()` hop through uniquely declared
+    // nested types, and constructs the first `()`-marked hop as a uniquely
+    // constructible nested class, consuming all hops up to and including the
+    // constructor hop so the remaining chain dispatches on the constructed
+    // nested type. Unknown, ambiguous, and non-constructible nested classes
+    // and unresolvable intermediate hops return `None` so the companion-chain
+    // and object roots below still resolve `Outer.Nested.make()` and
+    // `Outer.Nested` chains.
+    if let Some((nested_path, consumed)) = resolve_kotlin_nested_constructor_chain_root(
+        source_symbol,
+        hops,
+        bindings,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some((nested_path, consumed)));
     }
     if let Some((companion_root, consumed)) = kotlin_companion_chain_root(
         source_symbol,
@@ -15566,6 +15648,85 @@ fn kotlin_nested_type_hop_path(
         }
     }
     (type_count == 1).then_some(nested_path)
+}
+
+/// Returns the constructed type path when a `()`-marked chain hop names a
+/// uniquely constructible nested class directly under `owner_type_path`, such
+/// as `Nested()` in `Outer.Nested().make()` after the `Outer` root; unknown,
+/// ambiguous, and non-constructible nested classes fail closed.
+fn kotlin_constructor_hop_path(
+    owner_type_path: &str,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    let nested_path = format!("{owner_type_path}::{type_name}");
+    (kotlin_constructible_class_indexes(&nested_path, raw_symbols, semantic_path_index).len() == 1)
+        .then_some(nested_path)
+}
+
+/// Resolves a nested constructor-call chain root such as `Outer.Nested()` in
+/// `val group = Outer.Nested().make()` or `Outer.Nested.Inner()` in
+/// `val group = Outer.Nested.Inner().make()` to the constructed type path and
+/// the number of leading hops consumed. The first hop must resolve as a type
+/// path and must not be shadowed by a local binding; each following non-`()`
+/// hop walks a uniquely declared nested type, and the first `()`-marked hop
+/// must construct a uniquely declared nested class. The constructed path
+/// consumes all hops up to and including the constructor hop so callers
+/// dispatch the remaining chain on it. Unknown or ambiguous roots, shadowed
+/// first hops, unresolvable intermediate nested types, and unknown,
+/// ambiguous, or non-constructible nested classes return `None` so callers
+/// fall through to companion, object, and other receiver roots instead of
+/// guessing.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_nested_constructor_chain_root(
+    source_symbol: &IndexedSymbol,
+    hops: &[&str],
+    bindings: Option<&KotlinReceiverTypeBindings>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, usize)>> {
+    if hops.len() < 2
+        || kotlin_method_call_hop_spelling(hops[0]).is_some()
+        || bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        return Ok(None);
+    }
+    let Some(mut owner_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut consumed = 1;
+    while consumed < hops.len() {
+        let hop = hops[consumed];
+        if let Some(constructor_name) = kotlin_method_call_hop_spelling(hop) {
+            return Ok(kotlin_constructor_hop_path(
+                &owner_path,
+                &constructor_name,
+                raw_symbols,
+                semantic_path_index,
+            )
+            .map(|nested_path| (nested_path, consumed + 1)));
+        }
+        let Some(nested_path) = kotlin_nested_type_hop_path(&owner_path, hop, raw_symbols) else {
+            return Ok(None);
+        };
+        owner_path = nested_path;
+        consumed += 1;
+    }
+    Ok(None)
 }
 
 /// Resolves a `()`-marked receiver chain such as
