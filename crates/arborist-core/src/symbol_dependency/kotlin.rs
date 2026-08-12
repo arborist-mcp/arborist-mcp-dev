@@ -350,6 +350,15 @@ fn kotlin_receiver_type_bindings_for_node(
             for member in companion_body.named_children(&mut member_cursor) {
                 if member.kind() == "property_declaration"
                     && let Some((name, branches)) =
+                        kotlin_scope_branch_initializer_binding(member, source)?
+                {
+                    insert_kotlin_shadowable_branch_initializer_binding(
+                        &mut bindings,
+                        name,
+                        branches,
+                    );
+                } else if member.kind() == "property_declaration"
+                    && let Some((name, branches)) =
                         kotlin_branch_initializer_binding(member, source)?
                 {
                     insert_kotlin_shadowable_branch_initializer_binding(
@@ -414,6 +423,10 @@ fn collect_kotlin_body_property_bindings(
         return Ok(());
     }
     if node.kind() == "property_declaration"
+        && let Some((name, branches)) = kotlin_scope_branch_initializer_binding(node, source)?
+    {
+        insert_kotlin_branch_initializer_binding(bindings, name, branches);
+    } else if node.kind() == "property_declaration"
         && let Some((name, branches)) = kotlin_branch_initializer_binding(node, source)?
     {
         insert_kotlin_branch_initializer_binding(bindings, name, branches);
@@ -1136,6 +1149,260 @@ fn kotlin_scope_lambda_result_spelling(
     }
 }
 
+/// Rewrites a single branch expression of a scope-function lambda result that
+/// is an `if`/`when` or elvis expression to the receiver-qualified spelling
+/// of a direct branch initializer: the branch's `val` local roots expand to
+/// their initializer spellings, then the body is rewritten through the same
+/// receiver rules as a single-expression body (`it.`/`{param}.`/`this`/
+/// unqualified), and the result classifies into a dotted factory callee
+/// (`h.make`), a property chain (`h.make().items[0].item`), or a bare
+/// receiver (`h`). Unsupported branches return `None` so scope-function
+/// branch results fail closed.
+fn kotlin_scope_lambda_branch_spelling(
+    branch: Node<'_>,
+    locals: &BTreeMap<String, String>,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<String>> {
+    let text = kotlin_scope_lambda_result_spelling(branch, locals, source)?;
+    let Some(rewritten) =
+        kotlin_scope_function_body_rewrite(&text, scope_name, param_name, receiver)
+    else {
+        return Ok(None);
+    };
+    let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&rewritten) else {
+        return Ok(None);
+    };
+    if !type_name.is_empty() {
+        return Ok(Some(type_name));
+    }
+    if let Some(chain) = property_chain_base {
+        return Ok(Some(chain));
+    }
+    Ok(None)
+}
+
+/// Returns the deduplicated receiver-qualified branch spellings of a
+/// scope-function lambda result that is an `if`/`when` or elvis (`?:`)
+/// expression, such as the `it.make()` and `it.makeAlt()` branches of
+/// `h.let { if (flag) it.make() else it.makeAlt() }`. Each branch expands its
+/// `val` local roots and rewrites through the same receiver rules as a
+/// single-expression body, yielding the same call-callee, property-chain, or
+/// bare-receiver spellings as a direct branch initializer; an `if` must have
+/// an `else` arm (or else-if arms) with at least two distinct spellings, a
+/// `when` must include an `else` arm, and an elvis expression must use the
+/// `?:` operator with both operands, otherwise the whole binding fails
+/// closed.
+fn kotlin_scope_lambda_branch_spellings(
+    result: Node<'_>,
+    locals: &BTreeMap<String, String>,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let mut spellings = Vec::new();
+    let mut seen = BTreeSet::new();
+    if result.kind() == "if_expression" {
+        let mut cursor = result.walk();
+        let children = result.named_children(&mut cursor).collect::<Vec<_>>();
+        // The first named child is the condition; the rest are then/else arms
+        // (an `else if` arm is itself a nested `if_expression`).
+        for branch in children.iter().skip(1) {
+            if matches!(branch.kind(), "if_expression" | "when_expression") {
+                let Some(nested) = kotlin_scope_lambda_branch_spellings(
+                    *branch, locals, scope_name, param_name, receiver, source,
+                )?
+                else {
+                    return Ok(None);
+                };
+                for spelling in nested {
+                    if seen.insert(spelling.clone()) {
+                        spellings.push(spelling);
+                    }
+                }
+            } else if let Some(spelling) = kotlin_scope_lambda_branch_spelling(
+                *branch, locals, scope_name, param_name, receiver, source,
+            )? {
+                if seen.insert(spelling.clone()) {
+                    spellings.push(spelling);
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+        // An `if` without an `else` arm (or whose distinct branches collapse
+        // to a single spelling) has no value type to bind.
+        if spellings.len() < 2 {
+            return Ok(None);
+        }
+        return Ok(Some(spellings));
+    }
+    if result.kind() == "when_expression" {
+        let mut cursor = result.walk();
+        let mut has_else = false;
+        for entry in result.named_children(&mut cursor) {
+            if entry.kind() != "when_entry" {
+                continue;
+            }
+            let mut entry_cursor = entry.walk();
+            let entry_children = entry.named_children(&mut entry_cursor).collect::<Vec<_>>();
+            // An `else` arm has no condition child, only the body expression.
+            has_else |= entry_children.len() == 1;
+            let Some(body) = entry_children.last().copied() else {
+                return Ok(None);
+            };
+            let Some(spelling) = kotlin_scope_lambda_branch_spelling(
+                body, locals, scope_name, param_name, receiver, source,
+            )?
+            else {
+                return Ok(None);
+            };
+            if seen.insert(spelling.clone()) {
+                spellings.push(spelling);
+            }
+        }
+        // A `when` used as an expression without an `else` arm has no value
+        // type to bind (its type includes `Unit`), so it fails closed.
+        if !has_else || spellings.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(spellings));
+    }
+    if result.kind() == "binary_expression" {
+        let mut cursor = result.walk();
+        let children = result.named_children(&mut cursor).collect::<Vec<_>>();
+        if children.len() != 2 {
+            return Ok(None);
+        }
+        // The `?:` operator sits between the two operand nodes; other binary
+        // operators fail closed.
+        let operator = source
+            .get(children[0].end_byte()..children[1].start_byte())
+            .unwrap_or_default()
+            .trim();
+        if operator != "?:" {
+            return Ok(None);
+        }
+        for operand in [children[0], children[1]] {
+            let Some(spelling) = kotlin_scope_lambda_branch_spelling(
+                operand, locals, scope_name, param_name, receiver, source,
+            )?
+            else {
+                return Ok(None);
+            };
+            spellings.push(spelling);
+        }
+        return Ok(Some(spellings));
+    }
+    Ok(None)
+}
+
+/// Extracts a branch initializer binding from a `val`/`var` declaration whose
+/// initializer is a scope-function call whose lambda result is an `if`/`when`
+/// or elvis (`?:`) expression, such as
+/// `val group = h.let { if (flag) it.make() else it.makeAlt() }` or
+/// `val first = h.let { when (flag) { true -> it.make().items[0].item; else ->
+/// it.makeAlt().items[0].item } }`. Each branch is expanded through the
+/// lambda's `val` locals and rewritten to the receiver-qualified spelling of
+/// a direct branch initializer, and the common type is resolved at trace time
+/// through the same branch rules; an explicitly typed declaration binds
+/// through the declared type instead. Unknown terminal methods, divergent
+/// branch types, an `if` without an `else` arm, and malformed lambda bodies
+/// fail closed.
+fn kotlin_scope_branch_initializer_binding(
+    property: Node<'_>,
+    source: &str,
+) -> Result<Option<KotlinBranchInitializerBinding>> {
+    let mut cursor = property.walk();
+    let children = property.named_children(&mut cursor).collect::<Vec<_>>();
+    let Some(variable) = children
+        .iter()
+        .find(|child| child.kind() == "variable_declaration")
+    else {
+        return Ok(None);
+    };
+    let mut variable_cursor = variable.walk();
+    let variable_children = variable
+        .named_children(&mut variable_cursor)
+        .collect::<Vec<_>>();
+    let Some(name_node) = variable_children
+        .iter()
+        .find(|child| child.kind() == "identifier")
+    else {
+        return Ok(None);
+    };
+    let name = node_text(*name_node, source)?.trim().to_string();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    // An explicitly typed declaration binds through the declared type, not
+    // the initializer branches.
+    if variable_children
+        .iter()
+        .any(|child| kotlin_is_type_node_kind(child.kind()))
+    {
+        return Ok(None);
+    }
+    let Some(initializer) = children
+        .iter()
+        .find(|child| child.kind() == "call_expression")
+        .copied()
+    else {
+        return Ok(None);
+    };
+    let mut cursor = initializer.walk();
+    let call_children = initializer.named_children(&mut cursor).collect::<Vec<_>>();
+    if call_children.len() != 2 {
+        return Ok(None);
+    }
+    let Some(lambda) = call_children
+        .iter()
+        .find(|child| child.kind() == "annotated_lambda")
+        .copied()
+    else {
+        return Ok(None);
+    };
+    let callee = call_children[0];
+    let Some((receiver, scope_name)) = kotlin_scope_function_callee(callee, source)? else {
+        return Ok(None);
+    };
+    // `apply`/`also` return the receiver regardless of the lambda body, so
+    // only result-bearing scope functions can bind through a branch result.
+    if !matches!(scope_name.as_str(), "let" | "run" | "with") {
+        return Ok(None);
+    }
+    let Some((param_name, statements, result)) = kotlin_scope_lambda_body(lambda, source)? else {
+        return Ok(None);
+    };
+    if !matches!(
+        result.kind(),
+        "if_expression" | "when_expression" | "binary_expression"
+    ) {
+        return Ok(None);
+    }
+    let Some(locals) = kotlin_scope_lambda_locals(&statements, source)? else {
+        return Ok(None);
+    };
+    let Some(branches) = kotlin_scope_lambda_branch_spellings(
+        result,
+        &locals,
+        &scope_name,
+        param_name.as_deref(),
+        &receiver,
+        source,
+    )?
+    else {
+        return Ok(None);
+    };
+    if branches.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((name, branches)))
+}
+
 /// Classifies a receiver-qualified scope-function lambda body spelling into a
 /// property binding shape: a dotted factory-call body such as `h.make()`
 /// records the callee `h.make` as a type name, a chain body such as
@@ -1162,6 +1429,63 @@ fn kotlin_scope_body_binding(rewritten: &str) -> Option<(String, Option<String>,
         return Some((String::new(), None, Some(rewritten.to_string())));
     }
     None
+}
+
+/// Rewrites a scope-function lambda body expression spelling to the
+/// receiver-qualified spelling used by direct initializers: `let` lambdas
+/// receive `it` (or an explicit parameter name), so the body must reference
+/// the receiver through that name (`it.`/`{param}.`) or as the bare name
+/// itself; `run`/`with` lambdas reference the receiver as `this` (or through
+/// an explicit parameter name when one is declared), so unqualified bodies,
+/// `this`-rooted bodies such as `this.make()`, and parameter-rooted bodies
+/// such as `holder.make()` are rewritten with a leading receiver hop (a bare
+/// `this` or bare parameter body rewrites to the receiver itself, since
+/// `run`/`with` return the lambda result). Returns `None` when the body roots
+/// on an unknown name (`it.`/`super.` inside `run`/`with`, or a name other
+/// than the `let` receiver reference) so scope-function initializers fail
+/// closed.
+fn kotlin_scope_function_body_rewrite(
+    body_text: &str,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+) -> Option<String> {
+    if scope_name == "let" {
+        let reference = param_name.unwrap_or("it");
+        if let Some(rest) = body_text.strip_prefix(&format!("{reference}.")) {
+            return Some(format!("{receiver}.{rest}"));
+        }
+        if body_text == reference {
+            return Some(receiver.to_string());
+        }
+        return None;
+    }
+    // `run` and `with` lambdas reference the receiver as `this` (or through
+    // an explicit parameter name when one is declared), so unqualified
+    // bodies, `this`-rooted bodies such as `this.make()`, and
+    // parameter-rooted bodies such as `holder.make()` are rewritten with a
+    // leading receiver hop (a bare `this` or bare parameter body rewrites to
+    // the receiver itself, since `run`/`with` return the lambda result);
+    // bodies that use another explicit root fail closed.
+    if body_text.starts_with("it.") || body_text == "it" || body_text.starts_with("super.") {
+        return None;
+    }
+    if let Some(rest) = body_text.strip_prefix("this.") {
+        return Some(format!("{receiver}.{rest}"));
+    }
+    if body_text == "this" {
+        return Some(receiver.to_string());
+    }
+    if let Some(param) = param_name {
+        if let Some(rest) = body_text.strip_prefix(&format!("{param}.")) {
+            return Some(format!("{receiver}.{rest}"));
+        }
+        if body_text == param {
+            return Some(receiver.to_string());
+        }
+        return Some(format!("{receiver}.{body_text}"));
+    }
+    Some(format!("{receiver}.{body_text}"))
 }
 
 /// Recognizes a scope-function call initializer such as `h.let { it.make() }`,
@@ -1221,48 +1545,13 @@ fn kotlin_scope_function_binding(
             if body_text.is_empty() {
                 return Ok(None);
             }
-            let rewritten = if scope_name == "let" {
-                // `let` lambdas receive `it` (or an explicit parameter name),
-                // so the body must reference the receiver through that name
-                // (`it.`/`{param}.`) or as the bare name itself.
-                let reference = param_name.as_deref().unwrap_or("it");
-                if let Some(rest) = body_text.strip_prefix(&format!("{reference}.")) {
-                    format!("{receiver}.{rest}")
-                } else if body_text == reference {
-                    receiver
-                } else {
-                    return Ok(None);
-                }
-            } else {
-                // `run` and `with` lambdas reference the receiver as `this`
-                // (or through an explicit parameter name when one is
-                // declared), so unqualified bodies, `this`-rooted bodies such
-                // as `this.make()`, and parameter-rooted bodies such as
-                // `holder.make()` are rewritten with a leading receiver hop (a
-                // bare `this` or bare parameter body rewrites to the receiver
-                // itself, since `run`/`with` return the lambda result);
-                // bodies that use another explicit root fail closed.
-                if body_text.starts_with("it.")
-                    || body_text == "it"
-                    || body_text.starts_with("super.")
-                {
-                    return Ok(None);
-                }
-                if let Some(rest) = body_text.strip_prefix("this.") {
-                    format!("{receiver}.{rest}")
-                } else if body_text == "this" {
-                    receiver
-                } else if let Some(param) = param_name.as_deref() {
-                    if let Some(rest) = body_text.strip_prefix(&format!("{param}.")) {
-                        format!("{receiver}.{rest}")
-                    } else if body_text == param {
-                        receiver
-                    } else {
-                        format!("{receiver}.{body_text}")
-                    }
-                } else {
-                    format!("{receiver}.{body_text}")
-                }
+            let Some(rewritten) = kotlin_scope_function_body_rewrite(
+                &body_text,
+                &scope_name,
+                param_name.as_deref(),
+                &receiver,
+            ) else {
+                return Ok(None);
             };
             Ok(kotlin_scope_body_binding(&rewritten))
         }
