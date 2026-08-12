@@ -1138,25 +1138,35 @@ fn kotlin_scope_lambda_result_spelling(
     source: &str,
 ) -> Result<String> {
     let text = node_text(result, source)?.trim().to_string();
+    Ok(kotlin_scope_lambda_result_spelling_text(&text, locals))
+}
+
+fn kotlin_scope_lambda_result_spelling_text(
+    text: &str,
+    locals: &BTreeMap<String, String>,
+) -> String {
     if text.is_empty() {
-        return Ok(text);
+        return text.to_string();
     }
     let root = text.split(['.', '[', '(']).next().unwrap_or_default();
     if let Some(initializer) = locals.get(root) {
-        Ok(format!("{initializer}{}", &text[root.len()..]))
+        format!("{initializer}{}", &text[root.len()..])
     } else {
-        Ok(text)
+        text.to_string()
     }
 }
 
 /// Rewrites a single branch expression of a scope-function lambda result that
 /// is an `if`/`when` or elvis expression to the receiver-qualified spelling
-/// of a direct branch initializer: the branch's `val` local roots expand to
-/// their initializer spellings, then the body is rewritten through the same
-/// receiver rules as a single-expression body (`it.`/`{param}.`/`this`/
-/// unqualified), and the result classifies into a dotted factory callee
-/// (`h.make`), a property chain (`h.make().items[0].item`), or a bare
-/// receiver (`h`). Unsupported branches return `None` so scope-function
+/// of a direct branch initializer. A branch that is itself a scope-function
+/// call (such as `it.make().let { g -> g }` or `g1.run { g -> g }` with a
+/// local `g1`) first resolves through the same nested receiver rules as a
+/// scope-function initializer to its lambda-result spelling, then expands its
+/// `val` local roots; other branches keep their text. The resulting text is
+/// rewritten through the outer lambda's receiver rules
+/// (`it.`/`{param}.`/`this`/unqualified), and classifies into a dotted
+/// factory callee (`h.make`), a property chain (`h.make().items[0].item`), or
+/// a bare receiver (`h`). Unsupported branches return `None` so scope-function
 /// branch results fail closed.
 fn kotlin_scope_lambda_branch_spelling(
     branch: Node<'_>,
@@ -1166,6 +1176,38 @@ fn kotlin_scope_lambda_branch_spelling(
     receiver: &str,
     source: &str,
 ) -> Result<Option<String>> {
+    // A branch that is itself a scope-function call binds its
+    // receiver-qualified lambda result first (a dotted factory callee such as
+    // `it.make`, a property chain, or the nested receiver itself), so the
+    // outer lambda can continue through the nested call's result type.
+    if branch.kind() == "call_expression"
+        && let Some((nested_type, _, nested_chain)) = kotlin_scope_function_binding(branch, source)?
+    {
+        let spelling = if !nested_type.is_empty() {
+            nested_type
+        } else if let Some(chain) = nested_chain {
+            chain
+        } else {
+            return Ok(None);
+        };
+        let expanded = kotlin_scope_lambda_result_spelling_text(&spelling, locals);
+        let Some(rewritten) =
+            kotlin_scope_function_body_rewrite(&expanded, scope_name, param_name, receiver)
+        else {
+            return Ok(None);
+        };
+        let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&rewritten)
+        else {
+            return Ok(None);
+        };
+        if !type_name.is_empty() {
+            return Ok(Some(type_name));
+        }
+        if let Some(chain) = property_chain_base {
+            return Ok(Some(chain));
+        }
+        return Ok(None);
+    }
     let text = kotlin_scope_lambda_result_spelling(branch, locals, source)?;
     let Some(rewritten) =
         kotlin_scope_function_body_rewrite(&text, scope_name, param_name, receiver)

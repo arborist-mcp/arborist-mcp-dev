@@ -52678,3 +52678,155 @@ fn traces_kotlin_property_chain_initializer_scope_function_branch_result_binding
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_nested_scope_call_branch_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun flag(): Boolean = true\n    fun runNestedScopeLet(): Int {\n        val group = h.let { if (flag()) it.make().let { g -> g } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runNestedScopeRun(): Int {\n        val group = h.run { if (flag()) make().let { g -> g } else makeAlt() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNestedScopeWith(): Int {\n        val group = with(h) { if (flag()) make().run { g -> g } else makeAlt() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runNestedScopeParam(): Int {\n        val group = h.let { holder -> if (flag()) holder.make().let { g -> g } else holder.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runNestedScopeElvis(): Int {\n        val group = h.let { it.make()?.let { g -> g } ?: it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runNestedScopeMultiLocal(): Int {\n        val group = h.let { val g1 = it.make(); if (flag()) g1.let { g -> g } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runNestedScopeInnerMulti(): Int {\n        val group = h.let { if (flag()) it.make().let { val g2 = it.make(); g2 } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runNestedScopeChainBranch(): Int {\n        val first = h.let { if (flag()) it.make().let { g -> g.items[0].item } else it.makeAlt().items[0].item }\n        return first.helper(8)\n    }\n    fun runNestedRunNested(): Int {\n        val group = h.run { if (flag()) make().run { g -> g } else makeAlt() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runNestedScopeUnknownFailsClosed(): Int {\n        val group = h.let { if (flag()) it.make().let { g -> g.missing() } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runNestedScopeDivergentFailsClosed(): Int {\n        val group = h.let { if (flag()) it.make().let { g -> g } else it.makeAlt().items[0].item }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n    fun makeAlt(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n    fun makeAlt(): ImportedGroup = ImportedGroup()\n}",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedGroup\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun flag(): Boolean = true\n    fun runImportedNestedScope(): Int {\n        val group = ImportedHolder().let { if (flag()) it.make().let { g -> g } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n    fun runImportedNestedScopeElvis(): Int {\n        val group = ImportedHolder().let { it.make()?.let { g -> g } ?: it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch result whose individual branches are
+    // themselves scope-function calls resolves each branch through the same
+    // nested receiver rules as a scope-function initializer before applying
+    // the outer lambda's receiver rewrite, so
+    // `h.let { if (flag()) it.make().let { g -> g } else it.makeAlt() }`
+    // binds the branch spelling `h.make` from the nested `let` result and
+    // `h.makeAlt` from the plain branch. This covers `let`/`run`/`with`
+    // outers (`make().let { g -> g }`, `make().run { g -> g }`, and a nested
+    // `run` inside a `run` outer), explicit parameters
+    // (`holder.make().let { g -> g }`), elvis operands
+    // (`it.make()?.let { g -> g } ?: it.makeAlt()`), outer multi-statement
+    // locals (`val g1 = it.make(); if (flag()) g1.let { g -> g }`), inner
+    // multi-statement lambda bodies
+    // (`it.make().let { val g2 = it.make(); g2 }`), property-chain branches
+    // (`it.make().let { g -> g.items[0].item }` vs
+    // `it.makeAlt().items[0].item`), and cross-file imported constructor
+    // roots (`ImportedHolder().let { if (flag()) it.make().let { g -> g }
+    // else it.makeAlt() }`). An inner lambda with an unknown terminal method
+    // (`g.missing()`) and divergent branch types (`it.make().let { g -> g }`
+    // vs `it.makeAlt().items[0].item`) fail closed, so the nine
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the two imported callers in `Util2` dispatch on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runNestedScopeLet",
+        "com::example::Util::runNestedScopeRun",
+        "com::example::Util::runNestedScopeWith",
+        "com::example::Util::runNestedScopeParam",
+        "com::example::Util::runNestedScopeElvis",
+        "com::example::Util::runNestedScopeMultiLocal",
+        "com::example::Util::runNestedScopeInnerMulti",
+        "com::example::Util::runNestedScopeChainBranch",
+        "com::example::Util::runNestedRunNested",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runNestedScopeUnknownFailsClosed",
+        "com::example::Util::runNestedScopeDivergentFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedNestedScope",
+        "com::example::Util2::runImportedNestedScopeElvis",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runNestedScopeLet",
+        "com::example::Util::runNestedScopeRun",
+        "com::example::Util::runNestedScopeWith",
+        "com::example::Util::runNestedScopeParam",
+        "com::example::Util::runNestedScopeElvis",
+        "com::example::Util::runNestedScopeMultiLocal",
+        "com::example::Util::runNestedScopeInnerMulti",
+        "com::example::Util::runNestedScopeChainBranch",
+        "com::example::Util::runNestedRunNested",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runNestedScopeUnknownFailsClosed",
+        "com::example::Util::runNestedScopeDivergentFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedNestedScope",
+        "com::example::Util2::runImportedNestedScopeElvis",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}
