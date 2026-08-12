@@ -11252,6 +11252,28 @@ fn resolve_kotlin_qualified_initializer_function_path(
             raw_symbols,
         ));
     }
+    // A multi-hop receiver prefix such as `h.maker.make` or
+    // `Registry.factory.make` walks the prefix as a property chain on the
+    // bound receiver, object, or class scope before looking up the member
+    // function on the terminal type; unknown or unresolvable hops fail
+    // closed.
+    if receiver_ref.contains('.')
+        && let Some(type_path) = resolve_kotlin_receiver_chain_type_path(
+            source_symbol,
+            receiver_ref,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(kotlin_scope_function_path(
+            &type_path,
+            function_name,
+            raw_symbols,
+        ));
+    }
     Ok(None)
 }
 
@@ -12627,18 +12649,46 @@ fn resolve_kotlin_property_chain_array_component_type_path(
                 .as_ref()
                 .and_then(|bindings| bindings.type_for(hops[0]))
             {
-                let Some(component_name) = kotlin_array_type_component_name(&type_name) else {
-                    return Ok(None);
-                };
-                return resolve_kotlin_initializer_type_path(
-                    source_symbol,
-                    &component_name,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                    kotlin_import_contexts_by_file,
-                    deadline,
-                );
+                if let Some(component_name) = kotlin_array_type_component_name(&type_name) {
+                    return resolve_kotlin_initializer_type_path(
+                        source_symbol,
+                        &component_name,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        kotlin_import_contexts_by_file,
+                        deadline,
+                    );
+                }
+                // A name bound from a factory or method-call initializer such
+                // as `val x = makeItems()` or `val x = holder.make()` records
+                // the callee spelling as its type; when the spelling does not
+                // resolve as a type, the element access dispatches through the
+                // factory's declared return array's element component type.
+                if !type_name.is_empty()
+                    && resolve_kotlin_receiver_type_path(
+                        source_symbol,
+                        &type_name,
+                        raw_symbols,
+                        file_overrides,
+                        kotlin_import_contexts_by_file,
+                        deadline,
+                    )?
+                    .is_none()
+                    && let Some((component_path, _)) =
+                        resolve_kotlin_factory_array_element_component_type(
+                            source_symbol,
+                            &type_name,
+                            raw_symbols,
+                            semantic_path_index,
+                            file_overrides,
+                            kotlin_import_contexts_by_file,
+                            deadline,
+                        )?
+                {
+                    return Ok(Some(component_path));
+                }
+                return Ok(None);
             }
             if let Some(base) = bindings
                 .as_ref()

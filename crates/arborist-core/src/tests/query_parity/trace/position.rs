@@ -33210,6 +33210,68 @@ fn traces_kotlin_property_chain_initializer_bound_array_roots_in_live_workspace_
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_factory_array_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Maker {\n    fun make(): Array<Item> = arrayOf()\n}\n\nclass Holder {\n    val maker: Maker = Maker()\n    fun make(): Array<Item> = arrayOf()\n}\n\nclass Factory {\n    fun make(): Array<Item> = arrayOf()\n}\n\nobject Registry {\n    val factory: Factory = Factory()\n}\n\nclass NonArrayMaker {\n    fun make(): Item = Item()\n}\n\nclass Util {\n    fun makeItems(): Array<Item> = arrayOf()\n    fun runLocalFactory(): Int {\n        val x = makeItems()\n        val first = x\n        return first[0].helper(1)\n    }\n    fun runMemberMethod(): Int {\n        val holder = Holder()\n        val x = holder.make()\n        val first = x\n        return first[0].helper(2)\n    }\n    fun runChainMethod(): Int {\n        val h = Holder()\n        val x = h.maker.make()\n        val first = x\n        return first[0].helper(3)\n    }\n    fun runObjectChain(): Int {\n        val x = Registry.factory.make()\n        val first = x\n        return first[0].helper(4)\n    }\n    fun runDirectChainMethod(): Int {\n        val h = Holder()\n        val x = h.maker.make()\n        return x[0].helper(5)\n    }\n}\n\nclass Util2 {\n    fun runNonArrayFactory(): Int {\n        val maker = NonArrayMaker()\n        val x = maker.make()\n        val first = x\n        return first[0].helper(6)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A single-hop array terminal also resolves when the name is bound from a
+    // factory or method-call initializer whose declared return type is a
+    // single-level array: a bare local factory (`val x = makeItems()`), a
+    // bound-receiver method (`val x = holder.make()`), a multi-hop property
+    // chain factory (`val x = h.maker.make()`), an object property chain
+    // (`val x = Registry.factory.make()`), and the direct (non-re-bound)
+    // multi-hop form (`val x = h.maker.make()` then `x[0]`). A factory whose
+    // return type is not an array (`maker.make()` returning `Item`) fails
+    // closed for element access, so only the five array-rooted callers
+    // dispatch on `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runLocalFactory",
+        "com::example::Util::runMemberMethod",
+        "com::example::Util::runChainMethod",
+        "com::example::Util::runObjectChain",
+        "com::example::Util::runDirectChainMethod",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runLocalFactory",
+        "com::example::Util::runMemberMethod",
+        "com::example::Util::runChainMethod",
+        "com::example::Util::runObjectChain",
+        "com::example::Util::runDirectChainMethod",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_bound_root_hop_and_var_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
