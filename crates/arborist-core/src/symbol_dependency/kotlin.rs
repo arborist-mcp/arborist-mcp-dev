@@ -697,12 +697,15 @@ fn kotlin_property_binding(
 
 /// Returns the callee spelling of a call-initializer such as `Other` in
 /// `val x = Other()`, `Util.makeItems` in `val x = Util.makeItems()`,
-/// `this.ownMake` in `val x = this.ownMake()`, or
-/// `super.inheritedMake` in `val x = super.inheritedMake()`. Plain-identifier
+/// `this.ownMake` in `val x = this.ownMake()`,
+/// `super.inheritedMake` in `val x = super.inheritedMake()`, or a chained
+/// call such as `h.make().make` in `val x = h.make().make()`. Plain-identifier
 /// and safe dotted navigation callees keep their spelling, and
 /// `this`/`super`-rooted dotted callees keep the root so trace-time
 /// resolution can dispatch the member function on the enclosing type or the
-/// direct superclass. Parenthesized roots and other non-name callees return
+/// direct superclass; a call-expression receiver keeps its `()` marker so
+/// trace-time resolution can walk the chained method-call hops as a receiver
+/// chain. Parenthesized non-call roots and other non-name callees return
 /// `None` so call-initializer bindings fail closed for genuinely unsupported
 /// shapes.
 fn kotlin_call_initializer_callee_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -713,6 +716,13 @@ fn kotlin_call_initializer_callee_name(node: Node<'_>, source: &str) -> Result<O
     if matches!(node.kind(), "this_expression" | "super_expression") {
         let name = node_text(node, source)?.trim().to_string();
         return Ok((!name.is_empty()).then_some(name));
+    }
+    if node.kind() == "call_expression"
+        && let Some(callee) = node.named_child(0)
+        && let Some(prefix) = kotlin_call_initializer_callee_name(callee, source)?
+        && !prefix.is_empty()
+    {
+        return Ok(Some(format!("{prefix}()")));
     }
     if node.kind() != "navigation_expression" {
         return Ok(None);

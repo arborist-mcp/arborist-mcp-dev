@@ -14097,9 +14097,14 @@ fn resolve_kotlin_initializer_type_path(
     // callee as a member function on the enclosing type or the direct
     // superclass and pins the receiver to its declared return type, resolved
     // in the method's own file and enclosing scope; unknown or ambiguous
-    // member functions fail closed.
+    // member functions fail closed. Chained call receivers such as
+    // `val group = this.make().make()` or `val group = super.make().make()`
+    // fall back to the property-chain initializer rules, which start on the
+    // enclosing type or direct superclass and walk each intermediate
+    // method-call hop before the terminal callee; unknown or unresolvable
+    // chains fail closed there as well.
     if initializer_name.starts_with("this.") || initializer_name.starts_with("super.") {
-        let Some(function_path) = resolve_kotlin_this_super_rooted_member_function_path(
+        if let Some(function_path) = resolve_kotlin_this_super_rooted_member_function_path(
             source_symbol,
             initializer_name,
             raw_symbols,
@@ -14107,46 +14112,61 @@ fn resolve_kotlin_initializer_type_path(
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        let Some(function) = raw_symbols
-            .iter()
-            .find(|candidate| candidate.symbol_id == function_path)
-        else {
-            return Ok(None);
-        };
-        let Some(function_return_type) = function
-            .return_type
-            .as_deref()
-            .and_then(kotlin_dotted_type_name)
-        else {
-            return Ok(None);
-        };
-        return resolve_kotlin_receiver_type_path(
-            function,
-            &function_return_type,
+        )? {
+            let Some(function) = raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == function_path)
+            else {
+                return Ok(None);
+            };
+            let Some(function_return_type) = function
+                .return_type
+                .as_deref()
+                .and_then(kotlin_dotted_type_name)
+            else {
+                return Ok(None);
+            };
+            return resolve_kotlin_receiver_type_path(
+                function,
+                &function_return_type,
+                raw_symbols,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
+        }
+        // A chained `this`- or `super`-rooted call receiver keeps its trailing
+        // callee without a `()` marker in the callee spelling, so the terminal
+        // hop is marked as a call here before the property-chain walk.
+        let chain = format!("{initializer_name}()");
+        if let Some(path) = resolve_kotlin_property_chain_initializer_type_path(
+            source_symbol,
+            &chain,
             raw_symbols,
+            semantic_path_index,
             file_overrides,
             kotlin_import_contexts_by_file,
             deadline,
-        );
+        )? {
+            return Ok(Some(path));
+        }
+        return Ok(None);
     }
     // A dotted factory-call initializer such as `val group = h.make()`,
-    // `val group = Factory.make()`, or `val group = Holder.make()` resolves
-    // the leading receiver through the same rules as a receiver chain (a
-    // locally bound value, a named object, a type with a companion object,
-    // or a nested receiver chain) and dispatches the terminal callee as a
-    // method-call hop on that receiver, pinning the binding to the method's
-    // declared return type resolved in the method's own file and enclosing
-    // scope. Unknown receivers, ambiguous or unknown member functions, and
-    // functions without a declared return type fail closed.
+    // `val group = Factory.make()`, or `val group = Holder.make()`, including
+    // chained method-call receivers such as `val group = h.make().make()`,
+    // resolves the leading receiver through the same rules as a receiver
+    // chain (a locally bound value, a named object, a type with a companion
+    // object, or a nested receiver chain) and dispatches the terminal callee
+    // as a method-call hop on that receiver, pinning the binding to the
+    // method's declared return type resolved in the method's own file and
+    // enclosing scope. Unknown receivers, ambiguous or unknown member
+    // functions, and functions without a declared return type fail closed.
     if let Some((receiver, method)) = initializer_name.rsplit_once('.')
         && !receiver.is_empty()
         && !method.is_empty()
-        && !receiver.contains('(')
         && !method.contains('(')
+        && !method.contains('[')
     {
         let callee_chain = format!("{receiver}.{method}()");
         if let Some(receiver_path) = resolve_kotlin_receiver_chain_type_path(
