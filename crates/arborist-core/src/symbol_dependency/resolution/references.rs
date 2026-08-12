@@ -12307,11 +12307,14 @@ fn resolve_kotlin_property_chain_initializer_type_path(
 /// or its element-access component type; a bare first hop that names a named
 /// object, a class with an explicit or named companion chain
 /// (`Config.Factory` or `Config.Companion`), or a class with an anonymous
-/// companion starts the chain on that object or companion scope before
-/// falling back to the enclosing type's own property. The returned skip
-/// count tells callers how many leading hops the root consumed. Bare property
-/// and `this`-rooted chains outside a type return `None` so chains fail
-/// closed.
+/// companion starts the chain on that object or companion scope, and a bare
+/// first hop that names a same-package or explicitly imported top-level
+/// property starts the chain on the property's declared type while an own or
+/// inherited property of the enclosing type shadows a same-named top-level
+/// property, before all of these fall back to the enclosing type's own
+/// property. The returned skip count tells callers how many leading hops the
+/// root consumed. Bare property and `this`-rooted chains outside a type
+/// return `None` so chains fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_chain_initializer_root(
     source_symbol: &IndexedSymbol,
@@ -12502,6 +12505,37 @@ fn kotlin_property_chain_initializer_root(
             deadline,
         )? {
             return Ok(Some((companion_root, 1)));
+        }
+        // A bare first hop that names a same-package or explicitly imported
+        // top-level property (`val holder: Holder = Holder()` at package
+        // scope) starts the chain on the property's declared type, but an own
+        // or inherited property of the enclosing type shadows a same-named
+        // top-level property (Kotlin scope: local binding, then member, then
+        // package), so the implicit `this` receiver dispatches first when the
+        // enclosing type declares the name. Unknown, ambiguous, primitive, and
+        // untyped top-level properties fail closed.
+        if let Some(property_path) = resolve_kotlin_top_level_property_receiver_path(
+            source_symbol,
+            first_hop,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            if let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols)
+                && kotlin_type_declares_property(
+                    this_root,
+                    first_hop,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+            {
+                return Ok(Some((this_root.to_string(), 0)));
+            }
+            return Ok(Some((property_path, 1)));
         }
         let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
             return Ok(None);
@@ -14851,6 +14885,135 @@ fn kotlin_path_object_count(path: &str, raw_symbols: &[IndexedSymbol]) -> usize 
             candidate.semantic_path == path && candidate.node_kind == "object_declaration"
         })
         .count()
+}
+
+/// Returns the count of top-level property declarations at exactly
+/// `semantic_path`, such as `com::example::holder` for a package-level
+/// `val holder: Holder = Holder()`. Class members and companion members live
+/// under longer paths so they never match, and a same-named class or object
+/// declaration does not count.
+fn kotlin_path_top_level_property_count(path: &str, raw_symbols: &[IndexedSymbol]) -> usize {
+    raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.semantic_path == path && candidate.node_kind == "property_declaration"
+        })
+        .count()
+}
+
+/// Resolves an unbound receiver name to the declared type path of a
+/// top-level property such as `holder` in `val first = holder.item` with
+/// `val holder: Holder = Holder()` at package scope. The property must be
+/// uniquely declared in the caller's package or bound by an explicit import;
+/// a same-package property that conflicts with an imported binding, an
+/// unknown name, a name that matches multiple declarations, and properties
+/// without a usable declared type fail closed.
+fn resolve_kotlin_top_level_property_receiver_path(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if receiver.is_empty()
+        || !receiver
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Ok(None);
+    }
+    let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+        .map(|scope| format!("{scope}::{receiver}"));
+    let same_package_property_count = same_package_path
+        .as_deref()
+        .map(|path| kotlin_path_top_level_property_count(path, raw_symbols))
+        .unwrap_or(0);
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        receiver,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let imported_property_path = imported_binding
+        .map(|binding| binding.semantic_path)
+        .filter(|path| kotlin_path_top_level_property_count(path, raw_symbols) == 1);
+    let candidate_path = match (same_package_property_count, imported_property_path) {
+        // A same-package property and an explicit import of the same name
+        // conflict.
+        (1, Some(_)) => return Ok(None),
+        (1, None) => same_package_path,
+        (0, Some(path)) => Some(path),
+        _ => return Ok(None),
+    };
+    let Some(property_path) = candidate_path else {
+        return Ok(None);
+    };
+    let Some(property) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.semantic_path == property_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = property
+        .return_type
+        .as_deref()
+        .and_then(kotlin_dotted_type_name)
+    else {
+        return Ok(None);
+    };
+    // The property's declared type resolves in the property's own file and
+    // package scope (its imports and package), not the caller's, so an
+    // imported property whose type lives in its own package still pins the
+    // receiver.
+    resolve_kotlin_receiver_type_path(
+        property,
+        &return_type,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Returns whether `owner_type_path` declares a property named
+/// `property_name` directly or inherits one, without resolving the property's
+/// declared type. This lets a bare first hop dispatch on the enclosing type's
+/// own or inherited property (which shadows a same-named top-level property)
+/// even when the property's type is not resolvable, so callers fail closed
+/// instead of falling through to a top-level property.
+fn kotlin_type_declares_property(
+    owner_type_path: &str,
+    property_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<bool> {
+    let owns = semantic_path_index
+        .get(&format!("{owner_type_path}::{property_name}"))
+        .into_iter()
+        .flatten()
+        .any(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "property_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+        });
+    if owns {
+        return Ok(true);
+    }
+    Ok(resolve_kotlin_inherited_property_index(
+        owner_type_path,
+        property_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    .is_some())
 }
 
 /// Returns the nested object path when `object_name` under `owner_type_path`

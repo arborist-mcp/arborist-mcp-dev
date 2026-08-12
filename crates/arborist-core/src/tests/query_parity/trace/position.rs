@@ -32752,6 +32752,262 @@ fn traces_kotlin_cross_file_property_chain_initializer_local_binding_roots_in_li
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_top_level_property_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nclass Other {\n    fun unrelated(value: Int): Int = value\n}\n\nval holder: Holder = Holder()\n\nclass Util {\n    val holder: Other = Other()\n    fun runShadowedMember(): Int {\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n\nclass Consumer {\n    fun runTopLevel(): Int {\n        val first = holder.item\n        return first.helper(2)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = holder.item\n    return first.helper(3)\n}\n",
+    )
+    .unwrap();
+
+    // Property-chain initializer roots dispatch through a same-package
+    // top-level property (`val holder: Holder = Holder()` at package scope):
+    // a bare `holder.item` starts the chain on the property's declared type
+    // both from a member function without a same-named member
+    // (`Consumer::runTopLevel`) and from a top-level function
+    // (`topLevelRun`). An own member property of the enclosing type shadows
+    // the same-named top-level property, so `Util::runShadowedMember`
+    // dispatches on `Other` (which has no `item`) and fails closed instead of
+    // reaching the top-level `holder`. The two resolvable callers trace to
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Consumer::runTopLevel",
+        "com::example::topLevelRun",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Consumer::runTopLevel",
+        "com::example::topLevelRun",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_top_level_property_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nval holder: Holder = Holder()\n\nclass Consumer {\n    fun runTopLevel(): Int {\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = holder.item\n    return first.helper(2)\n}\n";
+    let item_path = "com::example::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Consumer::runTopLevel",
+        "com::example::topLevelRun",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Consumer::runTopLevel",
+        "com::example::topLevelRun",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_property_chain_initializer_top_level_property_roots_fail_closed_for_unsupported_references()
+ {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.kt");
+    let caller_path = dir.join("Caller.kt");
+    let control_path = dir.join("Control.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nval holder: Holder = Holder()\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.holder\nimport org.util.Holder\n\nval holder: Holder = Holder()\n\nfun failAmbiguous(): Int {\n    val first = holder.item\n    return first.helper(1)\n}\n\nfun failMissing(): Int {\n    val first = missing.item\n    return first.helper(2)\n}\n\nfun failPrimitive(): Int {\n    val count: Int = 0\n    val first = count.item\n    return first.helper(3)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &control_path,
+        "package com.example\n\nclass Other {\n    fun unrelated(value: Int): Int = value\n}\n\nclass ShadowHost {\n    val holder: Other = Other()\n    fun failMemberShadow(): Int {\n        val first = holder.item\n        return first.helper(4)\n    }\n}\n\nfun failBoundShadow(): Int {\n    val holder = Missing()\n    val first = holder.item\n    return first.helper(5)\n}\n\nclass Control {\n    fun run(): Int {\n        val first = holder.item\n        return first.helper(6)\n    }\n}\n\nfun topLevelRun(): Int {\n    val first = holder.item\n    return first.helper(7)\n}\n",
+    )
+    .unwrap();
+
+    // Top-level property-chain initializer roots fail closed for a
+    // same-package property that conflicts with an explicit import of the
+    // same name (`failAmbiguous`), unknown names (`failMissing`), primitive
+    // property types (`failPrimitive`), an own member property that shadows
+    // the same-named top-level property but whose type cannot dispatch the
+    // hop (`failMemberShadow`), and a local binding that shadows the
+    // top-level property with an unresolvable declared type
+    // (`failBoundShadow`); only the resolvable references in `Control::run`
+    // and `topLevelRun` trace to `Item::helper`.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["com::example::Control::run", "com::example::topLevelRun"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["com::example::Control::run", "com::example::topLevelRun"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_top_level_property_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.kt");
+    let caller_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nval holder: Holder = Holder()\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.holder\n\nclass Util {\n    fun runImported(): Int {\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Top-level property-chain initializer roots also resolve through an
+    // explicit import of the property from another package: `holder.item`
+    // with `import org.util.holder` starts the chain on the imported
+    // property's declared type, and the caller traces to `Item::helper`.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::runImported");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::runImported"
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_top_level_property_roots_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n}\n\nval holder: Holder = Holder()\n",
+    )
+    .unwrap();
+    fs::write(&caller_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nimport org.util.holder\n\nclass Util {\n    fun runImported(): Int {\n        val first = holder.item\n        return first.helper(1)\n    }\n}\n";
+    let item_path = "org::util::Item::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::runImported");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        item_path,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Util::runImported"
+    );
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_bound_root_hop_and_var_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
