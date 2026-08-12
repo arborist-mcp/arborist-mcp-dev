@@ -501,17 +501,20 @@ fn kotlin_property_chain_initializer(
 /// Returns whether a property-chain hop is a plain identifier property name,
 /// a zero-argument method-call spelling such as `make()`, a generic
 /// constructor spelling such as `Box<Holder>()`, or a single-level
-/// element-access hop such as `items[0]` whose base is a plain identifier.
+/// element-access hop such as `items[0]` (plain-identifier base) or
+/// `makeGroups()[0]` (plain-identifier zero-argument call base).
 /// Method-call hops let a property-chain initializer such as
 /// `val first = make().item` dispatch through the enclosing type's member
 /// function declared return type before walking the remaining property hops,
 /// generic constructor hops let a chain such as
-/// `val first = Box<Holder>().item` start on the raw constructed type, and
-/// element-access hops let a chain such as `val first = h.items[0].item`
-/// dispatch through the array property's element component type before
-/// walking the remaining hops; non-zero-argument call spellings,
-/// multi-dimensional element access, and other shapes fail closed at capture
-/// time.
+/// `val first = Box<Holder>().item` start on the raw constructed type,
+/// property element-access hops let a chain such as
+/// `val first = h.items[0].item` dispatch through the array property's
+/// element component type, and factory element-access hops let a chain such
+/// as `val first = h.makeGroups()[0].item` dispatch through the factory's
+/// declared return array element component type before walking the remaining
+/// hops; non-zero-argument call spellings, multi-dimensional element access,
+/// and other shapes fail closed at capture time.
 fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
     if let Some(name) = hop.strip_suffix("()") {
         if name
@@ -522,18 +525,21 @@ fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
         }
         return kotlin_dotted_type_name(name).is_some();
     }
-    // A single-level element-access hop such as `items[0]` whose base is a
-    // plain identifier lets a property-chain initializer such as
-    // `val first = h.items[0].item` dispatch through the array property's
-    // element component type before walking the remaining hops.
+    // A single-level element-access hop whose base is a plain identifier or a
+    // plain-identifier zero-argument call lets a property-chain initializer
+    // such as `val first = h.items[0].item` dispatch through the array
+    // property's element component type or `val first = h.makeGroups()[0].item`
+    // dispatch through the factory's declared return array element component
+    // type before walking the remaining hops.
     if let Some(open) = hop.find('[') {
         if !hop.ends_with(']') {
             return false;
         }
         let base = &hop[..open];
         let subscript = &hop[open + 1..hop.len() - 1];
-        let base_valid = !base.is_empty()
-            && base
+        let base_name = base.strip_suffix("()").unwrap_or(base);
+        let base_valid = !base_name.is_empty()
+            && base_name
                 .chars()
                 .all(|character| character.is_ascii_alphanumeric() || character == '_');
         let subscript_valid =

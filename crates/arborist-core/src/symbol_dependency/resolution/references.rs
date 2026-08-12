@@ -12530,8 +12530,33 @@ fn kotlin_property_chain_initializer_root(
         // declares the base name at all the member wins and the hop walk
         // resolves it (failing closed for non-array members), and only an
         // undeclared base falls back to the top-level array property's
-        // element component. Unknown bases and unresolvable components fail
-        // closed.
+        // element component. A leading factory element-access hop such as
+        // `makeGroups()[0]` in `val first = makeGroups()[0].item` resolves
+        // the factory's declared return array element component type through
+        // the same rules as a direct factory-call element-access receiver (a
+        // unique same-file, same-package, or explicitly imported top-level
+        // function, then an enclosing-type member or companion member
+        // function); unknown or non-array-returning factories fail closed.
+        // Unknown bases and unresolvable components fail closed.
+        if let Some((base_name, _)) = kotlin_array_access_spelling(first_hop)
+            && let Some(function_name) = kotlin_array_factory_call_root_spelling(base_name)
+        {
+            if let Some((component_path, _)) = resolve_kotlin_factory_array_element_component_type(
+                source_symbol,
+                &function_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )? {
+                return Ok(Some((component_path, 1)));
+            }
+            let Some(this_root) = kotlin_enclosing_this_root(source_symbol, raw_symbols) else {
+                return Ok(None);
+            };
+            return Ok(Some((this_root.to_string(), 0)));
+        }
         if let Some((base_name, _)) = kotlin_array_access_spelling(first_hop)
             && !base_name.contains('(')
         {

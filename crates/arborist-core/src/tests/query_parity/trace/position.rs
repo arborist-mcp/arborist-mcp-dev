@@ -50006,3 +50006,99 @@ fn traces_kotlin_property_chain_initializer_top_level_array_element_access_hop_r
                 == "com::example::Util3::runImportedTopLevelElemHop")
     );
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_factory_element_access_hops_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    fun makeGroups(): Array<Inner> = arrayOf()\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Holder {\n    fun makeGroups(): Array<Inner> = arrayOf()\n}\n\nclass NonArrayHolder {\n    fun makeGroups(): Inner = Inner()\n}\n\nfun makeGroups(): Array<Inner> = arrayOf()\n\nclass Util {\n    fun runBoundProp(): Int {\n        val h = Holder()\n        val first = h.makeGroups()[0].item\n        return first.helper(1)\n    }\n    fun runBoundMethod(): Int {\n        val h = Holder()\n        val first = h.makeGroups()[0].inner()\n        return first.helper(2)\n    }\n    fun runTopLevel(): Int {\n        val first = makeGroups()[0].item\n        return first.helper(3)\n    }\n    fun runArrayTerminal(): Int {\n        val h = Holder()\n        val first = h.makeGroups()[0].items\n        return first[0].helper(4)\n    }\n    fun runMultiHop(): Int {\n        val h = Holder()\n        val first = h.makeGroups()[0].makeGroups()[0].item\n        return first.helper(5)\n    }\n    fun runNonArrayFactoryFailsClosed(): Int {\n        val nh = NonArrayHolder()\n        val first = nh.makeGroups()[0].item\n        return first.helper(6)\n    }\n    fun runUnknownFactoryFailsClosed(): Int {\n        val h = Holder()\n        val first = h.missing()[0].item\n        return first.helper(7)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedHolder {\n    fun makeGroups(): Array<ImportedInner> = arrayOf()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImported(): Int {\n        val h = ImportedHolder()\n        val first = h.makeGroups()[0].item\n        return first.helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Factory element-access hops (`makeGroups()[0]`) inside a
+    // property-chain initializer resolve the factory's declared return array
+    // element component type and walk the remaining hops: a bound-receiver
+    // factory followed by a property terminal (`h.makeGroups()[0].item`), a
+    // method terminal (`h.makeGroups()[0].inner()`), a same-file top-level
+    // factory (`makeGroups()[0].item`), a terminal array property
+    // (`h.makeGroups()[0].items` then `first[0].helper(...)`), and stacked
+    // factory hops (`h.makeGroups()[0].makeGroups()[0].item`). A factory
+    // returning a non-array and an unknown factory fail closed, so the five
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the imported caller in `Util2` dispatches on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runBoundProp",
+        "com::example::Util::runBoundMethod",
+        "com::example::Util::runTopLevel",
+        "com::example::Util::runArrayTerminal",
+        "com::example::Util::runMultiHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert!(
+        live_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "com::example::Util::runBoundProp",
+        "com::example::Util::runBoundMethod",
+        "com::example::Util::runTopLevel",
+        "com::example::Util::runArrayTerminal",
+        "com::example::Util::runMultiHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert!(
+        persisted_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+}
