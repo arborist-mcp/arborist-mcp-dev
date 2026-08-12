@@ -862,12 +862,17 @@ fn kotlin_scope_function_with_receiver(
 }
 
 /// Returns the single body expression of a scope-function lambda such as the
-/// `it.make()` in `h.let { it.make() }` or the `make()` in `h.run { make() }`.
-/// An empty lambda, a lambda with an explicit parameter list, and a lambda
-/// with multiple statements return `None` so scope-function initializers fail
-/// closed (empty lambdas still bind for `apply`/`also`, which the caller
-/// handles without a body).
-fn kotlin_scope_lambda_body<'a>(lambda: Node<'a>) -> Result<Option<Node<'a>>> {
+/// `it.make()` in `h.let { it.make() }` or the `make()` in `h.run { make() }`,
+/// together with the lambda's explicit parameter name when one is declared
+/// (such as `holder` in `h.let { holder -> holder.make() }`). An empty
+/// lambda, a lambda with multiple parameters, and a lambda with multiple
+/// statements return `None` so scope-function initializers fail closed
+/// (empty lambdas still bind for `apply`/`also`, which the caller handles
+/// without a body).
+fn kotlin_scope_lambda_body<'a>(
+    lambda: Node<'a>,
+    source: &str,
+) -> Result<Option<(Option<String>, Node<'a>)>> {
     let Some(lambda_literal) = lambda
         .named_children(&mut lambda.walk())
         .find(|child| child.kind() == "lambda_literal")
@@ -881,10 +886,40 @@ fn kotlin_scope_lambda_body<'a>(lambda: Node<'a>) -> Result<Option<Node<'a>>> {
     if children.is_empty() {
         return Ok(None);
     }
-    if children[0].kind() == "lambda_parameters" || children.len() != 1 {
-        return Ok(None);
-    }
-    Ok(Some(children[0]))
+    // An explicit parameter list such as `holder` in
+    // `{ holder -> holder.make() }` must declare exactly one parameter so the
+    // body's receiver reference is unambiguous; multiple parameters fail
+    // closed.
+    let param_name = if children[0].kind() == "lambda_parameters" {
+        if children.len() != 2 {
+            return Ok(None);
+        }
+        let mut param_cursor = children[0].walk();
+        let params = children[0]
+            .named_children(&mut param_cursor)
+            .filter(|child| child.kind() == "variable_declaration")
+            .collect::<Vec<_>>();
+        if params.len() != 1 {
+            return Ok(None);
+        }
+        let Some(name) = params[0]
+            .named_children(&mut params[0].walk())
+            .find(|child| child.kind() == "identifier")
+            .map(|name| node_text(name, source))
+            .transpose()?
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+        else {
+            return Ok(None);
+        };
+        Some(name)
+    } else {
+        if children.len() != 1 {
+            return Ok(None);
+        }
+        None
+    };
+    Ok(Some((param_name, children[children.len() - 1])))
 }
 
 /// Classifies a receiver-qualified scope-function lambda body spelling into a
@@ -958,7 +993,7 @@ fn kotlin_scope_function_binding(
         // bound-receiver rules as a bare `val holder = h` initializer.
         "apply" | "also" => Ok(Some((String::new(), None, Some(receiver)))),
         "let" | "run" | "with" => {
-            let Some(body) = kotlin_scope_lambda_body(lambda)? else {
+            let Some((param_name, body)) = kotlin_scope_lambda_body(lambda, source)? else {
                 return Ok(None);
             };
             let body_text = node_text(body, source)?.trim().to_string();
@@ -966,22 +1001,26 @@ fn kotlin_scope_function_binding(
                 return Ok(None);
             }
             let rewritten = if scope_name == "let" {
-                // `let` lambdas receive `it`, so the body must reference the
-                // receiver explicitly through `it.` or as a bare `it`.
-                if let Some(rest) = body_text.strip_prefix("it.") {
+                // `let` lambdas receive `it` (or an explicit parameter name),
+                // so the body must reference the receiver through that name
+                // (`it.`/`{param}.`) or as the bare name itself.
+                let reference = param_name.as_deref().unwrap_or("it");
+                if let Some(rest) = body_text.strip_prefix(&format!("{reference}.")) {
                     format!("{receiver}.{rest}")
-                } else if body_text == "it" {
+                } else if body_text == reference {
                     receiver
                 } else {
                     return Ok(None);
                 }
             } else {
-                // `run` and `with` lambdas reference the receiver as `this`,
-                // so unqualified bodies and `this`-rooted bodies such as
-                // `this.make()` are rewritten with a leading receiver hop
-                // (a bare `this` body rewrites to the receiver itself, since
-                // `run`/`with` return the lambda result); bodies that use
-                // another explicit root fail closed.
+                // `run` and `with` lambdas reference the receiver as `this`
+                // (or through an explicit parameter name when one is
+                // declared), so unqualified bodies, `this`-rooted bodies such
+                // as `this.make()`, and parameter-rooted bodies such as
+                // `holder.make()` are rewritten with a leading receiver hop (a
+                // bare `this` or bare parameter body rewrites to the receiver
+                // itself, since `run`/`with` return the lambda result);
+                // bodies that use another explicit root fail closed.
                 if body_text.starts_with("it.")
                     || body_text == "it"
                     || body_text.starts_with("super.")
@@ -992,6 +1031,14 @@ fn kotlin_scope_function_binding(
                     format!("{receiver}.{rest}")
                 } else if body_text == "this" {
                     receiver
+                } else if let Some(param) = param_name.as_deref() {
+                    if let Some(rest) = body_text.strip_prefix(&format!("{param}.")) {
+                        format!("{receiver}.{rest}")
+                    } else if body_text == param {
+                        receiver
+                    } else {
+                        format!("{receiver}.{body_text}")
+                    }
                 } else {
                     format!("{receiver}.{body_text}")
                 }

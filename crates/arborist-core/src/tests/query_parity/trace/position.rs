@@ -50943,7 +50943,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runLet(): Int {\n        val group = h.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runRun(): Int {\n        val group = h.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runLetDirect(): Int {\n        val first = h.let { it.make().items[0].item }\n        return first.helper(3)\n    }\n    fun runApply(): Int {\n        val holder = h.apply { }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runWith(): Int {\n        val group = with(h) { make() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runAlso(): Int {\n        val holder = h.also { it.consume() }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runLetBareIt(): Int {\n        val holder = h.let { it }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runRunChained(): Int {\n        val first = h.run { make().items[0].item }\n        return first.helper(8)\n    }\n    fun runWithChained(): Int {\n        val first = with(h) { make().items[0].item }\n        return first.helper(9)\n    }\n    fun runLetElemAccessBody(): Int {\n        val inner = h.let { it.make().items[0] }\n        val first = inner.item\n        return first.helper(13)\n    }\n    fun runRunElemAccessBody(): Int {\n        val inner = h.run { make().items[0] }\n        val first = inner.item\n        return first.helper(14)\n    }\n    fun runLocalReceiver(): Int {\n        val local = Holder()\n        val group = local.run { make() }\n        val first = group.items[0].item\n        return first.helper(15)\n    }\n    fun runLetUnknownFailsClosed(): Int {\n        val group = h.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runCustomFailsClosed(): Int {\n        val group = h.custom { it.make() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runLetExplicitParamFailsClosed(): Int {\n        val group = h.let { x -> x.make() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n}\n",
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runLet(): Int {\n        val group = h.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runRun(): Int {\n        val group = h.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runLetDirect(): Int {\n        val first = h.let { it.make().items[0].item }\n        return first.helper(3)\n    }\n    fun runApply(): Int {\n        val holder = h.apply { }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runWith(): Int {\n        val group = with(h) { make() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runAlso(): Int {\n        val holder = h.also { it.consume() }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runLetBareIt(): Int {\n        val holder = h.let { it }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runRunChained(): Int {\n        val first = h.run { make().items[0].item }\n        return first.helper(8)\n    }\n    fun runWithChained(): Int {\n        val first = with(h) { make().items[0].item }\n        return first.helper(9)\n    }\n    fun runLetElemAccessBody(): Int {\n        val inner = h.let { it.make().items[0] }\n        val first = inner.item\n        return first.helper(13)\n    }\n    fun runRunElemAccessBody(): Int {\n        val inner = h.run { make().items[0] }\n        val first = inner.item\n        return first.helper(14)\n    }\n    fun runLocalReceiver(): Int {\n        val local = Holder()\n        val group = local.run { make() }\n        val first = group.items[0].item\n        return first.helper(15)\n    }\n    fun runLetUnknownFailsClosed(): Int {\n        val group = h.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runCustomFailsClosed(): Int {\n        val group = h.custom { it.make() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runLetExplicitParam(): Int {\n        val group = h.let { x -> x.make() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n}\n",
     )
     .unwrap();
     fs::write(
@@ -50966,18 +50966,18 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
     // or an element-access terminal (`h.let { it.make().items[0] }`,
     // `h.run { make().items[0] }`), plus `apply`/`also` (and a bare `it`
     // `let`) which return the receiver itself (`h.apply { }`,
-    // `h.also { ... }`, `h.let { it }`), and a locally constructed receiver
-    // (`local.run { make() }` after `val local = Holder()`). An unknown
-    // terminal method (`h.let { it.missing() }`), an unknown scope name
-    // (`h.custom { it.make() }`), and an explicit lambda parameter
-    // (`h.let { x -> x.make() }`) fail closed, so the twelve same-package
+    // `h.also { ... }`, `h.let { it }`), a locally constructed receiver
+    // (`local.run { make() }` after `val local = Holder()`), and an explicit
+    // lambda parameter (`h.let { x -> x.make() }`). An unknown terminal
+    // method (`h.let { it.missing() }`) and an unknown scope name
+    // (`h.custom { it.make() }`) fail closed, so the thirteen same-package
     // callers in `Util` dispatch on `com::example::Item::helper` and the
     // three imported callers in `Util2` dispatch on
     // `org::util::ImportedItem::helper`.
     let item_path = "com::example::Item::helper";
     let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.symbol.symbol_id, item_path);
-    assert_eq!(live.callers.len(), 12);
+    assert_eq!(live.callers.len(), 13);
     for caller in [
         "com::example::Util::runLet",
         "com::example::Util::runRun",
@@ -50991,6 +50991,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
         "com::example::Util::runLetElemAccessBody",
         "com::example::Util::runRunElemAccessBody",
         "com::example::Util::runLocalReceiver",
+        "com::example::Util::runLetExplicitParam",
     ] {
         assert!(
             live.callers
@@ -51002,7 +51003,6 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
     for caller in [
         "com::example::Util::runLetUnknownFailsClosed",
         "com::example::Util::runCustomFailsClosed",
-        "com::example::Util::runLetExplicitParamFailsClosed",
     ] {
         assert!(
             !live
@@ -51035,7 +51035,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 12);
+    assert_eq!(persisted.callers.len(), 13);
     for caller in [
         "com::example::Util::runLet",
         "com::example::Util::runRun",
@@ -51049,6 +51049,7 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
         "com::example::Util::runLetElemAccessBody",
         "com::example::Util::runRunElemAccessBody",
         "com::example::Util::runLocalReceiver",
+        "com::example::Util::runLetExplicitParam",
     ] {
         assert!(
             persisted
@@ -51061,7 +51062,6 @@ fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_work
     for caller in [
         "com::example::Util::runLetUnknownFailsClosed",
         "com::example::Util::runCustomFailsClosed",
-        "com::example::Util::runLetExplicitParamFailsClosed",
     ] {
         assert!(
             !persisted
@@ -51205,6 +51205,151 @@ fn traces_kotlin_property_chain_initializer_scope_function_this_rooted_bindings_
     for caller in [
         "com::example::Util2::runImportedRunThis",
         "com::example::Util2::runImportedWithThis",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_explicit_parameter_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runLetParam(): Int {\n        val group = h.let { holder -> holder.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runRunParam(): Int {\n        val group = h.run { holder -> holder.make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runWithParam(): Int {\n        val group = with(h) { holder -> holder.make() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runLetParamChained(): Int {\n        val first = h.let { holder -> holder.make().items[0].item }\n        return first.helper(4)\n    }\n    fun runRunParamChained(): Int {\n        val first = h.run { holder -> holder.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runLetParamBare(): Int {\n        val holder = h.let { it -> it }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runRunParamThis(): Int {\n        val group = h.run { holder -> this.make() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runRunParamUnqualified(): Int {\n        val group = h.run { holder -> make() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runApplyParam(): Int {\n        val holder = h.apply { h2 -> h2.whatever() }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runLetParamUnknownFailsClosed(): Int {\n        val group = h.let { holder -> holder.missing() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runLetMultiParamFailsClosed(): Int {\n        val group = h.let { one, two -> one.make() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    val h: ImportedHolder = ImportedHolder()\n    fun runImportedLetParam(): Int {\n        val group = h.let { holder -> holder.make() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n    fun runImportedRunParam(): Int {\n        val group = h.run { holder -> holder.make() }\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Scope-function lambdas with an explicit parameter name such as
+    // `h.let { holder -> holder.make() }` pin a `val` local through the same
+    // receiver-qualified lambda result as the implicit `it` forms: `let`,
+    // `run`, and `with` with a parameter-rooted factory call
+    // (`holder.make()`), a direct property chain
+    // (`holder.make().items[0].item`), a bare parameter body (`h.let { it ->
+    // it }`), a `this`-rooted body alongside the parameter
+    // (`h.run { holder -> this.make() }`), an unqualified body alongside the
+    // parameter (`h.run { holder -> make() }`), an `apply` lambda with an
+    // explicit parameter (which still returns the receiver), and cross-file
+    // imported holder receivers. An unknown terminal method
+    // (`h.let { holder -> holder.missing() }`) and a multi-parameter lambda
+    // (`h.let { one, two -> one.make() }`) fail closed, so the nine
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the two imported callers in `Util2` dispatch on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runLetParam",
+        "com::example::Util::runRunParam",
+        "com::example::Util::runWithParam",
+        "com::example::Util::runLetParamChained",
+        "com::example::Util::runRunParamChained",
+        "com::example::Util::runLetParamBare",
+        "com::example::Util::runRunParamThis",
+        "com::example::Util::runRunParamUnqualified",
+        "com::example::Util::runApplyParam",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runLetParamUnknownFailsClosed",
+        "com::example::Util::runLetMultiParamFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedLetParam",
+        "com::example::Util2::runImportedRunParam",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runLetParam",
+        "com::example::Util::runRunParam",
+        "com::example::Util::runWithParam",
+        "com::example::Util::runLetParamChained",
+        "com::example::Util::runRunParamChained",
+        "com::example::Util::runLetParamBare",
+        "com::example::Util::runRunParamThis",
+        "com::example::Util::runRunParamUnqualified",
+        "com::example::Util::runApplyParam",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runLetParamUnknownFailsClosed",
+        "com::example::Util::runLetMultiParamFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedLetParam",
+        "com::example::Util2::runImportedRunParam",
     ] {
         assert!(
             persisted_imported
