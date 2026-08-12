@@ -52830,3 +52830,141 @@ fn traces_kotlin_property_chain_initializer_scope_function_nested_scope_call_bra
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_enclosing_member_nested_scope_call_branch_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    val plainH: Holder = Holder()\n    fun flag(): Boolean = true\n    fun runMemberNullableLet(): Int {\n        val group = h.let { if (flag()) nullableH?.let { it.make() } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runMemberPlainLet(): Int {\n        val group = h.let { if (flag()) plainH.let { it.make() } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runMemberChainLet(): Int {\n        val group = h.let { if (flag()) nullableH?.let { it.make() }.let { g -> g } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runMemberElvis(): Int {\n        val group = h.let { nullableH?.let { it.make() } ?: it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runMemberRunFailsClosed(): Int {\n        val group = h.run { if (flag()) nullableH?.let { it.make() } else makeAlt() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runMemberUnknownRootFailsClosed(): Int {\n        val group = h.let { if (flag()) missingH?.let { it.make() } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n}",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n    fun makeAlt(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n    fun makeAlt(): ImportedGroup = ImportedGroup()\n}",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedGroup\nimport org.util.ImportedHolder\n\nclass Util2 {\n    val importedH: ImportedHolder = ImportedHolder()\n    fun flag(): Boolean = true\n    fun runImportedMemberLet(): Int {\n        val group = ImportedHolder().let { if (flag()) importedH.let { it.make() } else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runImportedMemberElvis(): Int {\n        val group = ImportedHolder().let { importedH?.let { it.make() } ?: it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch result whose branch is a scope-function
+    // call rooted on an enclosing-scope reference keeps that already-qualified
+    // spelling under a `let` outer: `nullableH?.let { it.make() }` inside
+    // `h.let { ... }` roots on the enclosing `Util.nullableH` property (not
+    // the `h` receiver), so it binds the `nullableH.make` spelling directly
+    // while the plain branch rewrites through the receiver. This covers
+    // nullable and plain member roots
+    // (`nullableH?.let { it.make() }` and `plainH.let { it.make() }`), a
+    // nested safe-call chain
+    // (`nullableH?.let { it.make() }.let { g -> g }`), an elvis outer
+    // (`nullableH?.let { it.make() } ?: it.makeAlt()`), and cross-file
+    // imported member roots
+    // (`ImportedHolder().let { importedH.let { it.make() } ... }`). A `run`
+    // outer keeps its receiver-rooted rewrite (so the enclosing member fails
+    // closed, matching the documented `run`/`with` unqualified-body rule) and
+    // an unresolvable member root (`missingH`) fails closed at trace time, so
+    // the four same-package callers in `Util` dispatch on
+    // `com::example::Item::helper` and the two imported callers in `Util2`
+    // dispatch on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runMemberNullableLet",
+        "com::example::Util::runMemberPlainLet",
+        "com::example::Util::runMemberChainLet",
+        "com::example::Util::runMemberElvis",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runMemberRunFailsClosed",
+        "com::example::Util::runMemberUnknownRootFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedMemberLet",
+        "com::example::Util2::runImportedMemberElvis",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runMemberNullableLet",
+        "com::example::Util::runMemberPlainLet",
+        "com::example::Util::runMemberChainLet",
+        "com::example::Util::runMemberElvis",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runMemberRunFailsClosed",
+        "com::example::Util::runMemberUnknownRootFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedMemberLet",
+        "com::example::Util2::runImportedMemberElvis",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}

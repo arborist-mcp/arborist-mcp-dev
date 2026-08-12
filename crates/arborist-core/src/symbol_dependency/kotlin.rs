@@ -1191,6 +1191,28 @@ fn kotlin_scope_lambda_branch_spelling(
             return Ok(None);
         };
         let expanded = kotlin_scope_lambda_result_spelling_text(&spelling, locals);
+        // A `let` lambda only references its receiver through `it`/the
+        // explicit parameter, so a nested spelling that roots on another name
+        // already refers to the enclosing scope (such as the `nullableH.make`
+        // of `nullableH?.let { it.make() }` inside `h.let { ... }`) and is
+        // kept as a qualified spelling; `run`/`with` spellings always route
+        // through the receiver hop and keep failing closed on unknown roots.
+        if scope_name == "let"
+            && kotlin_scope_function_body_rewrite(&expanded, scope_name, param_name, receiver)
+                .is_none()
+        {
+            let Some((type_name, _, property_chain_base)) = kotlin_scope_body_binding(&expanded)
+            else {
+                return Ok(None);
+            };
+            if !type_name.is_empty() {
+                return Ok(Some(type_name));
+            }
+            if let Some(chain) = property_chain_base {
+                return Ok(Some(chain));
+            }
+            return Ok(None);
+        }
         let Some(rewritten) =
             kotlin_scope_function_body_rewrite(&expanded, scope_name, param_name, receiver)
         else {
