@@ -52363,3 +52363,160 @@ fn traces_kotlin_property_chain_initializer_scope_function_multi_statement_nulla
         "com::example::Util2::runImportedMultiSafeNestedLet"
     );
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_multi_statement_branch_elvis_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun runBranchMultiLet(): Int {\n        val group = if (flag()) h.let { val g = it.make(); g } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runBranchMultiRun(): Int {\n        val group = if (flag()) h.run { val g = make(); g } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runBranchMultiWhen(): Int {\n        val group = when (flag()) {\n            true -> h.let { val g = it.make(); g }\n            else -> Holder().make()\n        }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runBranchMultiChainBody(): Int {\n        val first = if (flag()) h.let { val g = it.make(); g.items[0].item } else Holder().make().items[0].item\n        return first.helper(4)\n    }\n    fun runBranchMultiParam(): Int {\n        val group = if (flag()) h.let { holder -> val g = holder.make(); g } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runBranchMultiTyped(): Int {\n        val group = if (flag()) h.let { val g: Group = it.make(); g } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runBranchCtorSingle(): Int {\n        val group = if (flag()) Holder().let { it.make() } else Group()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runBranchCtorMulti(): Int {\n        val group = if (flag()) Holder().let { val g = it.make(); g } else Group()\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runElvisMultiLet(): Int {\n        val group = nullableH?.let { val g = it.make(); g } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runElvisMultiPlain(): Int {\n        val group = h.let { val g = it.make(); g } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runElvisMultiRun(): Int {\n        val group = nullableH?.run { val g = make(); g } ?: Holder().make()\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runBranchInnerMissingFailsClosed(): Int {\n        val group = if (flag()) h.let { val g = it.missing(); g } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n    fun runElvisDivergentFailsClosed(): Int {\n        val group = nullableH?.let { val g = it.make(); g } ?: Item()\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n    fun runBranchChainedLocalFailsClosed(): Int {\n        val group = if (flag()) h.let { val a = it.make(); val b = a; b } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(14)\n    }\n}",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedGroup\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun flag(): Boolean = true\n    fun runImportedMultiBranch(): Int {\n        val group = if (flag()) ImportedHolder().let { val g = it.make(); g } else ImportedGroup()\n        val first = group.items[0].item\n        return first.helper(15)\n    }\n    fun runImportedMultiElvis(): Int {\n        val group = ImportedHolder()?.let { val g = it.make(); g } ?: ImportedGroup()\n        val first = group.items[0].item\n        return first.helper(16)\n    }\n}",
+    )
+    .unwrap();
+
+    // A branch (`if`/`when`) or elvis (`?:`) expression whose operands are
+    // scope-function calls with multi-statement lambda bodies composes the
+    // local-expansion and branch rules: each operand's `val` locals expand
+    // into its receiver-qualified result before the branches' common type is
+    // resolved. This covers `if` branches
+    // (`if (flag()) h.let { val g = it.make(); g } else Holder().make()`,
+    // `h.run` bodies, chain bodies
+    // (`h.let { val g = it.make(); g.items[0].item }`), explicit parameters,
+    // typed locals, and constructor receivers (`Holder().let { it.make() }`
+    // and `Holder().let { val g = it.make(); g }`), `when` branches
+    // (`when (flag()) { true -> h.let { val g = it.make(); g }; else ->
+    // Holder().make() }`), and elvis operands (`nullableH?.let { val g =
+    // it.make(); g } ?: Holder().make()`, a non-null left operand, and a
+    // `run` left operand), plus cross-file imported constructor roots
+    // (`if (flag()) ImportedHolder().let { val g = it.make(); g } else
+    // ImportedGroup()` and `ImportedHolder()?.let { val g = it.make(); g } ?:
+    // ImportedGroup()`). An inner with an unknown terminal method
+    // (`if (flag()) h.let { val g = it.missing(); g } else Holder().make()`),
+    // divergent operand types (`nullableH?.let { val g = it.make(); g } ?:
+    // Item()`), and chained locals (`val b = a`) fail closed, so the eleven
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the two imported callers in `Util2` dispatch on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 11);
+    for caller in [
+        "com::example::Util::runBranchMultiLet",
+        "com::example::Util::runBranchMultiRun",
+        "com::example::Util::runBranchMultiWhen",
+        "com::example::Util::runBranchMultiChainBody",
+        "com::example::Util::runBranchMultiParam",
+        "com::example::Util::runBranchMultiTyped",
+        "com::example::Util::runBranchCtorSingle",
+        "com::example::Util::runBranchCtorMulti",
+        "com::example::Util::runElvisMultiLet",
+        "com::example::Util::runElvisMultiPlain",
+        "com::example::Util::runElvisMultiRun",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runBranchInnerMissingFailsClosed",
+        "com::example::Util::runElvisDivergentFailsClosed",
+        "com::example::Util::runBranchChainedLocalFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedMultiBranch",
+        "com::example::Util2::runImportedMultiElvis",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 11);
+    for caller in [
+        "com::example::Util::runBranchMultiLet",
+        "com::example::Util::runBranchMultiRun",
+        "com::example::Util::runBranchMultiWhen",
+        "com::example::Util::runBranchMultiChainBody",
+        "com::example::Util::runBranchMultiParam",
+        "com::example::Util::runBranchMultiTyped",
+        "com::example::Util::runBranchCtorSingle",
+        "com::example::Util::runBranchCtorMulti",
+        "com::example::Util::runElvisMultiLet",
+        "com::example::Util::runElvisMultiPlain",
+        "com::example::Util::runElvisMultiRun",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runBranchInnerMissingFailsClosed",
+        "com::example::Util::runElvisDivergentFailsClosed",
+        "com::example::Util::runBranchChainedLocalFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 2);
+    for caller in [
+        "com::example::Util2::runImportedMultiBranch",
+        "com::example::Util2::runImportedMultiElvis",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}
