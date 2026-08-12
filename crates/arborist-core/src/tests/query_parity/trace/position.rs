@@ -52222,3 +52222,144 @@ fn traces_kotlin_property_chain_initializer_scope_function_nullable_nested_chain
         "com::example::Util2::runImportedSafeNestedLet"
     );
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_multi_statement_nullable_nested_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun runMultiSafeLetOuterLet(): Int {\n        val group = nullableH?.let { val g = it.make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runMultiSafeLetOuterRun(): Int {\n        val group = nullableH?.let { val g = it.make(); g }.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runMultiSafeRunInner(): Int {\n        val group = nullableH?.run { val g = make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runMultiWithOverSafeLet(): Int {\n        val group = with(nullableH?.let { val g = it.make(); g }) { make() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runMultiSafeChainBody(): Int {\n        val first = nullableH?.let { val g = it.make(); g }.let { it.make().items[0].item }\n        return first.helper(5)\n    }\n    fun runMultiSafeOuter(): Int {\n        val group = h.let { val g = it.make(); g }?.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runMultiSafeTyped(): Int {\n        val group = nullableH?.let { val g: Group = it.make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runMultiSafeParam(): Int {\n        val group = nullableH?.let { holder -> val g = holder.make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runMultiSafeCtorInner(): Int {\n        val group = Holder()?.let { val g = it.make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runMultiInnerMissingFailsClosed(): Int {\n        val group = nullableH?.let { val g = it.missing(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runMultiOuterMissingFailsClosed(): Int {\n        val group = nullableH?.let { val g = it.make(); g }.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runMultiChainedLocalFailsClosed(): Int {\n        val group = nullableH?.let { val a = it.make(); val b = a; b }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n}",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImportedMultiSafeNestedLet(): Int {\n        val group = ImportedHolder()?.let { val g = it.make(); g }.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function call whose receiver is itself a safe-call (`?.`) call
+    // with a multi-statement lambda body composes the local-expansion and
+    // nested-chain rules: the inner lambda's `val` locals expand into the
+    // inner result (`nullableH?.let { val g = it.make(); g }` pins
+    // `nullableH.make`), and the outer chain continues through that result
+    // type with a `let`/`run`/`with` outer
+    // (`nullableH?.let { val g = it.make(); g }.let { it.make() }`,
+    // `nullableH?.let { val g = it.make(); g }.run { make() }`,
+    // `with(nullableH?.let { val g = it.make(); g }) { make() }`), a safe
+    // `run` inner (`nullableH?.run { val g = make(); g }.let { it.make() }`),
+    // a chain body through the expanded result
+    // (`nullableH?.let { val g = it.make(); g }.let { it.make().items[0].item }`),
+    // a safe-call outer over a multi-statement inner
+    // (`h.let { val g = it.make(); g }?.let { it.make() }`), a typed local
+    // (`nullableH?.let { val g: Group = it.make(); g }.let { it.make() }`), an
+    // explicit parameter (`nullableH?.let { holder -> val g = holder.make();
+    // g }.let { it.make() }`), and a nullable constructor inner
+    // (`Holder()?.let { val g = it.make(); g }.let { it.make() }`), plus a
+    // cross-file imported constructor root
+    // (`ImportedHolder()?.let { val g = it.make(); g }.let { it.make() }`).
+    // An inner with an unknown terminal method (`nullableH?.let { val g =
+    // it.missing(); g }.let { it.make() }`), an outer with an unknown
+    // terminal method (`nullableH?.let { val g = it.make(); g }.let {
+    // it.missing() }`), and chained locals (`val b = a`) fail closed, so the
+    // nine same-package callers in `Util` dispatch on
+    // `com::example::Item::helper` and the one imported caller in `Util2`
+    // dispatches on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runMultiSafeLetOuterLet",
+        "com::example::Util::runMultiSafeLetOuterRun",
+        "com::example::Util::runMultiSafeRunInner",
+        "com::example::Util::runMultiWithOverSafeLet",
+        "com::example::Util::runMultiSafeChainBody",
+        "com::example::Util::runMultiSafeOuter",
+        "com::example::Util::runMultiSafeTyped",
+        "com::example::Util::runMultiSafeParam",
+        "com::example::Util::runMultiSafeCtorInner",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runMultiInnerMissingFailsClosed",
+        "com::example::Util::runMultiOuterMissingFailsClosed",
+        "com::example::Util::runMultiChainedLocalFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert_eq!(
+        live_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedMultiSafeNestedLet"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::runMultiSafeLetOuterLet",
+        "com::example::Util::runMultiSafeLetOuterRun",
+        "com::example::Util::runMultiSafeRunInner",
+        "com::example::Util::runMultiWithOverSafeLet",
+        "com::example::Util::runMultiSafeChainBody",
+        "com::example::Util::runMultiSafeOuter",
+        "com::example::Util::runMultiSafeTyped",
+        "com::example::Util::runMultiSafeParam",
+        "com::example::Util::runMultiSafeCtorInner",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runMultiInnerMissingFailsClosed",
+        "com::example::Util::runMultiOuterMissingFailsClosed",
+        "com::example::Util::runMultiChainedLocalFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert_eq!(
+        persisted_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedMultiSafeNestedLet"
+    );
+}
