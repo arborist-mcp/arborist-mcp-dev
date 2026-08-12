@@ -53116,3 +53116,89 @@ fn traces_kotlin_property_chain_initializer_scope_function_nested_scope_call_sin
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_enclosing_member_direct_call_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun runEnclosingMemberDirectCall(): Int {\n        val group = h.let { nullableH.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runLocalMemberDirectCall(): Int {\n        val group = h.let { val g1 = nullableH; g1.make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runUnknownRootDirectCallFailsClosed(): Int {\n        val group = h.let { missingH.make() }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runChainedLocalDirectCallFailsClosed(): Int {\n        val group = h.let { val a = nullableH; val b = a; b.make() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runEnclosingMemberRunFailsClosed(): Int {\n        val group = h.run { nullableH.make() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda whose single result expression is a direct
+    // method call rooted on an enclosing-scope reference (such as the
+    // `nullableH.make()` of `h.let { nullableH.make() }`, or the
+    // `nullableH.make()` reached through the local of
+    // `h.let { val g1 = nullableH; g1.make() }`) keeps the already-qualified
+    // spelling under a `let` outer because the lambda only references its
+    // receiver through `it`/the explicit parameter, so trace time resolves
+    // the root against the enclosing scope. A `run` outer keeps its
+    // receiver-rooted rewrite (so the enclosing member fails closed,
+    // matching the documented `run`/`with` unqualified-body rule), an
+    // unresolvable member root (`missingH.make()`) fails closed at trace
+    // time, and chained locals (`val b = a`) fail closed at index time, so
+    // the two direct-call callers in `Util` dispatch on
+    // `com::example::Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runEnclosingMemberDirectCall",
+        "com::example::Util::runLocalMemberDirectCall",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runUnknownRootDirectCallFailsClosed",
+        "com::example::Util::runChainedLocalDirectCallFailsClosed",
+        "com::example::Util::runEnclosingMemberRunFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runEnclosingMemberDirectCall",
+        "com::example::Util::runLocalMemberDirectCall",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runUnknownRootDirectCallFailsClosed",
+        "com::example::Util::runChainedLocalDirectCallFailsClosed",
+        "com::example::Util::runEnclosingMemberRunFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}

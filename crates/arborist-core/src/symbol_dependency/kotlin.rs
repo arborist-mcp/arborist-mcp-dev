@@ -1228,6 +1228,18 @@ fn kotlin_scope_lambda_expression_binding(
     let Some(rewritten) =
         kotlin_scope_function_body_rewrite(&text, scope_name, param_name, receiver)
     else {
+        // A `let` lambda whose result roots on an enclosing-scope reference
+        // (such as the `nullableH.make()` of `h.let { nullableH.make() }` or
+        // the `nullableH.make()` reached through the local of
+        // `h.let { val g1 = nullableH; g1.make() }`) keeps the
+        // already-qualified spelling because a `let` lambda only references
+        // its receiver through `it`/the explicit parameter; trace time
+        // resolves the root against the enclosing scope and fails closed on
+        // unknown roots. `run`/`with` outers keep failing closed on unknown
+        // roots, matching the documented unqualified-body rule.
+        if scope_name == "let" {
+            return Ok(kotlin_scope_body_binding(&text));
+        }
         return Ok(None);
     };
     Ok(kotlin_scope_body_binding(&rewritten))
