@@ -769,6 +769,231 @@ fn kotlin_branch_initializer_binding(
 /// property-chain base is set for a bound name.
 type KotlinPropertyBinding = (String, String, Option<String>, Option<String>);
 
+/// A scope-function initializer binding: the type name (empty when the
+/// binding is an element-access or property-chain base), the optional
+/// element-access base spelling, and the optional property-chain base
+/// spelling. Exactly one of the three is set for a bound scope-function
+/// initializer, matching the `KotlinPropertyBinding` shape without the bound
+/// name.
+type KotlinScopeFunctionBinding = (String, Option<String>, Option<String>);
+
+/// Returns whether a scope-function receiver spelling is a plain identifier
+/// or dotted identifier chain such as `h` or `this.h`, without calls, element
+/// access, nullability, spaces, or qualified-name operators.
+fn kotlin_plain_receiver_spelling(receiver: &str) -> bool {
+    !receiver.is_empty()
+        && !receiver.contains(['(', '[', '?', ' '])
+        && !receiver.contains("::")
+        && receiver.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
+}
+
+/// Returns the receiver spelling and scope-function name of a scope-function
+/// call callee such as `h.let` in `h.let { ... }` (a navigation expression
+/// whose receiver is the leading expression) or `with(h)` in
+/// `with(h) { ... }` (a call whose first argument is the receiver). Receivers
+/// must be plain identifier chains; other callee shapes return `None` so
+/// scope-function initializers fail closed.
+fn kotlin_scope_function_callee(
+    callee: Node<'_>,
+    source: &str,
+) -> Result<Option<(String, String)>> {
+    if callee.kind() == "navigation_expression" {
+        let mut cursor = callee.walk();
+        let children = callee.named_children(&mut cursor).collect::<Vec<_>>();
+        if children.len() != 2 || children[1].kind() != "identifier" {
+            return Ok(None);
+        }
+        let receiver = node_text(children[0], source)?.trim().to_string();
+        let scope_name = node_text(children[1], source)?.trim().to_string();
+        if receiver.is_empty()
+            || scope_name.is_empty()
+            || !kotlin_plain_receiver_spelling(&receiver)
+        {
+            return Ok(None);
+        }
+        return Ok(Some((receiver, scope_name)));
+    }
+    if callee.kind() == "call_expression" {
+        let mut cursor = callee.walk();
+        let children = callee.named_children(&mut cursor).collect::<Vec<_>>();
+        if children.len() != 2 || children[0].kind() != "identifier" {
+            return Ok(None);
+        }
+        let scope_name = node_text(children[0], source)?.trim().to_string();
+        if scope_name != "with" {
+            return Ok(None);
+        }
+        let Some(receiver) = kotlin_scope_function_with_receiver(children[1], source)? else {
+            return Ok(None);
+        };
+        return Ok(Some((receiver, scope_name)));
+    }
+    Ok(None)
+}
+
+/// Returns the receiver spelling of a `with(receiver) { ... }` call's value
+/// arguments: exactly one plain identifier-chain argument such as `h` in
+/// `with(h) { make() }`. Zero, multiple, or non-plain arguments return `None`
+/// so `with` initializers fail closed.
+fn kotlin_scope_function_with_receiver(
+    value_arguments: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    if value_arguments.kind() != "value_arguments" {
+        return Ok(None);
+    }
+    let mut cursor = value_arguments.walk();
+    let children = value_arguments
+        .named_children(&mut cursor)
+        .collect::<Vec<_>>();
+    if children.len() != 1 {
+        return Ok(None);
+    }
+    let receiver = node_text(children[0], source)?.trim().to_string();
+    if !kotlin_plain_receiver_spelling(&receiver) {
+        return Ok(None);
+    }
+    Ok(Some(receiver))
+}
+
+/// Returns the single body expression of a scope-function lambda such as the
+/// `it.make()` in `h.let { it.make() }` or the `make()` in `h.run { make() }`.
+/// An empty lambda, a lambda with an explicit parameter list, and a lambda
+/// with multiple statements return `None` so scope-function initializers fail
+/// closed (empty lambdas still bind for `apply`/`also`, which the caller
+/// handles without a body).
+fn kotlin_scope_lambda_body<'a>(lambda: Node<'a>) -> Result<Option<Node<'a>>> {
+    let Some(lambda_literal) = lambda
+        .named_children(&mut lambda.walk())
+        .find(|child| child.kind() == "lambda_literal")
+    else {
+        return Ok(None);
+    };
+    let mut cursor = lambda_literal.walk();
+    let children = lambda_literal
+        .named_children(&mut cursor)
+        .collect::<Vec<_>>();
+    if children.is_empty() {
+        return Ok(None);
+    }
+    if children[0].kind() == "lambda_parameters" || children.len() != 1 {
+        return Ok(None);
+    }
+    Ok(Some(children[0]))
+}
+
+/// Classifies a receiver-qualified scope-function lambda body spelling into a
+/// property binding shape: a dotted factory-call body such as `h.make()`
+/// records the callee `h.make` as a type name, a chain body such as
+/// `h.make().items[0].item` records the dotted chain as a property-chain
+/// base, and a plain identifier body such as `h` records the receiver as a
+/// type name. Unsupported spellings return `None` so scope-function
+/// initializers fail closed.
+fn kotlin_scope_body_binding(rewritten: &str) -> Option<(String, Option<String>, Option<String>)> {
+    if let Some(callee) = rewritten.strip_suffix("()")
+        && !callee.is_empty()
+        && !callee.contains('[')
+        && callee.split('.').all(kotlin_property_chain_hop_valid)
+    {
+        return Some((callee.to_string(), None, None));
+    }
+    if rewritten.contains(['[', '.']) && rewritten.split('.').all(kotlin_property_chain_hop_valid) {
+        return Some((String::new(), None, Some(rewritten.to_string())));
+    }
+    if !rewritten.is_empty()
+        && rewritten
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Some((String::new(), None, Some(rewritten.to_string())));
+    }
+    None
+}
+
+/// Recognizes a scope-function call initializer such as `h.let { it.make() }`,
+/// `h.run { make() }`, `h.apply { }`, `with(h) { make() }`, or
+/// `h.also { it.consume() }` and returns a property binding shape in the same
+/// form as other initializers: a dotted factory-call type name when the
+/// lambda result is a receiver-qualified factory call (`h.let { it.make() }`
+/// pins the type to `h.make`), a property-chain base when the result is a
+/// receiver-qualified chain (`h.let { it.make().items[0].item }`), or a
+/// receiver type name when the scope function returns its receiver
+/// (`h.apply { }`, `h.also { ... }`, or `h.let { it }`). `run`/`with` lambdas
+/// reference the receiver unqualified, so their bodies are rewritten with a
+/// leading receiver hop. Unknown scope names, explicit lambda parameters,
+/// malformed bodies, and non-plain receivers return `None` so scope-function
+/// initializers fail closed.
+fn kotlin_scope_function_binding(
+    initializer: Node<'_>,
+    source: &str,
+) -> Result<Option<KotlinScopeFunctionBinding>> {
+    if initializer.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let mut cursor = initializer.walk();
+    let children = initializer.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 {
+        return Ok(None);
+    }
+    let Some(lambda) = children
+        .iter()
+        .find(|child| child.kind() == "annotated_lambda")
+        .copied()
+    else {
+        return Ok(None);
+    };
+    let callee = children[0];
+    let Some((receiver, scope_name)) = kotlin_scope_function_callee(callee, source)? else {
+        return Ok(None);
+    };
+    match scope_name.as_str() {
+        // `apply` and `also` return the receiver regardless of the lambda
+        // body, so the binding records the receiver spelling as a
+        // property-chain base whose terminal type resolves through the same
+        // bound-receiver rules as a bare `val holder = h` initializer.
+        "apply" | "also" => Ok(Some((String::new(), None, Some(receiver)))),
+        "let" | "run" | "with" => {
+            let Some(body) = kotlin_scope_lambda_body(lambda)? else {
+                return Ok(None);
+            };
+            let body_text = node_text(body, source)?.trim().to_string();
+            if body_text.is_empty() {
+                return Ok(None);
+            }
+            let rewritten = if scope_name == "let" {
+                // `let` lambdas receive `it`, so the body must reference the
+                // receiver explicitly through `it.` or as a bare `it`.
+                if let Some(rest) = body_text.strip_prefix("it.") {
+                    format!("{receiver}.{rest}")
+                } else if body_text == "it" {
+                    receiver
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                // `run` and `with` lambdas reference the receiver as `this`,
+                // so unqualified bodies are rewritten with a leading receiver
+                // hop; bodies that already use an explicit root fail closed.
+                if body_text.starts_with("it.")
+                    || body_text == "it"
+                    || body_text.starts_with("this.")
+                    || body_text.starts_with("super.")
+                {
+                    return Ok(None);
+                }
+                format!("{receiver}.{body_text}")
+            };
+            Ok(kotlin_scope_body_binding(&rewritten))
+        }
+        _ => Ok(None),
+    }
+}
+
 fn kotlin_property_binding(
     property: Node<'_>,
     source: &str,
@@ -834,6 +1059,25 @@ fn kotlin_property_binding(
     let Some(initializer) = kotlin_initializer_expression(initializer) else {
         return Ok(None);
     };
+    // A scope-function call initializer such as `val group = h.let { it.make() }`,
+    // `val group = h.run { make() }`, `val holder = h.apply { }`, or
+    // `val group = with(h) { make() }` binds the receiver-qualified lambda
+    // result through the same rules as a direct initializer: a dotted factory
+    // call (`h.make`), a property chain (`h.make().items[0].item`), or the
+    // receiver type itself (`h` for `apply`/`also`); unknown scope names,
+    // malformed lambda bodies, and non-plain receivers fail closed and fall
+    // through to the generic callee binding below.
+    if initializer.kind() == "call_expression"
+        && let Some((type_name, element_access_base, property_chain_base)) =
+            kotlin_scope_function_binding(initializer, source)?
+    {
+        return Ok(Some((
+            name,
+            type_name,
+            element_access_base,
+            property_chain_base,
+        )));
+    }
     if initializer.kind() == "call_expression"
         && let Some(callee) = initializer.named_child(0)
         && let Some(type_name) = kotlin_call_initializer_callee_name(callee, source)?

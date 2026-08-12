@@ -50933,3 +50933,159 @@ fn traces_kotlin_property_chain_initializer_if_when_expression_bindings_in_live_
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runLet(): Int {\n        val group = h.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runRun(): Int {\n        val group = h.run { make() }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runLetDirect(): Int {\n        val first = h.let { it.make().items[0].item }\n        return first.helper(3)\n    }\n    fun runApply(): Int {\n        val holder = h.apply { }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runWith(): Int {\n        val group = with(h) { make() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runAlso(): Int {\n        val holder = h.also { it.consume() }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runLetBareIt(): Int {\n        val holder = h.let { it }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runRunChained(): Int {\n        val first = h.run { make().items[0].item }\n        return first.helper(8)\n    }\n    fun runWithChained(): Int {\n        val first = with(h) { make().items[0].item }\n        return first.helper(9)\n    }\n    fun runLetElemAccessBody(): Int {\n        val inner = h.let { it.make().items[0] }\n        val first = inner.item\n        return first.helper(13)\n    }\n    fun runRunElemAccessBody(): Int {\n        val inner = h.run { make().items[0] }\n        val first = inner.item\n        return first.helper(14)\n    }\n    fun runLocalReceiver(): Int {\n        val local = Holder()\n        val group = local.run { make() }\n        val first = group.items[0].item\n        return first.helper(15)\n    }\n    fun runLetUnknownFailsClosed(): Int {\n        val group = h.let { it.missing() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runCustomFailsClosed(): Int {\n        val group = h.custom { it.make() }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runLetExplicitParamFailsClosed(): Int {\n        val group = h.let { x -> x.make() }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    val h: ImportedHolder = ImportedHolder()\n    fun runImportedLet(): Int {\n        val group = h.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(16)\n    }\n    fun runImportedApply(): Int {\n        val holder = h.apply { }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(17)\n    }\n    fun runImportedWith(): Int {\n        val group = with(h) { make() }\n        val first = group.items[0].item\n        return first.helper(18)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Scope-function initializers pin a `val` local through the
+    // receiver-qualified lambda result: `let`/`run`/`with` lambdas that end
+    // in a factory call (`h.let { it.make() }`, `h.run { make() }`,
+    // `with(h) { make() }`), a direct property chain
+    // (`h.let { it.make().items[0].item }`), a chained factory body
+    // (`h.run { make().items[0].item }`, `with(h) { make().items[0].item }`),
+    // or an element-access terminal (`h.let { it.make().items[0] }`,
+    // `h.run { make().items[0] }`), plus `apply`/`also` (and a bare `it`
+    // `let`) which return the receiver itself (`h.apply { }`,
+    // `h.also { ... }`, `h.let { it }`), and a locally constructed receiver
+    // (`local.run { make() }` after `val local = Holder()`). An unknown
+    // terminal method (`h.let { it.missing() }`), an unknown scope name
+    // (`h.custom { it.make() }`), and an explicit lambda parameter
+    // (`h.let { x -> x.make() }`) fail closed, so the twelve same-package
+    // callers in `Util` dispatch on `com::example::Item::helper` and the
+    // three imported callers in `Util2` dispatch on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 12);
+    for caller in [
+        "com::example::Util::runLet",
+        "com::example::Util::runRun",
+        "com::example::Util::runLetDirect",
+        "com::example::Util::runApply",
+        "com::example::Util::runWith",
+        "com::example::Util::runAlso",
+        "com::example::Util::runLetBareIt",
+        "com::example::Util::runRunChained",
+        "com::example::Util::runWithChained",
+        "com::example::Util::runLetElemAccessBody",
+        "com::example::Util::runRunElemAccessBody",
+        "com::example::Util::runLocalReceiver",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runLetUnknownFailsClosed",
+        "com::example::Util::runCustomFailsClosed",
+        "com::example::Util::runLetExplicitParamFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 3);
+    for caller in [
+        "com::example::Util2::runImportedLet",
+        "com::example::Util2::runImportedApply",
+        "com::example::Util2::runImportedWith",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing imported caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 12);
+    for caller in [
+        "com::example::Util::runLet",
+        "com::example::Util::runRun",
+        "com::example::Util::runLetDirect",
+        "com::example::Util::runApply",
+        "com::example::Util::runWith",
+        "com::example::Util::runAlso",
+        "com::example::Util::runLetBareIt",
+        "com::example::Util::runRunChained",
+        "com::example::Util::runWithChained",
+        "com::example::Util::runLetElemAccessBody",
+        "com::example::Util::runRunElemAccessBody",
+        "com::example::Util::runLocalReceiver",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runLetUnknownFailsClosed",
+        "com::example::Util::runCustomFailsClosed",
+        "com::example::Util::runLetExplicitParamFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 3);
+    for caller in [
+        "com::example::Util2::runImportedLet",
+        "com::example::Util2::runImportedApply",
+        "com::example::Util2::runImportedWith",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+}
