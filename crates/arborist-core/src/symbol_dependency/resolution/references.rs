@@ -13629,11 +13629,13 @@ fn kotlin_method_call_hop_type_path(
 /// such as `inner()` dispatches on the declared return type of a unique member
 /// or extension function; an array-property element-access hop such as
 /// `groups[0]` resolves the base name as a uniquely declared single-level
-/// array property and continues on the element component type; any other hop
-/// must resolve as a uniquely declared property whose declared type or bare
-/// constructor initializer pins the next receiver. Factory-call element-access
-/// hops such as `makeGroups()[0]` are resolved by the chained-hop wrapper
-/// before this fallback and remain unsupported in the receiver-chain and
+/// array property and continues on the element component type; a hop naming a
+/// uniquely declared nested type such as `Nested` in `Outer.Nested.make()`
+/// continues on the nested type's own scope; any other hop must resolve as a
+/// uniquely declared property whose declared type or bare constructor
+/// initializer pins the next receiver. Factory-call element-access hops such
+/// as `makeGroups()[0]` are resolved by the chained-hop wrapper before this
+/// fallback and remain unsupported in the receiver-chain and
 /// constructor-receiver contexts. Unknown or ambiguous hops fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_chain_hop_type_path(
@@ -13671,7 +13673,7 @@ fn kotlin_chain_hop_type_path(
             deadline,
         );
     }
-    kotlin_property_type_path(
+    if let Ok(Some(path)) = kotlin_property_type_path(
         owner_type_path,
         hop,
         raw_symbols,
@@ -13679,7 +13681,18 @@ fn kotlin_chain_hop_type_path(
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )
+    ) {
+        return Ok(Some(path));
+    }
+    // A hop naming a uniquely declared nested type such as `Nested` in
+    // `Outer.Nested.make()` or `DeepOuter.Mid.Inner.make()` continues on the
+    // nested type's own scope the same way dotted type paths walk nested
+    // declarations, so nested objects, classes, and interfaces resolve as
+    // receiver-chain hops; ambiguous and missing nested types fail closed.
+    if let Some(nested_path) = kotlin_nested_type_hop_path(owner_type_path, hop, raw_symbols) {
+        return Ok(Some(nested_path));
+    }
+    Ok(None)
 }
 
 /// Resolves a dotted receiver prefix such as `group`, `group.holder`,
@@ -13899,6 +13912,31 @@ fn resolve_kotlin_receiver_chain_first_path(
         deadline,
     )? {
         return Ok(Some((format!("{companion_root}::Companion"), consumed)));
+    }
+    // A nested object chain root such as `Outer.Nested` in
+    // `Outer.Nested.make()` resolves the first hop as a type path and the
+    // second hop as exactly one nested object declaration (nested objects are
+    // not companion chains, so the companion-chain root above does not cover
+    // them); the nested object scope consumes two hops so the remaining chain
+    // walks from there. A local binding of the first-hop name shadows the type,
+    // and a nested object that shares its name with a nested class or
+    // interface fails closed instead of guessing a target.
+    if hops.len() >= 2
+        && !bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+        && let Some(class_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            hops[0],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(nested_object_path) =
+            kotlin_path_nested_object(&class_path, hops[1], raw_symbols)
+    {
+        return Ok(Some((nested_object_path, 2)));
     }
     if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
@@ -15503,6 +15541,31 @@ fn kotlin_path_nested_class_path(
         }
     }
     (class_count == 1 && other_declaration_count == 0).then_some(nested_path)
+}
+
+/// Returns the nested type path when `type_name` under `owner_type_path` names
+/// exactly one nested class, interface, or object declaration and no
+/// same-named non-type declaration conflicts; unknown and ambiguous nested
+/// types fail closed. Receiver-chain hops use this to walk nested types such
+/// as `Nested` in `Outer.Nested.make()` or `DeepOuter.Mid.Inner.make()` the
+/// same way dotted type paths walk nested declarations.
+fn kotlin_nested_type_hop_path(
+    owner_type_path: &str,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let nested_path = format!("{owner_type_path}::{type_name}");
+    let mut type_count = 0usize;
+    for candidate in raw_symbols {
+        if candidate.semantic_path != nested_path {
+            continue;
+        }
+        match candidate.node_kind.as_str() {
+            "class_declaration" | "interface_declaration" | "object_declaration" => type_count += 1,
+            _ => return None,
+        }
+    }
+    (type_count == 1).then_some(nested_path)
 }
 
 /// Resolves a `()`-marked receiver chain such as

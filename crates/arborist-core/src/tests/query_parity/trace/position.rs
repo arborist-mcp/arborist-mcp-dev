@@ -50547,3 +50547,105 @@ fn traces_kotlin_property_chain_initializer_chained_factory_call_bindings_in_liv
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_nested_object_factory_call_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nobject Outer {\n    object Nested {\n        fun make(): Group = Group()\n    }\n    fun make(): Group = Group()\n}\n\nobject DeepOuter {\n    object Mid {\n        object Inner {\n            fun make(): Group = Group()\n        }\n    }\n}\n\nclass ClassOuter {\n    object Nested2 {\n        fun make(): Group = Group()\n    }\n}\n\nclass Util {\n    fun runNestedObject(): Int {\n        val group = Outer.Nested.make()\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runDeepNestedObject(): Int {\n        val group = DeepOuter.Mid.Inner.make()\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNestedObjectChained(): Int {\n        val group = Outer.Nested.make().make()\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runClassRootNestedObject(): Int {\n        val group = ClassOuter.Nested2.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runNestedObjectUnknownFailsClosed(): Int {\n        val group = Outer.Nested.missing()\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nobject ImportedOuter {\n    object Nested {\n        fun make(): ImportedGroup = ImportedGroup()\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedOuter\n\nclass Util2 {\n    fun runImportedNestedObject(): Int {\n        val group = ImportedOuter.Nested.make()\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Factory-call initializers with nested-object receivers pin a `val` local
+    // through the nested object's declared return type: an object-rooted
+    // nested object (`Outer.Nested.make()`), a class-rooted nested object
+    // (`ClassOuter.Nested2.make()`), deeper nested object chains
+    // (`DeepOuter.Mid.Inner.make()`), chained terminals
+    // (`Outer.Nested.make().make()`), and an explicitly imported object root
+    // (`ImportedOuter.Nested.make()`). An unknown terminal method
+    // (`Outer.Nested.missing()`) fails closed, so the four same-package
+    // callers in `Util` dispatch on `com::example::Item::helper` and the
+    // imported caller in `Util2` dispatches on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runNestedObject",
+        "com::example::Util::runDeepNestedObject",
+        "com::example::Util::runNestedObjectChained",
+        "com::example::Util::runClassRootNestedObject",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::runNestedObjectUnknownFailsClosed")
+    );
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert!(
+        live_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImportedNestedObject")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::runNestedObject",
+        "com::example::Util::runDeepNestedObject",
+        "com::example::Util::runNestedObjectChained",
+        "com::example::Util::runClassRootNestedObject",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::runNestedObjectUnknownFailsClosed")
+    );
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert!(
+        persisted_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImportedNestedObject")
+    );
+}
