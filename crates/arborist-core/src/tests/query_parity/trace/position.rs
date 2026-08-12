@@ -32752,6 +32752,118 @@ fn traces_kotlin_cross_file_property_chain_initializer_local_binding_roots_in_li
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_bound_root_hop_and_var_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    fun make(): Holder = Holder()\n}\n\nclass Util {\n    fun runMethodCallHopOnBound(): Int {\n        val x = Holder()\n        val first = x.make().item\n        return first.helper(1)\n    }\n    fun runVarBinding(): Int {\n        var x = Holder()\n        val first = x.item\n        return first.helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Locally bound property-chain initializer roots also compose with
+    // method-call hops (`val x = Holder()` then `x.make().item` dispatches
+    // through `Holder::make`'s return type) and `var` bindings (`var x =
+    // Holder()` then `x.item`); both callers trace to `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMethodCallHopOnBound",
+        "com::example::Util::runVarBinding",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runMethodCallHopOnBound",
+        "com::example::Util::runVarBinding",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_object_and_companion_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.kt");
+    let caller_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nobject Registry {\n    val holder: Holder = Holder()\n}\n\nclass NamedHost {\n    companion object Factory {\n        val holder: Holder = Holder()\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Registry\nimport org.util.NamedHost\nimport org.util.Holder\n\nclass Util {\n    fun runImportedObject(): Int {\n        val first = Registry.holder.item\n        return first.helper(1)\n    }\n    fun runImportedNamedCompanion(): Int {\n        val first = NamedHost.Factory.holder.item\n        return first.helper(2)\n    }\n    fun runImportedLocalBindingArray(): Int {\n        val x = Holder()\n        val first = x.items\n        return first[0].helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Object, named-companion, and local-binding property-chain initializer
+    // roots also resolve through explicit type imports from another package:
+    // `Registry.holder.item` on the imported object, `NamedHost.Factory` on
+    // the imported class's named companion, and `val x = Holder()` then
+    // `x.items` on the imported constructed type's array terminal; all three
+    // callers trace to `Item::helper`.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runImportedObject",
+        "com::example::Util::runImportedNamedCompanion",
+        "com::example::Util::runImportedLocalBindingArray",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runImportedObject",
+        "com::example::Util::runImportedNamedCompanion",
+        "com::example::Util::runImportedLocalBindingArray",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_parameter_roots_in_live_workspace_and_persisted_index()
 {
     let dir = temporary_dir();
