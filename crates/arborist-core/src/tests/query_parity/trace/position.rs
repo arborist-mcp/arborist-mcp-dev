@@ -33008,6 +33008,142 @@ fn traces_kotlin_cross_file_property_chain_initializer_top_level_property_roots_
 }
 
 #[test]
+fn traces_kotlin_property_chain_initializer_top_level_array_property_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val items: Array<Item> = arrayOf()\n}\n\nval holder: Holder = Holder()\nval itemGroup: Array<Item> = arrayOf()\n\nclass Util {\n    fun runChainArrayTerminal(): Int {\n        val first = holder.items\n        return first[0].helper(1)\n    }\n    fun runElementAccess(): Int {\n        val first = itemGroup[0]\n        return first.helper(2)\n    }\n    fun runArrayTerminal(): Int {\n        val first = itemGroup\n        return first[0].helper(3)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A top-level array property such as `val itemGroup: Array<Item>` at
+    // package scope roots both a direct element-access initializer
+    // (`val first = itemGroup[0]`) and a bare single-hop array terminal
+    // (`val first = itemGroup` with a trailing `first[0].helper(...)`), while
+    // a member-chain terminal such as `holder.items` keeps tracing through the
+    // terminal array field's element component type; all three callers
+    // dispatch on `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runChainArrayTerminal",
+        "com::example::Util::runElementAccess",
+        "com::example::Util::runArrayTerminal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "com::example::Util::runChainArrayTerminal",
+        "com::example::Util::runElementAccess",
+        "com::example::Util::runArrayTerminal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_initializer_top_level_array_property_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.kt");
+    let caller_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nval itemGroup: Array<Item> = arrayOf()\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.itemGroup\n\nclass Util {\n    fun runImportedElementAccess(): Int {\n        val first = itemGroup[0]\n        return first.helper(1)\n    }\n    fun runImportedTerminal(): Int {\n        val first = itemGroup\n        return first[0].helper(2)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Top-level array property roots also resolve through an explicit import
+    // of the property from another package: both the direct element-access
+    // (`val first = itemGroup[0]`) and bare single-hop array terminal
+    // (`val first = itemGroup`) forms dispatch on the imported property's
+    // element component type.
+    let item_path = "org::util::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runImportedElementAccess",
+        "com::example::Util::runImportedTerminal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "com::example::Util::runImportedElementAccess",
+        "com::example::Util::runImportedTerminal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_property_chain_initializer_top_level_array_property_shadowing_fails_closed_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val items: Array<Item> = arrayOf()\n}\n\nval itemGroup: Array<Item> = arrayOf()\n\nclass Util {\n    fun runShadowedLocal(): Int {\n        val itemGroup = Holder()\n        val first = itemGroup[0]\n        return first.helper(1)\n    }\n    fun runBoundNonArrayBase(): Int {\n        val holder = Holder()\n        val first = holder[0]\n        return first.helper(2)\n    }\n    fun control(): Int {\n        val first = itemGroup\n        return first[0].helper(3)\n    }\n}\n\nclass MemberShadow {\n    val itemGroup: Int = 0\n    fun runShadowedMember(): Int {\n        val first = itemGroup[0]\n        return first.helper(4)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A locally bound non-array value or an enclosing member property shadows
+    // the same-named top-level array property (Kotlin scope: local, then
+    // member, then package), so element access on those bases fails closed;
+    // only the unshadowed control caller dispatches on the top-level
+    // property's element component type.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Util::control");
+}
+
+#[test]
 fn traces_kotlin_property_chain_initializer_bound_root_hop_and_var_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

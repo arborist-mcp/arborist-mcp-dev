@@ -603,6 +603,15 @@ fn kotlin_property_binding(
         if base_name.contains('.') || base_name.ends_with("()") {
             return Ok(Some((name, String::new(), Some(base_name), None)));
         }
+        // A plain bare base that is not bound locally, as an enclosing-class
+        // property, or as a companion member may be a same-package or
+        // explicitly imported top-level array property such as `itemGroup` in
+        // `val first = itemGroup[0]` with `val itemGroup: Array<Holder>` at
+        // package scope, resolved at trace time; a bound non-array base fails
+        // closed because element access on a non-array is invalid.
+        if !bindings.contains(&base_name) {
+            return Ok(Some((name, String::new(), Some(base_name), None)));
+        }
     }
     // A plain property-chain initializer such as `val first = holder.item`,
     // `val first = this.holder.item`, or `val first = super.baseItem` records

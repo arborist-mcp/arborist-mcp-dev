@@ -10830,6 +10830,7 @@ fn resolve_kotlin_qualified_receiver_call(
                     resolve_kotlin_property_chain_array_component_type_path(
                         source_symbol,
                         &chain,
+                        bindings.as_ref(),
                         raw_symbols,
                         semantic_path_index,
                         file_overrides,
@@ -11767,6 +11768,27 @@ fn resolve_kotlin_element_access_base_component_type_path(
     {
         return Ok(Some(component_path));
     }
+    // A plain bare base that is not locally bound may be a same-package or
+    // explicitly imported top-level array property such as `itemGroup` in
+    // `val first = itemGroup[0]` with `val itemGroup: Array<Holder>` at
+    // package scope, whose element component type resolves in the property's
+    // own file scope; a locally bound or member name shadows the top-level
+    // property, so element access on a bound non-array base fails closed.
+    if !base.contains('.') {
+        if bindings.is_some_and(|bindings| bindings.contains(base)) {
+            return Ok(None);
+        }
+        if let Some(component_path) = resolve_kotlin_top_level_property_array_component_path(
+            source_symbol,
+            base,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(component_path));
+        }
+    }
     let Some((first_hop, chain)) = base.split_once('.') else {
         return Ok(None);
     };
@@ -12547,17 +12569,21 @@ fn kotlin_property_chain_initializer_root(
 /// Resolves the terminal element component type path of a name bound from a
 /// property-chain initializer whose terminal property is a single-level
 /// array, such as `val first = holder.items` with `val items: Array<Item>`,
-/// including `this`- and `super`-rooted chains and inherited terminal array
-/// properties. Intermediate hops walk the same property, array-element, and
-/// method-call hop rules as chained receivers, and the terminal hop resolves
-/// its element component type so a trailing element access such as
-/// `first[0].helper(...)` dispatches on the component type. Non-array
-/// terminals, unresolvable roots, and unknown or ambiguous hops return `None`
-/// so callers fail closed.
+/// including `this`- and `super`-rooted chains, inherited terminal array
+/// properties, and a single-hop chain that names a same-package or explicitly
+/// imported top-level array property such as `val first = itemGroup` with
+/// `val itemGroup: Array<Holder>` at package scope. Intermediate hops walk
+/// the same property, array-element, and method-call hop rules as chained
+/// receivers, and the terminal hop resolves its element component type so a
+/// trailing element access such as `first[0].helper(...)` dispatches on the
+/// component type. Non-array terminals, unresolvable roots, bound or member
+/// names that shadow the top-level property, and unknown or ambiguous hops
+/// return `None` so callers fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_property_chain_array_component_type_path(
     source_symbol: &IndexedSymbol,
     chain: &str,
+    bindings: Option<&KotlinReceiverTypeBindings>,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -12567,6 +12593,24 @@ fn resolve_kotlin_property_chain_array_component_type_path(
     let hops = chain.split('.').collect::<Vec<_>>();
     if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
+    }
+    // A single-hop chain that names a same-package or explicitly imported
+    // top-level array property such as `itemGroup` in `val first = itemGroup`
+    // with `val itemGroup: Array<Holder>` at package scope resolves directly
+    // to the property's element component type; a locally bound or member
+    // name shadows the top-level property and is not eligible.
+    if hops.len() == 1
+        && !bindings.is_some_and(|bindings| bindings.contains(hops[0]))
+        && let Some(component_path) = resolve_kotlin_top_level_property_array_component_path(
+            source_symbol,
+            hops[0],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(Some(component_path));
     }
     let Some((mut type_path, skip)) = kotlin_property_chain_initializer_root(
         source_symbol,
@@ -12581,7 +12625,8 @@ fn resolve_kotlin_property_chain_array_component_type_path(
         return Ok(None);
     };
     let terminal = hops[hops.len() - 1];
-    for hop in hops.iter().skip(skip).take(hops.len() - skip - 1) {
+    let intermediate_count = hops.len().saturating_sub(skip).saturating_sub(1);
+    for hop in hops.iter().skip(skip).take(intermediate_count) {
         let Some(next_path) = kotlin_chained_receiver_hop_type_path(
             &type_path,
             hop,
@@ -12881,6 +12926,7 @@ fn resolve_kotlin_chained_receiver_call(
         && let Some(component_path) = resolve_kotlin_property_chain_array_component_type_path(
             source_symbol,
             &chain,
+            bindings.as_ref(),
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -13508,6 +13554,7 @@ fn resolve_kotlin_receiver_chain_first_path(
         && let Some(component_path) = resolve_kotlin_property_chain_array_component_type_path(
             source_symbol,
             &chain,
+            bindings,
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -14901,21 +14948,20 @@ fn kotlin_path_top_level_property_count(path: &str, raw_symbols: &[IndexedSymbol
         .count()
 }
 
-/// Resolves an unbound receiver name to the declared type path of a
-/// top-level property such as `holder` in `val first = holder.item` with
+/// Returns the uniquely resolved top-level property symbol for an unbound
+/// receiver name such as `holder` in `val first = holder.item` with
 /// `val holder: Holder = Holder()` at package scope. The property must be
 /// uniquely declared in the caller's package or bound by an explicit import;
 /// a same-package property that conflicts with an imported binding, an
-/// unknown name, a name that matches multiple declarations, and properties
-/// without a usable declared type fail closed.
-fn resolve_kotlin_top_level_property_receiver_path(
+/// unknown name, and a name that matches multiple declarations fail closed.
+fn resolve_kotlin_top_level_property_symbol<'a>(
     source_symbol: &IndexedSymbol,
     receiver: &str,
-    raw_symbols: &[IndexedSymbol],
+    raw_symbols: &'a [IndexedSymbol],
     file_overrides: Option<&BTreeMap<String, String>>,
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<Option<&'a IndexedSymbol>> {
     if receiver.is_empty()
         || !receiver
             .chars()
@@ -14950,9 +14996,34 @@ fn resolve_kotlin_top_level_property_receiver_path(
     let Some(property_path) = candidate_path else {
         return Ok(None);
     };
-    let Some(property) = raw_symbols
+    Ok(raw_symbols
         .iter()
-        .find(|candidate| candidate.semantic_path == property_path)
+        .find(|candidate| candidate.semantic_path == property_path))
+}
+
+/// Resolves an unbound receiver name to the declared type path of a
+/// top-level property such as `holder` in `val first = holder.item` with
+/// `val holder: Holder = Holder()` at package scope. The property's declared
+/// type resolves in the property's own file and package scope (its imports
+/// and package), not the caller's, so an imported property whose type lives
+/// in its own package still pins the receiver; properties without a usable
+/// declared type fail closed.
+fn resolve_kotlin_top_level_property_receiver_path(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(property) = resolve_kotlin_top_level_property_symbol(
+        source_symbol,
+        receiver,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
     else {
         return Ok(None);
     };
@@ -14963,13 +15034,50 @@ fn resolve_kotlin_top_level_property_receiver_path(
     else {
         return Ok(None);
     };
-    // The property's declared type resolves in the property's own file and
-    // package scope (its imports and package), not the caller's, so an
-    // imported property whose type lives in its own package still pins the
-    // receiver.
     resolve_kotlin_receiver_type_path(
         property,
         &return_type,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves an unbound receiver name to the element component type path of a
+/// top-level property whose declared type is a single-level generic array,
+/// such as `itemGroup` in `val first = itemGroup[0]` with
+/// `val itemGroup: Array<Holder>` at package scope. The component type
+/// resolves in the property's own file and package scope; non-array,
+/// primitive, and unresolvable top-level properties fail closed.
+fn resolve_kotlin_top_level_property_array_component_path(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(property) = resolve_kotlin_top_level_property_symbol(
+        source_symbol,
+        receiver,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = property.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = kotlin_array_type_component_name(return_type) else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        property,
+        &component_name,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
