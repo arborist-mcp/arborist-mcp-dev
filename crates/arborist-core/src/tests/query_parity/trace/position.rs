@@ -50323,3 +50323,103 @@ fn traces_kotlin_dotted_factory_call_bindings_in_live_workspace_and_persisted_in
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_bound_array_element_access_roots_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    val item: Item = Item()\n    val items: Array<Inner> = arrayOf()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeGroups(): Array<Inner> = arrayOf()\n}\n\nfun makeGroups(): Array<Inner> = arrayOf()\n\nclass Util {\n    fun makeGroups(): Array<Inner> = arrayOf()\n\n    fun runTopLevelBinding(): Int {\n        val group = makeGroups()\n        val first = group[0].item\n        return first.helper(1)\n    }\n    fun runClassBinding(): Int {\n        val group = this.makeGroups()\n        val first = group[0].item\n        return first.helper(2)\n    }\n    fun runBoundBinding(): Int {\n        val h = Holder()\n        val group = h.makeGroups()\n        val first = group[0].item\n        return first.helper(3)\n    }\n    fun runArrayParam(param: Array<Inner>): Int {\n        val first = param[0].item\n        return first.helper(4)\n    }\n    fun runLocalArrayBinding(): Int {\n        val items: Array<Inner> = arrayOf()\n        val first = items[0].item\n        return first.helper(5)\n    }\n    fun runDeeperChain(): Int {\n        val group = makeGroups()\n        val first = group[0].items[0].item\n        return first.helper(6)\n    }\n    fun runScalarFailsClosed(): Int {\n        val h = Holder()\n        val group = h.make()\n        val first = group[0].item\n        return first.helper(7)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedHolder {\n    fun makeGroups(): Array<ImportedInner> = arrayOf()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImported(): Int {\n        val h = ImportedHolder()\n        val group = h.makeGroups()\n        val first = group[0].item\n        return first.helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from a property-chain initializer whose leading
+    // element-access hop indexes a locally bound array value dispatches
+    // through the bound name's array component type: a factory-call binding
+    // (`val group = makeGroups()` then `group[0].item` from a same-file
+    // top-level factory, a same-type member factory, a bound-receiver member
+    // factory, or an explicitly imported holder factory), an array-typed
+    // parameter (`param[0].item`), an array-typed local
+    // (`val items: Array<Inner> = arrayOf()`), and deeper chains
+    // (`group[0].items[0].item`). A bound scalar base such as
+    // `val group = h.make()` followed by `group[0]` fails closed, so the six
+    // same-package callers in `Util` dispatch on `com::example::Item::helper`
+    // and the imported caller in `Util2` dispatches on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runTopLevelBinding",
+        "com::example::Util::runClassBinding",
+        "com::example::Util::runBoundBinding",
+        "com::example::Util::runArrayParam",
+        "com::example::Util::runLocalArrayBinding",
+        "com::example::Util::runDeeperChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert!(
+        live_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runTopLevelBinding",
+        "com::example::Util::runClassBinding",
+        "com::example::Util::runBoundBinding",
+        "com::example::Util::runArrayParam",
+        "com::example::Util::runLocalArrayBinding",
+        "com::example::Util::runDeeperChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert!(
+        persisted_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+}

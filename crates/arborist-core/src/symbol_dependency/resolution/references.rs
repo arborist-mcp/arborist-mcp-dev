@@ -12557,6 +12557,68 @@ fn kotlin_property_chain_initializer_root(
             };
             return Ok(Some((this_root.to_string(), 0)));
         }
+        // A leading element-access hop whose base is a locally bound name,
+        // such as `group[0]` in `val first = group[0].item` after
+        // `val group = makeGroups()`, dispatches through the bound name's
+        // array component type: a direct array component binding (a
+        // parameter, local, or member with a single-level array type), or a
+        // factory-call binding whose declared return type is a single-level
+        // array resolved through the same factory rules as a direct
+        // factory-call element-access receiver. Bound non-array names,
+        // unknown factories, and unresolvable components fail closed because
+        // the local binding shadows member and top-level arrays.
+        if let Some((base_name, _)) = kotlin_array_access_spelling(first_hop)
+            && !base_name.contains('(')
+            && bindings
+                .as_ref()
+                .is_some_and(|bindings| bindings.contains(base_name))
+        {
+            if let Some(component_type) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.array_component_for(base_name))
+            {
+                let Some(component_path) = resolve_kotlin_initializer_type_path(
+                    source_symbol,
+                    &component_type,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some((component_path, 1)));
+            }
+            if let Some(initializer_name) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.type_for(base_name))
+                && !initializer_name.is_empty()
+                && resolve_kotlin_receiver_type_path(
+                    source_symbol,
+                    &initializer_name,
+                    raw_symbols,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+                .is_none()
+                && let Some((component_path, _)) =
+                    resolve_kotlin_factory_array_element_component_type(
+                        source_symbol,
+                        &initializer_name,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        kotlin_import_contexts_by_file,
+                        deadline,
+                    )?
+            {
+                return Ok(Some((component_path, 1)));
+            }
+            return Ok(None);
+        }
         if let Some((base_name, _)) = kotlin_array_access_spelling(first_hop)
             && !base_name.contains('(')
         {
