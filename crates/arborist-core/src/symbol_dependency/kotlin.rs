@@ -990,18 +990,24 @@ fn kotlin_scope_function_with_receiver(
     Ok(Some(receiver))
 }
 
-/// Returns the single body expression of a scope-function lambda such as the
-/// `it.make()` in `h.let { it.make() }` or the `make()` in `h.run { make() }`,
-/// together with the lambda's explicit parameter name when one is declared
-/// (such as `holder` in `h.let { holder -> holder.make() }`). An empty
-/// lambda, a lambda with multiple parameters, and a lambda with multiple
-/// statements return `None` so scope-function initializers fail closed
-/// (empty lambdas still bind for `apply`/`also`, which the caller handles
-/// without a body).
+/// A scope-function lambda body's optional explicit parameter name, its
+/// leading `val` statements, and its final result expression.
+type KotlinScopeLambdaBody<'a> = (Option<String>, Vec<Node<'a>>, Node<'a>);
+
+/// Returns the statements and result expression of a scope-function lambda
+/// such as the `it.make()` in `h.let { it.make() }` or the `val g = it.make()`
+/// statement plus `g` result in `h.let { val g = it.make(); g }`, together
+/// with the lambda's explicit parameter name when one is declared (such as
+/// `holder` in `h.let { holder -> holder.make() }`). Every node before the
+/// final result expression is a statement (typically a `val` local that the
+/// caller substitutes into the result); an empty lambda and a lambda with
+/// multiple parameters return `None` so scope-function initializers fail
+/// closed (empty lambdas still bind for `apply`/`also`, which the caller
+/// handles without a body).
 fn kotlin_scope_lambda_body<'a>(
     lambda: Node<'a>,
     source: &str,
-) -> Result<Option<(Option<String>, Node<'a>)>> {
+) -> Result<Option<KotlinScopeLambdaBody<'a>>> {
     let Some(lambda_literal) = lambda
         .named_children(&mut lambda.walk())
         .find(|child| child.kind() == "lambda_literal")
@@ -1020,7 +1026,7 @@ fn kotlin_scope_lambda_body<'a>(
     // body's receiver reference is unambiguous; multiple parameters fail
     // closed.
     let param_name = if children[0].kind() == "lambda_parameters" {
-        if children.len() != 2 {
+        if children.len() < 2 {
             return Ok(None);
         }
         let mut param_cursor = children[0].walk();
@@ -1043,12 +1049,91 @@ fn kotlin_scope_lambda_body<'a>(
         };
         Some(name)
     } else {
-        if children.len() != 1 {
-            return Ok(None);
-        }
         None
     };
-    Ok(Some((param_name, children[children.len() - 1])))
+    // The final named child is the lambda result expression; any nodes before
+    // it (after an optional parameter list) are body statements.
+    let statements = if children[0].kind() == "lambda_parameters" {
+        children[1..children.len() - 1].to_vec()
+    } else {
+        children[..children.len() - 1].to_vec()
+    };
+    Ok(Some((param_name, statements, children[children.len() - 1])))
+}
+
+/// Builds the local-name to initializer-spelling map for the `val` statements
+/// of a multi-statement scope-function lambda body such as the `g` to
+/// `it.make()` entry of `val g = it.make()` in
+/// `h.let { val g = it.make(); g }`. Every statement must be a
+/// `property_declaration` with exactly one named initializer expression
+/// (typed declarations such as `val g: Group = it.make()` are allowed as long
+/// as an initializer is present), and an initializer must not reference
+/// another declared local; any other statement shape returns `None` so
+/// multi-statement bodies fail closed unless every hop is
+/// receiver-qualified through the same rules as a single-expression body.
+fn kotlin_scope_lambda_locals(
+    statements: &[Node<'_>],
+    source: &str,
+) -> Result<Option<BTreeMap<String, String>>> {
+    let mut locals = BTreeMap::new();
+    for statement in statements {
+        if statement.kind() != "property_declaration" {
+            return Ok(None);
+        }
+        let mut cursor = statement.walk();
+        let children = statement.named_children(&mut cursor).collect::<Vec<_>>();
+        if children.len() != 2 || children[0].kind() != "variable_declaration" {
+            return Ok(None);
+        }
+        let mut variable_cursor = children[0].walk();
+        let Some(name_node) = children[0]
+            .named_children(&mut variable_cursor)
+            .find(|child| child.kind() == "identifier")
+        else {
+            return Ok(None);
+        };
+        let name = node_text(name_node, source)?.trim().to_string();
+        let initializer = node_text(children[1], source)?.trim().to_string();
+        if name.is_empty() || initializer.is_empty() {
+            return Ok(None);
+        }
+        // A local whose initializer roots on another declared local such as
+        // `val b = a` cannot be expanded without dependency ordering, so
+        // multi-statement bodies with chained locals fail closed.
+        let root = initializer
+            .split(['.', '[', '('])
+            .next()
+            .unwrap_or_default();
+        if locals.contains_key(root) {
+            return Ok(None);
+        }
+        locals.insert(name, initializer);
+    }
+    Ok(Some(locals))
+}
+
+/// Expands the local-name roots of a multi-statement scope-function lambda
+/// result expression to their `val` initializer spellings, so a body such as
+/// `val g = it.make(); g` reduces to the single expression `it.make()` before
+/// the caller's receiver rewriting. Only a leading identifier root that names
+/// a declared local is substituted (`g` in `g.items[0].item`); any other
+/// result text is returned unchanged and the caller's receiver rewrite fails
+/// closed on unknown roots.
+fn kotlin_scope_lambda_result_spelling(
+    result: Node<'_>,
+    locals: &BTreeMap<String, String>,
+    source: &str,
+) -> Result<String> {
+    let text = node_text(result, source)?.trim().to_string();
+    if text.is_empty() {
+        return Ok(text);
+    }
+    let root = text.split(['.', '[', '(']).next().unwrap_or_default();
+    if let Some(initializer) = locals.get(root) {
+        Ok(format!("{initializer}{}", &text[root.len()..]))
+    } else {
+        Ok(text)
+    }
 }
 
 /// Classifies a receiver-qualified scope-function lambda body spelling into a
@@ -1089,8 +1174,11 @@ fn kotlin_scope_body_binding(rewritten: &str) -> Option<(String, Option<String>,
 /// receiver type name when the scope function returns its receiver
 /// (`h.apply { }`, `h.also { ... }`, or `h.let { it }`). `run`/`with` lambdas
 /// reference the receiver unqualified, so their bodies are rewritten with a
-/// leading receiver hop. Unknown scope names, explicit lambda parameters,
-/// malformed bodies, and non-plain receivers return `None` so scope-function
+/// leading receiver hop. A lambda body may declare `val` locals before its
+/// result expression (such as `val g = it.make(); g`), which expand to the
+/// result's receiver-qualified spelling through the same rules as a
+/// single-expression body. Unknown scope names, malformed bodies, chained
+/// locals, and non-plain receivers return `None` so scope-function
 /// initializers fail closed.
 fn kotlin_scope_function_binding(
     initializer: Node<'_>,
@@ -1122,10 +1210,14 @@ fn kotlin_scope_function_binding(
         // bound-receiver rules as a bare `val holder = h` initializer.
         "apply" | "also" => Ok(Some((String::new(), None, Some(receiver)))),
         "let" | "run" | "with" => {
-            let Some((param_name, body)) = kotlin_scope_lambda_body(lambda, source)? else {
+            let Some((param_name, statements, result)) = kotlin_scope_lambda_body(lambda, source)?
+            else {
                 return Ok(None);
             };
-            let body_text = node_text(body, source)?.trim().to_string();
+            let Some(locals) = kotlin_scope_lambda_locals(&statements, source)? else {
+                return Ok(None);
+            };
+            let body_text = kotlin_scope_lambda_result_spelling(result, &locals, source)?;
             if body_text.is_empty() {
                 return Ok(None);
             }

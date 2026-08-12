@@ -51971,3 +51971,101 @@ fn traces_kotlin_property_chain_initializer_elvis_expression_bindings_in_live_wo
         "com::example::Util2::runImportedElvisScope"
     );
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_multi_statement_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun consume(): Unit = Unit\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun multiLet(): Int {\n        val group = h.let { val g = it.make(); g }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun multiLetNoSemicolon(): Int {\n        val group = h.let {\n            val g = it.make()\n            g\n        }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun multiRun(): Int {\n        val group = h.run {\n            val g = make()\n            g\n        }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun multiApply(): Int {\n        val holder = h.apply {\n            val x = 1\n        }\n        val group = holder.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun multiChainBody(): Int {\n        val first = h.let {\n            val g = it.make()\n            g.items[0].item\n        }\n        return first.helper(5)\n    }\n    fun multiParam(): Int {\n        val group = h.let { holder ->\n            val g = holder.make()\n            g\n        }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun multiTyped(): Int {\n        val group = h.let {\n            val g: Group = it.make()\n            g\n        }\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun multiWith(): Int {\n        val group = with(h) {\n            val g = make()\n            g\n        }\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun multiMissingFailsClosed(): Int {\n        val group = h.let {\n            val g = it.make()\n            g.missing()\n        }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun multiChainedFailsClosed(): Int {\n        val group = h.let {\n            val a = it.make()\n            val b = a\n            b\n        }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun multiStatementFailsClosed(): Int {\n        val group = h.let {\n            it.consume()\n            it.make()\n        }\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+
+    // A multi-statement scope-function lambda body declares `val` locals
+    // before its result expression, and the binding expands those locals'
+    // receiver-qualified initializer spellings into the result before the
+    // same rewriting as a single-expression body: `h.let { val g = it.make();
+    // g }` and the newline form, a `run` body whose locals reference the
+    // receiver unqualified (`h.run { val g = make(); g }`), an `apply` body
+    // that still returns the receiver, a result that continues the local's
+    // chain (`h.let { val g = it.make(); g.items[0].item }`), an explicit
+    // parameter (`h.let { holder -> val g = holder.make(); g }`), a typed
+    // local (`h.let { val g: Group = it.make(); g }`), and a `with` body
+    // (`with(h) { val g = make(); g }`). A result whose terminal hop is
+    // unresolvable (`g.missing()`), chained locals (`val b = a`), and a
+    // non-declaration statement before the result (`it.consume()`) fail
+    // closed, so the eight traced callers in `Util` dispatch on
+    // `com::example::Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::multiLet",
+        "com::example::Util::multiLetNoSemicolon",
+        "com::example::Util::multiRun",
+        "com::example::Util::multiApply",
+        "com::example::Util::multiChainBody",
+        "com::example::Util::multiParam",
+        "com::example::Util::multiTyped",
+        "com::example::Util::multiWith",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::multiMissingFailsClosed",
+        "com::example::Util::multiChainedFailsClosed",
+        "com::example::Util::multiStatementFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::multiLet",
+        "com::example::Util::multiLetNoSemicolon",
+        "com::example::Util::multiRun",
+        "com::example::Util::multiApply",
+        "com::example::Util::multiChainBody",
+        "com::example::Util::multiParam",
+        "com::example::Util::multiTyped",
+        "com::example::Util::multiWith",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::multiMissingFailsClosed",
+        "com::example::Util::multiChainedFailsClosed",
+        "com::example::Util::multiStatementFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
