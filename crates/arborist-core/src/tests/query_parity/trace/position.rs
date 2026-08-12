@@ -50205,3 +50205,121 @@ fn traces_kotlin_property_chain_initializer_method_call_element_access_bases_in_
             .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
     );
 }
+
+#[test]
+fn traces_kotlin_dotted_factory_call_bindings_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    fun make(): Group = Group()\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nobject Factory {\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    companion object {\n        fun make(): Group = Group()\n    }\n}\n\nopen class BaseUtil {\n    fun make(): Group = Group()\n}\n\nfun make(): Group = Group()\n\nclass Util : BaseUtil() {\n    fun make(): Group = Group()\n\n    fun runBoundLocalReceiver(): Int {\n        val h = Holder()\n        val group = h.make()\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runThisFactory(): Int {\n        val group = this.make()\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runSuperFactory(): Int {\n        val group = super.make()\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runObjectFactory(): Int {\n        val group = Factory.make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runCompanionFactory(): Int {\n        val group = Holder.make()\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runElemBaseThenMethod(): Int {\n        val h = Holder()\n        val group = h.make().items[0]\n        val first = group.inner()\n        return first.helper(6)\n    }\n    fun runBoundThenBound(): Int {\n        val h = Holder()\n        val group = h.make()\n        val first = group.make().items[0].item\n        return first.helper(7)\n    }\n    fun runBoundThenArrayTerminal(): Int {\n        val h = Holder()\n        val group = h.make()\n        val first = group.items[0]\n        return first.item.helper(8)\n    }\n    fun runNamedCompanionFailsClosed(): Int {\n        val group = Holder.Factory.make()\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runUnknownMethodFailsClosed(): Int {\n        val h = Holder()\n        val group = h.missing()\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    fun inner(): ImportedItem = ImportedItem()\n    fun make(): ImportedGroup = ImportedGroup()\n    val item: ImportedItem = ImportedItem()\n    val items: Array<ImportedItem> = arrayOf()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nobject ImportedFactory {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedCompanionHolder {\n    companion object {\n        fun make(): ImportedGroup = ImportedGroup()\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\nimport org.util.ImportedFactory\nimport org.util.ImportedCompanionHolder\n\nclass Util2 {\n    fun runImportedBound(): Int {\n        val h = ImportedHolder()\n        val group = h.make()\n        val first = group.items[0].item\n        return first.helper(11)\n    }\n    fun runImportedObject(): Int {\n        val group = ImportedFactory.make()\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n    fun runImportedCompanion(): Int {\n        val group = ImportedCompanionHolder.make()\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Factory-inferred bindings from dotted method-call callees pin a `val`
+    // local to the callee's declared return type through the same receiver
+    // rules as a receiver chain: a locally bound receiver (`val group =
+    // h.make()`), a `this`-rooted member (`this.make()`), a `super`-rooted
+    // member (`super.make()`), a named object (`Factory.make()`), a type
+    // with an anonymous companion (`Holder.make()`), an element-access
+    // bound receiver used with a method terminal (`group.inner()` after
+    // `val group = h.make().items[0]`), and chained bound receivers
+    // (`group.make()` after `val group = h.make()` and terminal element
+    // access on a bound array). A wrongly spelled named companion
+    // (`Holder.Factory.make()`) and an unknown method (`h.missing()`) fail
+    // closed, so the eight same-package callers in `Util` dispatch on
+    // `com::example::Item::helper` and the three imported callers in `Util2`
+    // dispatch on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::runBoundLocalReceiver",
+        "com::example::Util::runThisFactory",
+        "com::example::Util::runSuperFactory",
+        "com::example::Util::runObjectFactory",
+        "com::example::Util::runCompanionFactory",
+        "com::example::Util::runElemBaseThenMethod",
+        "com::example::Util::runBoundThenBound",
+        "com::example::Util::runBoundThenArrayTerminal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 3);
+    for caller in [
+        "com::example::Util2::runImportedBound",
+        "com::example::Util2::runImportedObject",
+        "com::example::Util2::runImportedCompanion",
+    ] {
+        assert!(
+            live_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::runBoundLocalReceiver",
+        "com::example::Util::runThisFactory",
+        "com::example::Util::runSuperFactory",
+        "com::example::Util::runObjectFactory",
+        "com::example::Util::runCompanionFactory",
+        "com::example::Util::runElemBaseThenMethod",
+        "com::example::Util::runBoundThenBound",
+        "com::example::Util::runBoundThenArrayTerminal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 3);
+    for caller in [
+        "com::example::Util2::runImportedBound",
+        "com::example::Util2::runImportedObject",
+        "com::example::Util2::runImportedCompanion",
+    ] {
+        assert!(
+            persisted_imported
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}

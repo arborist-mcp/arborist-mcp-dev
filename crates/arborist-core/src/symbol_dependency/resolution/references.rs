@@ -14071,6 +14071,34 @@ fn resolve_kotlin_initializer_type_path(
             deadline,
         );
     }
+    // A dotted factory-call initializer such as `val group = h.make()`,
+    // `val group = Factory.make()`, or `val group = Holder.make()` resolves
+    // the leading receiver through the same rules as a receiver chain (a
+    // locally bound value, a named object, a type with a companion object,
+    // or a nested receiver chain) and dispatches the terminal callee as a
+    // method-call hop on that receiver, pinning the binding to the method's
+    // declared return type resolved in the method's own file and enclosing
+    // scope. Unknown receivers, ambiguous or unknown member functions, and
+    // functions without a declared return type fail closed.
+    if let Some((receiver, method)) = initializer_name.rsplit_once('.')
+        && !receiver.is_empty()
+        && !method.is_empty()
+        && !receiver.contains('(')
+        && !method.contains('(')
+    {
+        let callee_chain = format!("{receiver}.{method}()");
+        if let Some(receiver_path) = resolve_kotlin_receiver_chain_type_path(
+            source_symbol,
+            &callee_chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(receiver_path));
+        }
+    }
     let Some(function_path) = resolve_kotlin_property_initializer_function_path(
         source_symbol,
         initializer_name,
