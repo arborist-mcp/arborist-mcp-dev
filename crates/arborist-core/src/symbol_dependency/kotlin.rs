@@ -599,7 +599,10 @@ type KotlinBranchInitializerBinding = (String, Vec<String>);
 
 /// Returns the initializer spelling of an `if`/`when` expression branch: a
 /// call callee such as `h.make` or `Holder().make`, a property-chain spelling
-/// such as `h.make().items[0].item`, or a bare property name such as `item`.
+/// such as `h.make().items[0].item`, a bare property name such as `item`, or
+/// the receiver-qualified lambda result of a scope-function call such as the
+/// `h.make` of `h.let { it.make() }`, the `h.make().items[0].item` of
+/// `h.let { it.make().items[0].item }`, or the `h` receiver of `h.apply { }`.
 /// Parenthesized and force-unwrapped branches unwrap to the same inner
 /// expression; other branch shapes return `None` so branch bindings fail
 /// closed.
@@ -607,6 +610,26 @@ fn kotlin_initializer_branch_spelling(branch: Node<'_>, source: &str) -> Result<
     let Some(branch) = kotlin_initializer_expression(branch) else {
         return Ok(None);
     };
+    // A scope-function call branch such as `h.let { it.make() }` or
+    // `with(h) { make() }` binds the receiver-qualified lambda result as a
+    // branch spelling through the same rules as a direct initializer: a
+    // dotted factory callee (`h.make`), a property chain
+    // (`h.make().items[0].item`), or the receiver type (`h` for
+    // `apply`/`also`); unknown scope names, malformed lambda bodies, and
+    // non-plain receivers fail closed and fall through to the generic callee
+    // binding below.
+    if branch.kind() == "call_expression"
+        && let Some((type_name, _, property_chain_base)) =
+            kotlin_scope_function_binding(branch, source)?
+    {
+        if !type_name.is_empty() {
+            return Ok(Some(type_name));
+        }
+        if let Some(chain) = property_chain_base {
+            return Ok(Some(chain));
+        }
+        return Ok(None);
+    }
     if branch.kind() == "call_expression"
         && let Some(callee) = branch.named_child(0)
         && let Some(name) = kotlin_call_initializer_callee_name(callee, source)?

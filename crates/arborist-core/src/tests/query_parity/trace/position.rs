@@ -51489,3 +51489,126 @@ fn traces_kotlin_property_chain_initializer_scope_function_chain_receiver_bindin
         );
     }
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_branches_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    fun runIfElseLet(): Int {\n        val group = if (true) h.let { it.make() } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runIfElseRun(): Int {\n        val group = if (true) h.run { make() } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runIfElseApply(): Int {\n        val group = if (true) h.apply { } else Holder()\n        val first = group.make().items[0].item\n        return first.helper(3)\n    }\n    fun runIfElseWith(): Int {\n        val group = if (true) with(h) { make() } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runIfElseChainBody(): Int {\n        val first = if (true) h.let { it.make().items[0].item } else Holder().make().items[0].item\n        return first.helper(5)\n    }\n    fun runWhenScopeBranch(): Int {\n        val group = when (true) { true -> h.let { it.make() }; else -> h.make() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runIfElseMissingFailsClosed(): Int {\n        val group = if (true) h.let { it.missing() } else Holder().make()\n        val first = group.items[0].item\n        return first.helper(7)\n    }\n    fun runIfElseDivergentFailsClosed(): Int {\n        val group = if (true) h.let { it.make() } else Item()\n        val first = group.items[0].item\n        return first.helper(8)\n    }\n    fun runIfNoElseFailsClosed(): Int {\n        val group = if (true) h.let { it.make() }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n    fun make(): ImportedGroup = ImportedGroup()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedGroup\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImportedIfElseScope(): Int {\n        val group = if (true) ImportedHolder().let { it.make() } else ImportedGroup()\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // An `if`/`when` expression initializer whose branches are scope-function
+    // calls pins the common type through the same receiver-qualified lambda
+    // rules as a direct scope-function initializer: a `let`/`run`/`with`
+    // factory-result branch (`if (true) h.let { it.make() } else
+    // Holder().make()`), an `apply` receiver branch (`if (true) h.apply { }
+    // else Holder()`), a direct chain body (`if (true) h.let {
+    // it.make().items[0].item } else Holder().make().items[0].item`), a
+    // `when` whose branches share a factory callee (`when (true) { true ->
+    // h.let { it.make() }; else -> h.make() }`), and a cross-file imported
+    // constructor branch (`if (true) ImportedHolder().let { it.make() } else
+    // ImportedGroup()`). An unknown terminal method, divergent branch types,
+    // and an `if` without an `else` arm fail closed, so the six same-package
+    // callers in `Util` dispatch on `com::example::Item::helper` and the one
+    // imported caller in `Util2` dispatches on `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runIfElseLet",
+        "com::example::Util::runIfElseRun",
+        "com::example::Util::runIfElseApply",
+        "com::example::Util::runIfElseWith",
+        "com::example::Util::runIfElseChainBody",
+        "com::example::Util::runWhenScopeBranch",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runIfElseMissingFailsClosed",
+        "com::example::Util::runIfElseDivergentFailsClosed",
+        "com::example::Util::runIfNoElseFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert_eq!(
+        live_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedIfElseScope"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runIfElseLet",
+        "com::example::Util::runIfElseRun",
+        "com::example::Util::runIfElseApply",
+        "com::example::Util::runIfElseWith",
+        "com::example::Util::runIfElseChainBody",
+        "com::example::Util::runWhenScopeBranch",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runIfElseMissingFailsClosed",
+        "com::example::Util::runIfElseDivergentFailsClosed",
+        "com::example::Util::runIfNoElseFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert_eq!(
+        persisted_imported.callers[0].symbol_id,
+        "com::example::Util2::runImportedIfElseScope"
+    );
+}
