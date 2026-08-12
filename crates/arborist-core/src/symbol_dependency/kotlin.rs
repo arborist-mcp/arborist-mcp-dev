@@ -452,9 +452,11 @@ fn kotlin_initializer_expression(mut initializer: Node<'_>) -> Option<Node<'_>> 
 /// `holder.item` in `val first = holder.item`, including `this`- and
 /// `super`-rooted chains such as `this.holder.item` or `super.baseItem`,
 /// chains with single-level element-access hops such as `h.items[0].item` in
-/// `val first = h.items[0].item`, and chains ending in a zero-argument
+/// `val first = h.items[0].item`, chains ending in a zero-argument
 /// method-call hop such as `h.items[0].make()` in
-/// `val x = h.items[0].make()`. Identifier, method-call, and single-level
+/// `val x = h.items[0].make()`, and element-access initializers whose base
+/// chain contains a method-call hop such as `h.make().items[0]` in
+/// `val group = h.make().items[0]`. Identifier, method-call, and single-level
 /// element-access hops (with a plain-identifier base) return their spelling
 /// so trace-time resolution can walk each hop; parenthesized roots, nullable,
 /// multi-dimensional element access, and otherwise non-name shapes return
@@ -465,7 +467,7 @@ fn kotlin_property_chain_initializer(
 ) -> Result<Option<String>> {
     if !matches!(
         initializer.kind(),
-        "navigation_expression" | "call_expression"
+        "navigation_expression" | "call_expression" | "index_expression"
     ) {
         return Ok(None);
     }
@@ -663,14 +665,16 @@ fn kotlin_property_binding(
         }
     }
     // A plain property-chain initializer such as `val first = holder.item`,
-    // `val first = this.holder.item`, or `val first = super.baseItem` records
-    // the dotted chain spelling so trace-time resolution can walk each hop to
-    // the terminal property type (including inherited properties). Unknown or
+    // `val first = this.holder.item`, or `val first = super.baseItem`, and an
+    // element-access initializer whose base chain contains a method-call hop
+    // such as `val group = h.make().items[0]` records the dotted chain
+    // spelling so trace-time resolution can walk each hop to the terminal
+    // property type (including inherited properties). Unknown or
     // unresolvable chains fail closed there; parenthesized and force-unwrapped
     // spellings unwrap through `kotlin_initializer_expression` above.
     if matches!(
         initializer.kind(),
-        "navigation_expression" | "call_expression"
+        "navigation_expression" | "call_expression" | "index_expression"
     ) && let Some(chain) = kotlin_property_chain_initializer(initializer, source)?
     {
         return Ok(Some((name, String::new(), None, Some(chain))));

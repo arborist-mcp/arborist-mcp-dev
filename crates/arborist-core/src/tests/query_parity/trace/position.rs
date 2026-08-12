@@ -50102,3 +50102,106 @@ fn traces_kotlin_property_chain_initializer_factory_element_access_hops_in_live_
             .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
     );
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_method_call_element_access_bases_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    fun make(): Group = Group()\n    val item: Item = Item()\n    val items: Array<Item> = arrayOf()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n}\n\nclass Util {\n    fun runBoundElemBase(): Int {\n        val h = Holder()\n        val group = h.make().items[0]\n        val first = group.item\n        return first.helper(1)\n    }\n    fun runMultiHopElemBase(): Int {\n        val h = Holder()\n        val group = h.make().make().items[0]\n        val first = group.item\n        return first.helper(2)\n    }\n    fun runStackedElemBase(): Int {\n        val h = Holder()\n        val group = h.make().items[0].make().items[0]\n        val first = group.item\n        return first.helper(3)\n    }\n    fun runArrayTerminalElemBase(): Int {\n        val h = Holder()\n        val group = h.make().items[0].items\n        return group[0].helper(4)\n    }\n    fun runDirectChain(): Int {\n        val h = Holder()\n        val first = h.make().items[0].item\n        return first.helper(5)\n    }\n    fun runChainRootThenElem(): Int {\n        val h = Holder()\n        val group = h.make().items[0]\n        val first = group.make().items[0].item\n        return first.helper(6)\n    }\n    fun runUnknownMethodFailsClosed(): Int {\n        val h = Holder()\n        val group = h.missing().items[0]\n        val first = group.item\n        return first.helper(7)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nclass ImportedItem {\n    fun helper(value: Int): Int = value\n}\n\nclass ImportedInner {\n    val item: ImportedItem = ImportedItem()\n}\n\nclass ImportedGroup {\n    val items: Array<ImportedInner> = arrayOf()\n}\n\nclass ImportedHolder {\n    fun make(): ImportedGroup = ImportedGroup()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.kt"),
+        "package com.example\n\nimport org.util.ImportedHolder\n\nclass Util2 {\n    fun runImported(): Int {\n        val h = ImportedHolder()\n        val group = h.make().items[0]\n        val first = group.item\n        return first.helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Element-access initializers whose base chain contains a method-call hop
+    // (`h.make().items[0]`) record as property chains so trace-time
+    // resolution can walk the method-call and element-access hops to the
+    // terminal array component: a bound receiver followed by a method-call
+    // hop and a property terminal (`val group = h.make().items[0]` then
+    // `group.item`), stacked method-call hops (`h.make().make().items[0]`),
+    // an element-access hop followed by another method-call hop
+    // (`h.make().items[0].make().items[0]`), a terminal array property used
+    // as an element-access receiver (`val group = h.make().items[0].items`
+    // then `group[0].helper(...)`), the direct inline form
+    // (`val first = h.make().items[0].item`), and a bound element-access root
+    // used with further element-access hops (`group.make().items[0].item`).
+    // An unknown method-call hop fails closed, so the six same-package
+    // callers in `Util` dispatch on `com::example::Item::helper` and the
+    // imported caller in `Util2` dispatches on
+    // `org::util::ImportedItem::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runBoundElemBase",
+        "com::example::Util::runMultiHopElemBase",
+        "com::example::Util::runStackedElemBase",
+        "com::example::Util::runArrayTerminalElemBase",
+        "com::example::Util::runDirectChain",
+        "com::example::Util::runChainRootThenElem",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    let imported_item_path = "org::util::ImportedItem::helper";
+    let live_imported =
+        trace_symbol_graph(&dir, imported_item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live_imported.symbol.symbol_id, imported_item_path);
+    assert_eq!(live_imported.callers.len(), 1);
+    assert!(
+        live_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runBoundElemBase",
+        "com::example::Util::runMultiHopElemBase",
+        "com::example::Util::runStackedElemBase",
+        "com::example::Util::runArrayTerminalElemBase",
+        "com::example::Util::runDirectChain",
+        "com::example::Util::runChainRootThenElem",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let persisted_imported =
+        trace_symbol_graph_from_index(&db_path, imported_item_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_imported.callers.len(), 1);
+    assert!(
+        persisted_imported
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "com::example::Util2::runImported")
+    );
+}
