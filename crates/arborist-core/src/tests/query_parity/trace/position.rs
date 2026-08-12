@@ -53202,3 +53202,123 @@ fn traces_kotlin_property_chain_initializer_scope_function_enclosing_member_dire
         );
     }
 }
+#[test]
+fn traces_kotlin_property_chain_initializer_scope_function_scope_call_local_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun runScopeCallLocalResult(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun runScopeCallLocalNested(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make() }; g1.let { g -> g } }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun runNestedCallLocalResult(): Int {\n        val group = h.let { val g1 = it.make().let { g -> g }; g1 }\n        val first = group.items[0].item\n        return first.helper(3)\n    }\n    fun runNestedCallLocalNested(): Int {\n        val group = h.let { val g1 = it.make().let { g -> g }; g1.let { g2 -> g2 } }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun runScopeCallLocalApply(): Int {\n        val group = h.let { val g1 = nullableH?.apply { }; g1.make() }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n    fun runScopeCallLocalBranch(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make() }; if (flag()) g1 else it.makeAlt() }\n        val first = group.items[0].item\n        return first.helper(6)\n    }\n    fun runScopeCallLocalChainResult(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make().items[0].item }; g1 }\n        return first.helper(7)\n    }\n    fun runEnclosingMemberChainDirectLet(): Int {\n        val first = h.let { nullableH.make().items[0].item }\n        return first.helper(8)\n    }\n    fun runScopeCallLocalSafeChain(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make() }?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(9)\n    }\n    fun runScopeCallLocalWith(): Int {\n        val group = h.let { val g1 = with(nullableH) { make() }; g1.make() }\n        val first = group.items[0].item\n        return first.helper(10)\n    }\n    fun runScopeCallLocalItChain(): Int {\n        val first = h.let { val g1 = it.make().let { g -> g.items[0].item }; g1 }\n        return first.helper(11)\n    }\n    fun runScopeCallLocalWithFailsClosed(): Int {\n        val group = h.run { val g1 = nullableH?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(12)\n    }\n    fun runScopeCallLocalUnknownRootFailsClosed(): Int {\n        val group = h.let { val g1 = missingH?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(13)\n    }\n    fun runScopeCallLocalInvalidChainFailsClosed(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make().items[0].item }; g1 }\n        val first = group.items[0].item\n        return first.helper(14)\n    }\n    fun runChainedLocalFailsClosed(): Int {\n        val group = h.let { val a = nullableH; val b = a; b.make() }\n        val first = group.items[0].item\n        return first.helper(15)\n    }\n    fun runEnclosingMemberRunFailsClosed(): Int {\n        val group = h.run { nullableH.make() }\n        val first = group.items[0].item\n        return first.helper(16)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda whose `val` local initializer is itself a
+    // scope-function call stores the call's receiver-qualified lambda-result
+    // spelling instead of its raw source text, so the local expands into the
+    // result expression or a nested chain base through the same receiver rules
+    // as a single-expression body. This covers an enclosing-member-rooted safe
+    // call local (`val g1 = nullableH?.let { it.make() }; g1`), the same local
+    // as a nested chain base (`g1.let { g -> g }`), an `it`-rooted nested call
+    // local (`val g1 = it.make().let { g -> g }; g1`) and its nested chain
+    // base, a receiver-returning `apply` local (`val g1 = nullableH?.apply { };
+    // g1.make()`), a branch result using the local
+    // (`if (flag()) g1 else it.makeAlt()`), an enclosing-member-rooted chain
+    // local (`val g1 = nullableH?.let { it.make().items[0].item }; g1`) and its
+    // direct single-expression form (`h.let { nullableH.make().items[0].item }`),
+    // a safe-call chain local
+    // (`val g1 = nullableH?.let { it.make() }?.let { it.make() }; g1`), a
+    // `with`-rooted local (`val g1 = with(nullableH) { make() }; g1.make()`),
+    // and an `it`-rooted chain local (`val g1 = it.make().let { g ->
+    // g.items[0].item }; g1`). A `run` outer keeps its receiver-rooted rewrite
+    // (so the enclosing-member local fails closed, matching the documented
+    // `run`/`with` unqualified-body rule), an unresolvable member root
+    // (`missingH?.let { it.make() }`) fails closed at trace time, a consumer
+    // that walks a chain the result's terminal type does not declare
+    // (`group.items[0].item` on an `Item`-typed result) fails closed at trace
+    // time, chained locals (`val b = a`) fail closed at index time, and the
+    // direct `run` enclosing-member form keeps failing closed, so the eleven
+    // scope-call-local callers in `Util` dispatch on
+    // `com::example::Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 11);
+    for caller in [
+        "com::example::Util::runScopeCallLocalResult",
+        "com::example::Util::runScopeCallLocalNested",
+        "com::example::Util::runNestedCallLocalResult",
+        "com::example::Util::runNestedCallLocalNested",
+        "com::example::Util::runScopeCallLocalApply",
+        "com::example::Util::runScopeCallLocalBranch",
+        "com::example::Util::runScopeCallLocalChainResult",
+        "com::example::Util::runEnclosingMemberChainDirectLet",
+        "com::example::Util::runScopeCallLocalSafeChain",
+        "com::example::Util::runScopeCallLocalWith",
+        "com::example::Util::runScopeCallLocalItChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runScopeCallLocalWithFailsClosed",
+        "com::example::Util::runScopeCallLocalUnknownRootFailsClosed",
+        "com::example::Util::runScopeCallLocalInvalidChainFailsClosed",
+        "com::example::Util::runChainedLocalFailsClosed",
+        "com::example::Util::runEnclosingMemberRunFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 11);
+    for caller in [
+        "com::example::Util::runScopeCallLocalResult",
+        "com::example::Util::runScopeCallLocalNested",
+        "com::example::Util::runNestedCallLocalResult",
+        "com::example::Util::runNestedCallLocalNested",
+        "com::example::Util::runScopeCallLocalApply",
+        "com::example::Util::runScopeCallLocalBranch",
+        "com::example::Util::runScopeCallLocalChainResult",
+        "com::example::Util::runEnclosingMemberChainDirectLet",
+        "com::example::Util::runScopeCallLocalSafeChain",
+        "com::example::Util::runScopeCallLocalWith",
+        "com::example::Util::runScopeCallLocalItChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::runScopeCallLocalWithFailsClosed",
+        "com::example::Util::runScopeCallLocalUnknownRootFailsClosed",
+        "com::example::Util::runScopeCallLocalInvalidChainFailsClosed",
+        "com::example::Util::runChainedLocalFailsClosed",
+        "com::example::Util::runEnclosingMemberRunFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}

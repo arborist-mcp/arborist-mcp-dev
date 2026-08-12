@@ -1083,7 +1083,11 @@ fn kotlin_scope_lambda_body<'a>(
 /// as an initializer is present), and an initializer must not reference
 /// another declared local; any other statement shape returns `None` so
 /// multi-statement bodies fail closed unless every hop is
-/// receiver-qualified through the same rules as a single-expression body.
+/// receiver-qualified through the same rules as a single-expression body. An
+/// initializer that is itself a scope-function call such as
+/// `val g1 = nullableH?.let { it.make() }` or
+/// `val g1 = it.make().let { g -> g }` stores the call's
+/// receiver-qualified lambda-result spelling instead of its raw source text.
 fn kotlin_scope_lambda_locals(
     statements: &[Node<'_>],
     source: &str,
@@ -1120,7 +1124,27 @@ fn kotlin_scope_lambda_locals(
         if locals.contains_key(root) {
             return Ok(None);
         }
-        locals.insert(name, initializer);
+        // A scope-function call initializer stores the call's
+        // receiver-qualified lambda-result spelling (a factory-call callee
+        // keeps its method-call marker such as `nullableH.make()`, and a chain
+        // or bare receiver keeps its chain spelling), so expanding the local
+        // into a result expression or a nested chain base resolves through the
+        // same receiver rules as a single-expression body. Non-scope
+        // initializers and unknown scope-function shapes keep their raw
+        // spelling and fail closed through the caller's rewrite rules.
+        let spelling = if children[1].kind() == "call_expression" {
+            match kotlin_scope_function_binding(children[1], source)? {
+                Some((type_name, _, _)) if !type_name.is_empty() => {
+                    format!("{type_name}()")
+                }
+                Some((_, _, Some(chain))) => chain,
+                Some((_, _, None)) => return Ok(None),
+                None => initializer.clone(),
+            }
+        } else {
+            initializer.clone()
+        };
+        locals.insert(name, spelling);
     }
     Ok(Some(locals))
 }
