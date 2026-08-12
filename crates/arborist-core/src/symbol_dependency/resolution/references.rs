@@ -10464,11 +10464,16 @@ fn resolve_kotlin_reference_with_deadline(
     // `group.makeGroups()[0].helper(...)` splits at the final dot so the
     // element-access dispatch receives the full receiver spelling; the chained
     // receiver path cannot consume a `()[0]` factory hop, and unknown or
-    // unresolvable factories fail closed.
+    // unresolvable factories fail closed. A multi-hop receiver such as
+    // `h.items[0].make()[0].helper(...)` fails this parse (its second bracket
+    // is a factory element access, not multi-dimensional indexing) and falls
+    // through to the chained receiver path, which walks each element-access
+    // and factory hop.
     if let Some((element_receiver, method)) = reference_name.rsplit_once('.')
         && !method.contains('.')
         && element_receiver.contains("()")
         && element_receiver.ends_with(']')
+        && kotlin_array_access_spelling(element_receiver).is_some()
     {
         return resolve_kotlin_qualified_receiver_call(
             source_symbol,
@@ -12596,15 +12601,20 @@ fn kotlin_property_chain_initializer_root(
 /// derived from a single-level array (an own or inherited member property, a
 /// parameter or explicitly typed local, a name re-bound from another chain or
 /// element-access base such as `val group = itemGroup` then `val first =
-/// group`), and a single-hop chain that names a same-package or explicitly
+/// group`), a single-hop chain that names a same-package or explicitly
 /// imported top-level array property such as `val first = itemGroup` with
-/// `val itemGroup: Array<Holder>` at package scope. Intermediate hops walk
-/// the same property, array-element, and method-call hop rules as chained
-/// receivers, and the terminal hop resolves its element component type so a
-/// trailing element access such as `first[0].helper(...)` dispatches on the
-/// component type. Non-array terminals, unresolvable roots, bound or member
-/// names that shadow the top-level property, bound non-array values, and
-/// unknown or ambiguous hops return `None` so callers fail closed.
+/// `val itemGroup: Array<Holder>` at package scope, and a chain whose
+/// terminal is a zero-argument method-call hop returning a single-level
+/// array, such as `val x = h.items[0].make()` with
+/// `fun make(): Array<Item>` (so a trailing element access such as
+/// `x[0].helper(...)` dispatches on the return array's element component
+/// type). Intermediate hops walk the same property, array-element, and
+/// method-call hop rules as chained receivers, and the terminal hop resolves
+/// its element component type so a trailing element access such as
+/// `first[0].helper(...)` dispatches on the component type. Non-array
+/// terminals, unresolvable roots, bound or member names that shadow the
+/// top-level property, bound non-array values, and unknown or ambiguous hops
+/// return `None` so callers fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_property_chain_array_component_type_path(
     source_symbol: &IndexedSymbol,
@@ -12762,6 +12772,24 @@ fn resolve_kotlin_property_chain_array_component_type_path(
             return Ok(None);
         };
         type_path = next_path;
+    }
+    // A terminal method-call hop such as `make()` in
+    // `val x = h.items[0].make()` resolves the member function's declared
+    // single-level array return type through the same factory rules as a
+    // factory-call element-access hop, so a trailing element access such as
+    // `x[0].helper(...)` dispatches on the return array's element component
+    // type; unknown factories, missing return types, and non-array return
+    // types fail closed.
+    if let Some(method_name) = kotlin_method_call_hop_spelling(terminal) {
+        return resolve_kotlin_owner_factory_array_element_component_type(
+            &type_path,
+            &method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
     }
     kotlin_array_property_component_type_path(
         &type_path,

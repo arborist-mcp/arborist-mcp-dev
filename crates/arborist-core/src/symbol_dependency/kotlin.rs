@@ -448,22 +448,39 @@ fn kotlin_initializer_expression(mut initializer: Node<'_>) -> Option<Node<'_>> 
     }
 }
 
-/// Extracts the dotted spelling of a plain property-chain initializer such as
+/// Extracts the dotted spelling of a property-chain initializer such as
 /// `holder.item` in `val first = holder.item`, including `this`- and
-/// `super`-rooted chains such as `this.holder.item` or `super.baseItem`.
-/// Pure identifier chains (with an optional `this`/`super` root) return their
-/// spelling so trace-time resolution can walk each hop; parenthesized roots,
-/// call, element-access, and nullable or otherwise non-name shapes return
+/// `super`-rooted chains such as `this.holder.item` or `super.baseItem`,
+/// chains with single-level element-access hops such as `h.items[0].item` in
+/// `val first = h.items[0].item`, and chains ending in a zero-argument
+/// method-call hop such as `h.items[0].make()` in
+/// `val x = h.items[0].make()`. Identifier, method-call, and single-level
+/// element-access hops (with a plain-identifier base) return their spelling
+/// so trace-time resolution can walk each hop; parenthesized roots, nullable,
+/// multi-dimensional element access, and otherwise non-name shapes return
 /// `None` so property-chain bindings fail closed.
 fn kotlin_property_chain_initializer(
     initializer: Node<'_>,
     source: &str,
 ) -> Result<Option<String>> {
-    if initializer.kind() != "navigation_expression" {
+    if !matches!(
+        initializer.kind(),
+        "navigation_expression" | "call_expression"
+    ) {
         return Ok(None);
     }
     let text = node_text(initializer, source)?.trim();
-    if text.is_empty() || text.contains(['[', ' ', '?']) || text.contains("::") {
+    if text.is_empty() || text.contains([' ', '?']) || text.contains("::") {
+        return Ok(None);
+    }
+    // A zero-argument call such as `h.items[0].make()` in
+    // `val x = h.items[0].make()` parses as a `call_expression` whose callee
+    // is a navigation chain containing an element-access hop. Only calls
+    // whose spelling contains an element-access hop record as chains (plain
+    // and dotted callee calls keep the constructor/factory callee-name
+    // binding); non-zero-argument calls and other call shapes fail closed
+    // because their hop text does not validate below.
+    if initializer.kind() == "call_expression" && !text.contains('[') {
         return Ok(None);
     }
     let hops = text.split('.').collect::<Vec<_>>();
@@ -481,15 +498,20 @@ fn kotlin_property_chain_initializer(
     Ok(Some(text.to_string()))
 }
 
-/// Returns whether a property-chain hop is a plain identifier property name or
-/// a zero-argument method-call spelling such as `make()`, including generic
-/// constructor spellings such as `Box<Holder>()`. Method-call hops let a
-/// property-chain initializer such as `val first = make().item` dispatch
-/// through the enclosing type's member function declared return type before
-/// walking the remaining property hops, and generic constructor hops let a
-/// chain such as `val first = Box<Holder>().item` start on the raw constructed
-/// type; non-zero-argument call spellings and other shapes fail closed at
-/// capture time.
+/// Returns whether a property-chain hop is a plain identifier property name,
+/// a zero-argument method-call spelling such as `make()`, a generic
+/// constructor spelling such as `Box<Holder>()`, or a single-level
+/// element-access hop such as `items[0]` whose base is a plain identifier.
+/// Method-call hops let a property-chain initializer such as
+/// `val first = make().item` dispatch through the enclosing type's member
+/// function declared return type before walking the remaining property hops,
+/// generic constructor hops let a chain such as
+/// `val first = Box<Holder>().item` start on the raw constructed type, and
+/// element-access hops let a chain such as `val first = h.items[0].item`
+/// dispatch through the array property's element component type before
+/// walking the remaining hops; non-zero-argument call spellings,
+/// multi-dimensional element access, and other shapes fail closed at capture
+/// time.
 fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
     if let Some(name) = hop.strip_suffix("()") {
         if name
@@ -499,6 +521,24 @@ fn kotlin_property_chain_hop_valid(hop: &str) -> bool {
             return !name.is_empty();
         }
         return kotlin_dotted_type_name(name).is_some();
+    }
+    // A single-level element-access hop such as `items[0]` whose base is a
+    // plain identifier lets a property-chain initializer such as
+    // `val first = h.items[0].item` dispatch through the array property's
+    // element component type before walking the remaining hops.
+    if let Some(open) = hop.find('[') {
+        if !hop.ends_with(']') {
+            return false;
+        }
+        let base = &hop[..open];
+        let subscript = &hop[open + 1..hop.len() - 1];
+        let base_valid = !base.is_empty()
+            && base
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_');
+        let subscript_valid =
+            !subscript.is_empty() && !subscript.contains(['[', ']', '(', ')', ',', '?', '.', ' ']);
+        return base_valid && subscript_valid;
     }
     hop.chars()
         .all(|character| character.is_ascii_alphanumeric() || character == '_')
@@ -546,13 +586,16 @@ fn kotlin_property_binding(
         return Ok(Some((name, type_name, None, None)));
     }
     // Fall back to a constructor-call initializer such as `val x = Other()` or
-    // `val x = Outer.Inner()`, or an element-access initializer such as
-    // `val x = items[0]`; a parenthesized initializer such as `(Other())`,
-    // `(makeItems())`, or `(items[0])` and a postfix force-unwrap initializer
-    // such as `makeNullable()!!` unwrap to the same inner expression so `val`
-    // locals bind the same receiver type as the unwrapped form. Qualified
-    // callees must be pure identifier chains, and element-access bases follow
-    // the plain/qualified/factory rules below.
+    // `val x = Outer.Inner()`, an element-access initializer such as
+    // `val x = items[0]`, or a zero-argument call whose callee is a
+    // navigation chain with an element-access hop such as
+    // `val x = h.items[0].make()` (recorded as a property chain); a
+    // parenthesized initializer such as `(Other())`, `(makeItems())`, or
+    // `(items[0])` and a postfix force-unwrap initializer such as
+    // `makeNullable()!!` unwrap to the same inner expression so `val` locals
+    // bind the same receiver type as the unwrapped form. Qualified callees
+    // must be pure identifier chains, and element-access bases follow the
+    // plain/qualified/factory rules below.
     let initializer = children
         .iter()
         .find(|child| {
@@ -619,8 +662,10 @@ fn kotlin_property_binding(
     // the terminal property type (including inherited properties). Unknown or
     // unresolvable chains fail closed there; parenthesized and force-unwrapped
     // spellings unwrap through `kotlin_initializer_expression` above.
-    if initializer.kind() == "navigation_expression"
-        && let Some(chain) = kotlin_property_chain_initializer(initializer, source)?
+    if matches!(
+        initializer.kind(),
+        "navigation_expression" | "call_expression"
+    ) && let Some(chain) = kotlin_property_chain_initializer(initializer, source)?
     {
         return Ok(Some((name, String::new(), None, Some(chain))));
     }

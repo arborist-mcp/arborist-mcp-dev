@@ -49847,3 +49847,70 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_kotlin_property_chain_initializer_element_access_hop_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    fun inner(): Item = Item()\n    val item: Item = Item()\n}\n\nclass Maker {\n    fun make(): Array<Item> = arrayOf()\n}\n\nclass Holder {\n    val items: Array<Maker> = arrayOf()\n    val inners: Array<Inner> = arrayOf()\n    val item: Item = Item()\n}\n\nclass Util {\n    val memberItems: Array<Maker> = arrayOf()\n\n    fun runBoundElemFactory(): Int {\n        val h = Holder()\n        val x = h.items[0].make()\n        return x[0].helper(1)\n    }\n    fun runBoundElemFactoryRebound(): Int {\n        val h = Holder()\n        val x = h.items[0].make()\n        val first = x\n        return first[0].helper(2)\n    }\n    fun runBoundElemProp(): Int {\n        val h = Holder()\n        val first = h.inners[0].item\n        return first.helper(3)\n    }\n    fun runBareMemberElemFactory(): Int {\n        val x = memberItems[0].make()\n        val first = x\n        return first[0].helper(4)\n    }\n    fun runBoundElemMethod(): Int {\n        val h = Holder()\n        val first = h.inners[0].inner()\n        return first.helper(5)\n    }\n    fun runInlineElemFactory(): Int {\n        val h = Holder()\n        return h.items[0].make()[0].helper(6)\n    }\n}\n\nclass Util2 {\n    fun runNonZeroArgFailsClosed(): Int {\n        val h = Holder()\n        val x = h.items[0].make(1)\n        return x[0].helper(7)\n    }\n    fun runBoundNonArrayFailsClosed(): Int {\n        val h = Holder()\n        val first = h.item\n        return first[0].helper(8)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Property-chain initializers whose spelling contains single-level
+    // element-access hops also bind and trace: a bound-receiver factory
+    // terminal (`val x = h.items[0].make()` with `h.items: Array<Maker>` and
+    // `fun make(): Array<Item>`), its re-bound form (`val first = x`), a
+    // property terminal after the element-access hop
+    // (`val first = h.inners[0].item`), a bare member array factory terminal
+    // (`val x = memberItems[0].make()`), a method-call terminal
+    // (`val first = h.inners[0].inner()`), and the direct inline multi-hop
+    // factory element access (`h.items[0].make()[0].helper(...)`). A
+    // non-zero-argument call (`h.items[0].make(1)`) and element access on a
+    // bound non-array value (`val first = h.item` then `first[0]`) fail
+    // closed, so only the six array- or value-rooted callers dispatch on
+    // `Item::helper`.
+    let item_path = "com::example::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runBoundElemFactory",
+        "com::example::Util::runBoundElemFactoryRebound",
+        "com::example::Util::runBoundElemProp",
+        "com::example::Util::runBareMemberElemFactory",
+        "com::example::Util::runBoundElemMethod",
+        "com::example::Util::runInlineElemFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "com::example::Util::runBoundElemFactory",
+        "com::example::Util::runBoundElemFactoryRebound",
+        "com::example::Util::runBoundElemProp",
+        "com::example::Util::runBareMemberElemFactory",
+        "com::example::Util::runBoundElemMethod",
+        "com::example::Util::runInlineElemFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
