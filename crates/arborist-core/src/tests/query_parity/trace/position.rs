@@ -53929,3 +53929,107 @@ fn traces_kotlin_scope_function_lambda_branch_local_scope_call_arm_bindings_in_l
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_scope_call_local_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun localScopeCallLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> g.items[0].item }; g2 }\n        return first.helper(1)\n    }\n    fun localScopeCallRunLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.run { items[0].item }; g2 }\n        return first.helper(2)\n    }\n    fun localScopeCallWithLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = with(g1) { items[0].item }; g2 }\n        return first.helper(3)\n    }\n    fun localScopeCallMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) plainH.make() else plainH.makeAlt(); val g2 = g1.let { g -> g.items[0].item }; g2 }\n        return first.helper(4)\n    }\n    fun localScopeCallElvisLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); val g2 = g1.let { g -> g.items[0].item }; g2 }\n        return first.helper(5)\n    }\n    fun localScopeCallChainArmLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> g.make().items[0].item }; g2 }\n        return first.helper(6)\n    }\n    fun localScopeCallRunOuterLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); val g2 = g1.let { g -> g.items[0].item }; g2 }\n        return first.helper(7)\n    }\n    fun localScopeCallBareChainFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.items[0].item; g2 }\n        return first.helper(8)\n    }\n    fun localScopeCallBareLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2 }\n        return first.helper(9)\n    }\n    fun localScopeCallUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> g.missing().items[0].item }; g2 }\n        return first.helper(10)\n    }\n    fun localScopeCallNestedBodyBranchFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> if (flag()) g.items[0].item else Item() }; g2 }\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda local whose initializer is a scope-function call
+    // on a branch-local receiver (`val g2 = g1.let { g -> g.items[0].item }`
+    // over `val g1 = if (flag()) it.make() else it.makeAlt()`) expands per arm
+    // into the same branch spellings as a direct branch result, so a result
+    // that is exactly the local (`g2`) binds through the branch rules. This
+    // covers `let`, `run`, `with(g1)`, an enclosing-member-rooted branch
+    // local, an elvis local with a nested scope-call arm, a chain through a
+    // nested factory call (`g.make()`), and a branch local inside a `run`
+    // outer, all dispatching the terminal member on the imported
+    // `com.lib.Item` declaration. A chained local that is a plain chain or a
+    // bare local (`g1.items[0].item` or `g1`), a chain through an unknown
+    // terminal method (`g.missing().items[0].item`), and a nested body that is
+    // itself a branch expression fail closed, so the seven local scope-call
+    // callers in `Util` dispatch on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::Util::localScopeCallLetLocal",
+        "com::example::Util::localScopeCallRunLocal",
+        "com::example::Util::localScopeCallWithLocal",
+        "com::example::Util::localScopeCallMemberLocal",
+        "com::example::Util::localScopeCallElvisLocal",
+        "com::example::Util::localScopeCallChainArmLocal",
+        "com::example::Util::localScopeCallRunOuterLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::localScopeCallBareChainFailsClosed",
+        "com::example::Util::localScopeCallBareLocalFailsClosed",
+        "com::example::Util::localScopeCallUnknownMethodFailsClosed",
+        "com::example::Util::localScopeCallNestedBodyBranchFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::Util::localScopeCallLetLocal",
+        "com::example::Util::localScopeCallRunLocal",
+        "com::example::Util::localScopeCallWithLocal",
+        "com::example::Util::localScopeCallMemberLocal",
+        "com::example::Util::localScopeCallElvisLocal",
+        "com::example::Util::localScopeCallChainArmLocal",
+        "com::example::Util::localScopeCallRunOuterLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::localScopeCallBareChainFailsClosed",
+        "com::example::Util::localScopeCallBareLocalFailsClosed",
+        "com::example::Util::localScopeCallUnknownMethodFailsClosed",
+        "com::example::Util::localScopeCallNestedBodyBranchFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}

@@ -1179,12 +1179,19 @@ fn kotlin_scope_lambda_locals(
         }
         // A local whose initializer roots on another declared local such as
         // `val b = a` cannot be expanded without dependency ordering, so
-        // multi-statement bodies with chained locals fail closed.
+        // multi-statement bodies with chained locals fail closed, except a
+        // scope-function call on a branch-local receiver such as
+        // `val g2 = g1.let { g -> g.items[0].item }`, which expands per arm
+        // without leaving the branch-local root in the stored spelling.
         let root = initializer
             .split(['.', '[', '('])
             .next()
             .unwrap_or_default();
-        if locals.contains_key(root) {
+        if locals.contains_key(root)
+            && !(children[1].kind() == "call_expression"
+                && kotlin_scope_branch_local_scope_call_shapes(children[1], &locals, source)?
+                    .is_some())
+        {
             return Ok(None);
         }
         // A scope-function call initializer stores the call's
@@ -1199,13 +1206,26 @@ fn kotlin_scope_lambda_locals(
         // initializers and unknown scope-function or branch shapes keep their
         // raw spelling and fail closed through the caller's rewrite rules.
         let spelling = if children[1].kind() == "call_expression" {
-            match kotlin_scope_function_binding(children[1], source)? {
-                Some((type_name, _, _)) if !type_name.is_empty() => {
-                    KotlinScopeLocalSpelling::Single(format!("{type_name}()"))
-                }
-                Some((_, _, Some(chain))) => KotlinScopeLocalSpelling::Single(chain),
-                Some((_, _, None)) => return Ok(None),
-                None => KotlinScopeLocalSpelling::Single(initializer.clone()),
+            // A scope-function call on a branch-local receiver stores the
+            // per-arm binding shapes as the local's branches, so a result
+            // that is exactly the local (`g2`) binds through the same branch
+            // rules as a direct branch result; other scope-function calls
+            // store their receiver-qualified lambda-result spelling.
+            match kotlin_scope_branch_local_scope_call_shapes(children[1], &locals, source)? {
+                Some(shapes) => KotlinScopeLocalSpelling::Branches(
+                    shapes
+                        .into_iter()
+                        .filter_map(|shape| KotlinScopeLocalBranch::from_binding(&shape))
+                        .collect(),
+                ),
+                None => match kotlin_scope_function_binding(children[1], source)? {
+                    Some((type_name, _, _)) if !type_name.is_empty() => {
+                        KotlinScopeLocalSpelling::Single(format!("{type_name}()"))
+                    }
+                    Some((_, _, Some(chain))) => KotlinScopeLocalSpelling::Single(chain),
+                    Some((_, _, None)) => return Ok(None),
+                    None => KotlinScopeLocalSpelling::Single(initializer.clone()),
+                },
             }
         } else if matches!(
             children[1].kind(),
