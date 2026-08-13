@@ -4359,19 +4359,24 @@ fn resolve_csharp_bare_factory_array_member_chain(
 /// `base.inheritedItems` in `var sixth = base.inheritedItems[0]`,
 /// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`, or
 /// `Util.fieldItems` in `var seventh = Util.fieldItems[0]`, or
-/// `group.items` in `var first = group?.items[0]`. `this`-rooted bases start
-/// on the enclosing type, `base`-rooted bases on the unique base type, other
-/// bound receivers on their declared type, receivers bound to a factory or
+/// `group.items` in `var first = group?.items[0]`, or `makeGroup().items` in
+/// `var first = makeGroup()?.items[0]`. `this`-rooted bases start on the
+/// enclosing type, `base`-rooted bases on the unique base type, other bound
+/// receivers on their declared type, receivers bound to a factory or
 /// member-chain marker (`var group = makeGroup()` or `var group = holder`)
-/// resolve through the same factory and chain rules, and unbound receivers
-/// on the named static type (requiring a static terminal field). Intermediate
-/// hops resolve through the same field/property/event and method-call-hop
-/// rules as member chains, and the terminal hop must be a uniquely declared
-/// array member whose element component type pins the receiver, stripping one
-/// component layer per element-access depth (so `this.fieldMatrix[0][0]` over
+/// resolve through the same factory and chain rules, a leading bare factory
+/// call such as `makeGroup()` resolves as a factory on the enclosing type,
+/// the unique base chain, or a static-imported type and walks the remaining
+/// chain as an instance receiver, and unbound receivers on the named static
+/// type (requiring a static terminal field). Intermediate hops resolve
+/// through the same field/property/event and method-call-hop rules as member
+/// chains, and the terminal hop must be a uniquely declared array member
+/// whose element component type pins the receiver, stripping one component
+/// layer per element-access depth (so `this.fieldMatrix[0][0]` over
 /// `Helper[][]` dispatches on `Helper`). Unknown, ambiguous, or non-array
-/// terminal members, unbound or non-array receivers, method-call bases, and
-/// non-static fields on a static type receiver fail closed.
+/// terminal members, unbound or non-array receivers, unresolved leading
+/// factories, static type-qualified method-call bases, and non-static fields
+/// on a static type receiver fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# qualified element-access base resolution inputs explicit"
@@ -4544,6 +4549,54 @@ fn csharp_qualified_element_access_component_type_path(
             return Ok(None);
         };
         (binding, source_symbol, false)
+    } else if let Some(mut leading_call) =
+        csharp_outer_parenthesized_inner(receiver).or(Some(receiver))
+        && {
+            while let Some(inner) = csharp_outer_parenthesized_inner(leading_call) {
+                leading_call = inner;
+            }
+            true
+        }
+        && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some(leading_method) = resolve_csharp_var_factory_method(
+            source_symbol,
+            &leading_name,
+            leading_arity,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(leading_return) = leading_method.return_type.as_deref()
+        && !leading_return.is_empty()
+        && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
+            leading_method,
+            leading_return,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(leading_method, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A leading bare factory call such as `makeGroup()` in
+        // `makeGroup()?.items[0]` or `foreach (var item in makeGroup()?.items)`
+        // resolves the call as a factory on the enclosing type, the unique
+        // base chain, or a static-imported type, canonicalizes its declared
+        // return type, and walks the remaining chain and terminal array
+        // member as an instance receiver.
+        let Some(leading_binding) =
+            canonicalize_csharp_type_binding(leading_method, &leading_binding, raw_symbols)
+        else {
+            return Ok(None);
+        };
+        (leading_binding, source_symbol, false)
     } else {
         // An unbound receiver names a static type; the terminal array member
         // must be declared static on that type.
