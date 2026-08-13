@@ -54245,3 +54245,111 @@ fn traces_kotlin_scope_function_lambda_branch_local_scope_call_branch_body_bindi
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    fun flag(): Boolean = true\n    fun applyNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.apply { this }.items[0].item }\n        return first.helper(1)\n    }\n    fun alsoNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.also { }.items[0].item }\n        return first.helper(2)\n    }\n    fun applyNavRunOuterLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); g1.apply { }.items[0].item }\n        return first.helper(3)\n    }\n    fun applyNavMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) plainH.make() else plainH.makeAlt(); g1.apply { this }.items[0].item }\n        return first.helper(4)\n    }\n    fun applyNavBareLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make().items[0].item else it.makeAlt().items[0].item; g1.apply { this } }\n        return first.helper(5)\n    }\n    fun applyNavLocalLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.apply { this }.items[0].item; g2 }\n        return first.helper(6)\n    }\n    fun applyNavArmLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); if (flag()) g1.apply { this }.items[0].item else g1.items[0].item }\n        return first.helper(7)\n    }\n    fun applyNavLetChainFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(8)\n    }\n    fun applyNavUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.apply { this }.missing().items[0].item }\n        return first.helper(9)\n    }\n    fun applyNavChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2.apply { this }.items[0].item }\n        return first.helper(10)\n    }\n    fun applyNavNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make(); g1.apply { this }.items[0].item }\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda result that is a receiver-returning
+    // scope-function call over a branch-local receiver (`apply`/`also`,
+    // which return the receiver regardless of the lambda body), bare such as
+    // `g1.apply { this }` or with a trailing member chain such as
+    // `g1.apply { this }.items[0].item` over `val g1 = if (flag()) it.make()
+    // else it.makeAlt()`, applies the receiver chain and the trailing
+    // navigation suffix per branch arm, so the outer initializer binds through
+    // the local's branch spellings. This covers `apply` and `also`, a branch
+    // local inside a `run` outer, an enclosing-member-rooted branch local, a
+    // bare `apply` result whose branch-local arms already end at the terminal
+    // member, a chain stored as a local then consumed (`val g2 = ...; g2`),
+    // and a branch arm that uses the `apply` navigation, all dispatching the
+    // terminal member on the imported `com.lib.Item` declaration. A
+    // `let`/`run`/`with` scope call with a trailing member chain, a chain
+    // through an unknown terminal method (`g1.apply { this }.missing()...`),
+    // chained bare locals (`val g2 = g1`), and a branch local without an
+    // `else` arm fail closed, so the seven apply-navigation callers in `Util`
+    // dispatch on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::Util::applyNavLetLocal",
+        "com::example::Util::alsoNavLetLocal",
+        "com::example::Util::applyNavRunOuterLocal",
+        "com::example::Util::applyNavMemberLocal",
+        "com::example::Util::applyNavBareLocal",
+        "com::example::Util::applyNavLocalLocal",
+        "com::example::Util::applyNavArmLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::applyNavLetChainFailsClosed",
+        "com::example::Util::applyNavUnknownMethodFailsClosed",
+        "com::example::Util::applyNavChainedLocalFailsClosed",
+        "com::example::Util::applyNavNoElseFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::Util::applyNavLetLocal",
+        "com::example::Util::alsoNavLetLocal",
+        "com::example::Util::applyNavRunOuterLocal",
+        "com::example::Util::applyNavMemberLocal",
+        "com::example::Util::applyNavBareLocal",
+        "com::example::Util::applyNavLocalLocal",
+        "com::example::Util::applyNavArmLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::applyNavLetChainFailsClosed",
+        "com::example::Util::applyNavUnknownMethodFailsClosed",
+        "com::example::Util::applyNavChainedLocalFailsClosed",
+        "com::example::Util::applyNavNoElseFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}

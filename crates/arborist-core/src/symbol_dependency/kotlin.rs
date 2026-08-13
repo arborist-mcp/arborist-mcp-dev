@@ -1188,9 +1188,15 @@ fn kotlin_scope_lambda_locals(
             .next()
             .unwrap_or_default();
         if locals.contains_key(root)
-            && !(children[1].kind() == "call_expression"
+            && !((children[1].kind() == "call_expression"
                 && kotlin_scope_branch_local_scope_call_shapes(children[1], &locals, source)?
                     .is_some())
+                || kotlin_scope_branch_local_receiver_scope_call_shapes(
+                    children[1],
+                    &locals,
+                    source,
+                )?
+                .is_some())
         {
             return Ok(None);
         }
@@ -1205,7 +1211,21 @@ fn kotlin_scope_lambda_locals(
         // exactly the local binds through the branch rules. Non-scope
         // initializers and unknown scope-function or branch shapes keep their
         // raw spelling and fail closed through the caller's rewrite rules.
-        let spelling = if children[1].kind() == "call_expression" {
+        let spelling = if let Some(shapes) =
+            kotlin_scope_branch_local_receiver_scope_call_shapes(children[1], &locals, source)?
+        {
+            // A receiver-returning scope-function call over a branch-local
+            // receiver (`apply`/`also`), bare or with a trailing member chain,
+            // stores the per-arm binding shapes as the local's branches, so a
+            // result that is exactly the local (`g2`) binds through the same
+            // branch rules as a direct branch result.
+            KotlinScopeLocalSpelling::Branches(
+                shapes
+                    .into_iter()
+                    .filter_map(|shape| KotlinScopeLocalBranch::from_binding(&shape))
+                    .collect(),
+            )
+        } else if children[1].kind() == "call_expression" {
             // A scope-function call on a branch-local receiver stores the
             // per-arm binding shapes as the local's branches, so a result
             // that is exactly the local (`g2`) binds through the same branch
@@ -1658,6 +1678,15 @@ fn kotlin_scope_lambda_branch_arm_shapes(
     {
         return Ok(Some(shapes));
     }
+    // An arm that is a receiver-returning scope-function call over a
+    // branch-local receiver (`apply`/`also`), bare or with a trailing member
+    // chain, binds the returned receiver once per branch arm.
+    if matches!(arm.kind(), "call_expression" | "navigation_expression")
+        && let Some(shapes) =
+            kotlin_scope_branch_local_receiver_scope_call_shapes(arm, locals, source)?
+    {
+        return Ok(Some(shapes));
+    }
     let arm_text = node_text(arm, source)?.trim().to_string();
     if let Some(shapes) = kotlin_scope_lambda_local_branch_shapes(&arm_text, locals) {
         return Ok(Some(shapes));
@@ -1812,6 +1841,133 @@ fn kotlin_scope_branch_local_scope_call_spellings(
     Ok(Some(spellings))
 }
 
+/// Binds a scope-function lambda result that is a receiver-returning
+/// scope-function call over a branch-local receiver, such as the
+/// `g1.apply { this }` of `h.let { val g1 = if (flag()) it.make() else
+/// it.makeAlt(); g1.apply { this } }` or the `g1.also { }.items[0].item` of
+/// `...; g1.also { }.items[0].item }`, either bare or with a trailing member
+/// chain. `apply`/`also` return the receiver regardless of the lambda body, so
+/// the receiver chain (and any trailing navigation suffix) applies per branch
+/// arm and the outer initializer binds through the local's branch spellings.
+/// `let`/`run`/`with` outers, receivers that do not root on a branch local,
+/// and malformed calls or lambdas fail closed.
+fn kotlin_scope_branch_local_receiver_scope_call_shapes(
+    result: Node<'_>,
+    locals: &KotlinScopeLocals,
+    source: &str,
+) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
+    // The result is either the scope-function call itself (`g1.apply { this }`)
+    // or a navigation expression rooted on it (`g1.apply { this }.items[0].item`),
+    // in which case the trailing navigation suffix applies per branch arm.
+    let call = if result.kind() == "call_expression" {
+        result
+    } else if result.kind() == "navigation_expression" {
+        // Nested navigation and element-access expressions wrap the leading
+        // call, so descend through the leftmost child until the
+        // scope-function call itself.
+        let mut cursor = result.walk();
+        let Some(mut leading) = result.named_children(&mut cursor).next() else {
+            return Ok(None);
+        };
+        while matches!(leading.kind(), "navigation_expression" | "index_expression") {
+            let mut inner_cursor = leading.walk();
+            let Some(child) = leading.named_children(&mut inner_cursor).next() else {
+                return Ok(None);
+            };
+            leading = child;
+        }
+        if leading.kind() != "call_expression" {
+            return Ok(None);
+        }
+        leading
+    } else {
+        return Ok(None);
+    };
+    let mut cursor = call.walk();
+    let children = call.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2
+        || !children
+            .iter()
+            .any(|child| child.kind() == "annotated_lambda")
+    {
+        return Ok(None);
+    }
+    let Some((receiver_text, scope_name)) = kotlin_scope_function_callee(children[0], source)?
+    else {
+        return Ok(None);
+    };
+    if !matches!(scope_name.as_str(), "apply" | "also") {
+        return Ok(None);
+    }
+    // The receiver must root on a branch local so the returned receiver binds
+    // once per arm; the receiver may be exactly the local (`g1`) or a receiver
+    // chain rooted on it (`g1.make()`), so the chain suffix applies per arm and
+    // any other receiver falls through to the caller's rules.
+    let receiver_root = receiver_text
+        .split(['.', '[', '('])
+        .next()
+        .unwrap_or_default();
+    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(receiver_root) else {
+        return Ok(None);
+    };
+    if branches.is_empty() {
+        return Ok(None);
+    }
+    let receiver_suffix = &receiver_text[receiver_root.len()..];
+    let navigation_suffix = if result.kind() == "navigation_expression" {
+        source
+            .get(call.end_byte()..result.end_byte())
+            .unwrap_or_default()
+    } else {
+        ""
+    };
+    let mut shapes = Vec::new();
+    let mut seen = BTreeSet::new();
+    for branch in branches {
+        let receiver = branch.with_suffix(receiver_suffix);
+        let Some(shape) = kotlin_scope_body_binding(&format!("{receiver}{navigation_suffix}"))
+        else {
+            return Ok(None);
+        };
+        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+            return Ok(None);
+        };
+        if seen.insert(spelling) {
+            shapes.push(shape);
+        }
+    }
+    if shapes.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(shapes))
+}
+
+/// Returns the deduplicated branch spellings of a receiver-returning
+/// scope-function call over a branch-local receiver, mapped from the binding
+/// shapes of [`kotlin_scope_branch_local_receiver_scope_call_shapes`].
+fn kotlin_scope_branch_local_receiver_scope_call_spellings(
+    result: Node<'_>,
+    locals: &KotlinScopeLocals,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let Some(shapes) =
+        kotlin_scope_branch_local_receiver_scope_call_shapes(result, locals, source)?
+    else {
+        return Ok(None);
+    };
+    let mut spellings = Vec::new();
+    for shape in shapes {
+        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+            return Ok(None);
+        };
+        spellings.push(spelling);
+    }
+    if spellings.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(spellings))
+}
+
 /// Extracts a branch initializer binding from a `val`/`var` declaration whose
 /// initializer is a scope-function call whose lambda result is an `if`/`when`
 /// or elvis (`?:`) expression, such as
@@ -1925,6 +2081,14 @@ fn kotlin_scope_branch_initializer_binding(
         // nested lambda once per branch arm so the outer initializer binds
         // through the local's branch spellings.
         Some(scope_call_branches)
+    } else if let Some(receiver_scope_call_branches) =
+        kotlin_scope_branch_local_receiver_scope_call_spellings(result, &locals, source)?
+    {
+        // A result that is a receiver-returning scope-function call over a
+        // branch-local receiver (`apply`/`also`), bare or with a trailing
+        // member chain, binds the returned receiver once per branch arm so the
+        // outer initializer binds through the local's branch spellings.
+        Some(receiver_scope_call_branches)
     } else {
         // A result that is exactly a `val` local whose initializer is an
         // `if`/`when`/elvis branch, or a chain rooted on such a local, expands
