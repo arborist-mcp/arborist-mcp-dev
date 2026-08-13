@@ -57921,3 +57921,166 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_constructed_receiver_factory_argument_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Holder {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Group {
+    public Holder holder = new Holder();
+    public int Capacity { get; set; }
+    public Helper[] GetItems() => new Helper[2];
+    public Helper[] MakeItems(int count) => new Helper[count];
+    public Helper GetSingle() => new Helper();
+    public int[] GetCounts() => new int[2];
+}
+class Caller {
+    int fromCtorArgs() {
+        var first = new Group(1).GetItems()[0];
+        return first.helper(1);
+    }
+    int fromCtorArgsMember() {
+        var first = new Group(2).holder.GetItems()[0];
+        return first.helper(2);
+    }
+    int fromCtorArgsFactory() {
+        var first = new Group(3).MakeItems(2)[0];
+        return first.helper(3);
+    }
+    int fromCtorObjectInit() {
+        var first = new Group { Capacity = 2 }.GetItems()[0];
+        return first.helper(4);
+    }
+    int failures() {
+        var a = new Group(1).GetSingle()[0];
+        var b = new Group(1).GetCounts()[0];
+        var c = new Group(1).GetItems()[0][0];
+        var d = new Group(1).Missing()[0];
+        return 0;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access whose base is a
+    // constructed-receiver factory call with constructor arguments or an
+    // object-initializer body such as `new Group(1).GetItems()[0]`,
+    // `new Group(2).holder.GetItems()[0]`, `new Group(3).MakeItems(2)[0]`, or
+    // `new Group { Capacity = 2 }.GetItems()[0]` dispatches on the factory
+    // return array's element component type through the same
+    // constructed-receiver member-chain rules; non-array factory returns,
+    // primitive return arrays, element access deeper than the return array,
+    // and unknown factory methods fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromCtorArgs",
+        "Demo::Caller::fromCtorArgsMember",
+        "Demo::Caller::fromCtorArgsFactory",
+        "Demo::Caller::fromCtorObjectInit",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromCtorArgs",
+        "Demo::Caller::fromCtorArgsMember",
+        "Demo::Caller::fromCtorArgsFactory",
+        "Demo::Caller::fromCtorObjectInit",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_constructed_receiver_factory_argument_element_access_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Caller {
+    int run() {
+        var first = new Group(1).GetItems()[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
