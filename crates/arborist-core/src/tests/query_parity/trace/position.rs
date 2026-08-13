@@ -54462,3 +54462,110 @@ fn traces_kotlin_scope_function_lambda_branch_local_scope_call_navigation_bindin
         );
     }
 }
+
+#[test]
+fn traces_kotlin_cross_file_scope_function_lambda_branch_local_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Factory {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Factory\nimport com.lib.Item\n\nclass Util {\n    val factory: Factory = Factory()\n    fun flag(): Boolean = true\n    fun crossFileLetNavLetLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(1)\n    }\n    fun crossFileLetNavRunLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.run { make() }.items[0].item }\n        return first.helper(2)\n    }\n    fun crossFileLetNavWithLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); with(g1) { make() }.items[0].item }\n        return first.helper(3)\n    }\n    fun crossFileLetNavApplyLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.apply { this }.items[0].item }\n        return first.helper(4)\n    }\n    fun crossFileLetNavAlsoLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.also { }.items[0].item }\n        return first.helper(5)\n    }\n    fun crossFileRunOuterNavLocal(): Int {\n        val first = factory.h.run { val g1 = if (flag()) make() else makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(6)\n    }\n    fun crossFileMemberNavLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) factory.plainH.make() else factory.plainH.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(7)\n    }\n    fun crossFileLocalNavLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> g.make() }.items[0].item; g2 }\n        return first.helper(8)\n    }\n    fun crossFileArmNavLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); if (flag()) g1.let { g -> g.make() }.items[0].item else g1.items[0].item }\n        return first.helper(9)\n    }\n    fun crossFileUnknownMethodFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make() }.missing().items[0].item }\n        return first.helper(10)\n    }\n    fun crossFileChainedLocalFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2.let { g -> g.make() }.items[0].item }\n        return first.helper(11)\n    }\n    fun crossFileNoElseFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(12)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch-local scope-call / apply navigation
+    // whose outer initializer receiver is a member chain declared in an
+    // explicitly imported package (`factory.h` where `factory` is a
+    // `com.lib.Factory`) dispatches the terminal member on the imported
+    // `com.lib.Item` declaration through the same per-arm expansion rules as
+    // a same-file receiver: a `let`, `run`, or `with` inner call with a
+    // trailing member chain, an `apply`/`also` navigation, a branch local
+    // inside a `run` outer, an enclosing-member-rooted branch local that is
+    // itself a cross-file member chain (`factory.plainH.make()`), a chain
+    // stored as a local then consumed (`val g2 = ...; g2`), and a branch arm
+    // that uses the scope-call navigation. A chain through an unknown
+    // terminal method (`g1.let { ... }.missing()...`), chained bare locals
+    // (`val g2 = g1`), and a branch local without an `else` arm fail closed,
+    // so the nine cross-file scope-call-navigation callers in `Util` dispatch
+    // on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::crossFileLetNavLetLocal",
+        "com::example::Util::crossFileLetNavRunLocal",
+        "com::example::Util::crossFileLetNavWithLocal",
+        "com::example::Util::crossFileLetNavApplyLocal",
+        "com::example::Util::crossFileLetNavAlsoLocal",
+        "com::example::Util::crossFileRunOuterNavLocal",
+        "com::example::Util::crossFileMemberNavLocal",
+        "com::example::Util::crossFileLocalNavLocal",
+        "com::example::Util::crossFileArmNavLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::crossFileUnknownMethodFailsClosed",
+        "com::example::Util::crossFileChainedLocalFailsClosed",
+        "com::example::Util::crossFileNoElseFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::crossFileLetNavLetLocal",
+        "com::example::Util::crossFileLetNavRunLocal",
+        "com::example::Util::crossFileLetNavWithLocal",
+        "com::example::Util::crossFileLetNavApplyLocal",
+        "com::example::Util::crossFileLetNavAlsoLocal",
+        "com::example::Util::crossFileRunOuterNavLocal",
+        "com::example::Util::crossFileMemberNavLocal",
+        "com::example::Util::crossFileLocalNavLocal",
+        "com::example::Util::crossFileArmNavLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::crossFileUnknownMethodFailsClosed",
+        "com::example::Util::crossFileChainedLocalFailsClosed",
+        "com::example::Util::crossFileNoElseFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
