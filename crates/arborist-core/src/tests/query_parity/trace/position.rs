@@ -58644,3 +58644,189 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_conditional_access_var_initializer_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+    public Helper? inner() => this;
+}
+class Group {
+    public Helper GetSingle() => new Helper();
+    public Helper? GetMaybe() => new Helper();
+    public Helper? field;
+}
+class Caller {
+    public Helper? field;
+    int fromFactoryCondThenMember() {
+        var helper = new Group().GetMaybe()?.inner();
+        return helper.helper(1);
+    }
+    int fromCtorParensCondThenMember() {
+        var helper = (new Group()).GetMaybe()?.inner();
+        return helper.helper(2);
+    }
+    int fromBoundCondDirect() {
+        var group = new Group();
+        var helper = group?.GetSingle();
+        return helper.helper(3);
+    }
+    int fromBoundCondNested() {
+        var group = new Group();
+        var helper = group?.GetMaybe()?.inner();
+        return helper.helper(4);
+    }
+    int fromBoundCondThenMember() {
+        var group = new Group();
+        var helper = group?.GetSingle().inner();
+        return helper.helper(5);
+    }
+    int fromBoundCondMemberInit() {
+        var group = new Group();
+        var helper = group?.field;
+        return helper.helper(6);
+    }
+    int fromThisCondInit() {
+        var helper = this?.field;
+        return helper.helper(7);
+    }
+    int failures() {
+        var missing = new Group().Missing()?.inner();
+        var unused = missing.helper(1);
+        var group = new Group();
+        var noMember = group?.Missing();
+        return unused + noMember.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a null-conditional call such as
+    // `var helper = group?.GetSingle()`, `var helper = new Group().GetMaybe()
+    // ?.inner()`, or `var helper = group?.GetMaybe()?.inner()` infers the
+    // same receiver type as the plain dotted spelling, so the initialized
+    // local dispatches the trailing member through the same factory and
+    // chain rules, including parenthesized constructed-receiver factories,
+    // member-chain hops after the conditional call, member-access
+    // initializers such as `group?.field` or `this?.field`, and nested
+    // conditional hops. Unknown factories and unknown conditional members
+    // still fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::fromFactoryCondThenMember",
+        "Demo::Caller::fromCtorParensCondThenMember",
+        "Demo::Caller::fromBoundCondDirect",
+        "Demo::Caller::fromBoundCondNested",
+        "Demo::Caller::fromBoundCondThenMember",
+        "Demo::Caller::fromBoundCondMemberInit",
+        "Demo::Caller::fromThisCondInit",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::fromFactoryCondThenMember",
+        "Demo::Caller::fromCtorParensCondThenMember",
+        "Demo::Caller::fromBoundCondDirect",
+        "Demo::Caller::fromBoundCondNested",
+        "Demo::Caller::fromBoundCondThenMember",
+        "Demo::Caller::fromBoundCondMemberInit",
+        "Demo::Caller::fromThisCondInit",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_conditional_access_var_initializer_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+    public Helper? inner() => this;
+}
+class Group {
+    public Helper? GetMaybe() => new Helper();
+}
+class Caller {
+    int run() {
+        var helper = new Group().GetMaybe()?.inner();
+        return helper.helper(1);
+    }
+    int fail() {
+        var missing = new Group().Missing()?.inner();
+        return missing.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
