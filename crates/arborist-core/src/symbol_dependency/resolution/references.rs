@@ -4619,6 +4619,66 @@ fn resolve_csharp_member_chain_binding<'a>(
             scope_source_symbol = method_symbol;
             continue;
         }
+        // A method-call hop with an element-access suffix such as
+        // `makeItems()[0]` or `GetMatrix()[0][0]` dispatches the hop method
+        // as an instance call and strips one return-array component layer
+        // per element access before continuing the chain; non-array or
+        // primitive-array returns and element access deeper than the return
+        // array fail closed.
+        if let Some(array_member_name) = array_member_name
+            && let Some((method_name, hop_arity)) =
+                csharp_method_call_hop_spelling(array_member_name)
+            && let Some(depth) = csharp_array_access_depth(hop)
+        {
+            let Some(symbol_id) = resolve_csharp_instance_method_on_binding(
+                type_symbol,
+                &binding,
+                &method_name,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                hop_arity,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(method_symbol) = raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+            else {
+                return Ok(None);
+            };
+            let Some(return_type) = method_symbol.return_type.as_deref() else {
+                return Ok(None);
+            };
+            if return_type.is_empty() {
+                return Ok(None);
+            }
+            let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, depth)
+            else {
+                return Ok(None);
+            };
+            let Some(next_binding) = resolve_csharp_receiver_type_binding(
+                method_symbol,
+                &component_name,
+                raw_symbols,
+                semantic_path_index,
+                csharp_source_namespace_path(method_symbol, raw_symbols).flatten(),
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            binding = next_binding;
+            scope_source_symbol = method_symbol;
+            continue;
+        }
         let (declaring_type_symbol, hop_type_name) = {
             // A field/property/event hop is looked up on the current type and,
             // when the current type does not declare it, through the unique
