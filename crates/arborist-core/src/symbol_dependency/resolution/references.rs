@@ -2674,6 +2674,116 @@ fn resolve_csharp_var_factory_method<'a>(
                 .find(|candidate| candidate.symbol_id == symbol_id)
         }));
     }
+    // A factory chain whose leading segment is a method call, such as
+    // `makeGroup().GetItems` or `Util.MakeGroup().GetItems`, resolves the
+    // leading call (scanned to its balanced argument list) as a factory on
+    // the enclosing type, the unique base chain, or a static-imported type,
+    // then walks any intermediate field/property/element/method-call hops
+    // through the same member-chain rules before dispatching the trailing
+    // factory method on the resulting type. Unknown or ambiguous leading
+    // factories, unknown or primitive hops, and missing, static, or
+    // arity-mismatched trailing factories fail closed.
+    if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(factory_name)
+        && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some(leading_method) = resolve_csharp_var_factory_method(
+            source_symbol,
+            &leading_name,
+            leading_arity,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(leading_return) = leading_method.return_type.as_deref()
+        && !leading_return.is_empty()
+        && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
+            leading_method,
+            leading_return,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(leading_method, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        let (hops, method_name) = match remainder.rsplit_once('.') {
+            Some((hops, method_name)) => {
+                let hops = if hops.is_empty() {
+                    Vec::new()
+                } else {
+                    hops.split('.').collect::<Vec<_>>()
+                };
+                (hops, method_name)
+            }
+            None => (Vec::new(), remainder),
+        };
+        if method_name.is_empty() || method_name.contains(['(', ')', '.']) {
+            return Ok(None);
+        }
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(None);
+        }
+        let (binding, dispatch_source_symbol) = if hops.is_empty() {
+            let Some(type_path) = csharp_dispatchable_type_path(
+                source_symbol,
+                raw_symbols,
+                &leading_binding,
+                csharp_is_type_declaration,
+            ) else {
+                return Ok(None);
+            };
+            let type_indexes = semantic_path_index
+                .get(&type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .collect::<Vec<_>>();
+            if type_indexes.len() != 1 {
+                return Ok(None);
+            }
+            (leading_binding, &raw_symbols[type_indexes[0]])
+        } else {
+            let Some((binding, dispatch)) = resolve_csharp_member_chain_binding(
+                leading_method,
+                leading_binding,
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            (binding, dispatch)
+        };
+        let symbol_id = resolve_csharp_instance_method_on_binding(
+            dispatch_source_symbol,
+            &binding,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            factory_arity,
+            deadline,
+        )?;
+        return Ok(symbol_id.and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
+    }
     if factory_name.contains('.') {
         return resolve_csharp_factory_static_method(
             source_symbol,
@@ -4927,6 +5037,34 @@ fn resolve_csharp_member_chain_binding<'a>(
         scope_source_symbol = declaring_type_symbol;
     }
     Ok(Some((binding, scope_source_symbol)))
+}
+
+/// Splits a factory-chain spelling such as `makeGroup().GetItems`,
+/// `makeGroup(2).GetItems`, or `Util.MakeGroup().GetItems` into the leading
+/// call segment (scanned up to its balanced argument list) and the remaining
+/// member chain. Spellings without a call root, without a trailing member
+/// chain, or with an unbalanced argument list return `None` and fail closed.
+fn csharp_factory_chain_leading_call(factory_name: &str) -> Option<(&str, &str)> {
+    let open = factory_name.find('(')?;
+    let mut depth = 0usize;
+    for (index, byte) in factory_name.bytes().enumerate().skip(open) {
+        match byte as char {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let leading_call = &factory_name[..=index];
+                    let remainder = factory_name[index + 1..].strip_prefix('.')?;
+                    if leading_call.is_empty() || remainder.is_empty() {
+                        return None;
+                    }
+                    return Some((leading_call, remainder));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Parses a method-call hop spelling such as `inner()`, `inner(0)`, or
