@@ -1679,9 +1679,11 @@ fn kotlin_scope_lambda_branch_arm_shapes(
 /// by binding the nested lambda once per branch arm with the arm's receiver
 /// spelling (a factory-callee arm keeps its call marker so the nested chain
 /// walks the hop as a call), so the outer initializer or branch arm binds
-/// through the local's branch spellings. `apply`/`also` outers, receivers
-/// that do not root on a branch local, malformed calls or lambdas, and arms
-/// that cannot bind fail closed.
+/// through the local's branch spellings. A nested lambda body that is itself
+/// an `if`/`when`/elvis branch resolves once per receiver arm, so the outer
+/// binding covers the cross product of the local's arms and the body's arms.
+/// `apply`/`also` outers, receivers that do not root on a branch local,
+/// malformed calls or lambdas, and arms that cannot bind fail closed.
 fn kotlin_scope_branch_local_scope_call_shapes(
     call: Node<'_>,
     locals: &KotlinScopeLocals,
@@ -1742,22 +1744,42 @@ fn kotlin_scope_branch_local_scope_call_shapes(
         else {
             return Ok(None);
         };
-        let Some(shape) = kotlin_scope_lambda_expression_binding(
-            result,
-            &nested_locals,
-            &scope_name,
-            param_name.as_deref(),
-            &receiver,
-            source,
-        )?
-        else {
+        // A nested branch body resolves once per receiver arm through the
+        // same branch rules as a direct branch result, so the outer binding
+        // covers the cross product of the local's arms and the body's arms.
+        let arm_shapes = if matches!(
+            result.kind(),
+            "if_expression" | "when_expression" | "binary_expression"
+        ) {
+            kotlin_scope_lambda_branch_shapes(
+                result,
+                &nested_locals,
+                &scope_name,
+                param_name.as_deref(),
+                &receiver,
+                source,
+            )?
+        } else {
+            kotlin_scope_lambda_expression_binding(
+                result,
+                &nested_locals,
+                &scope_name,
+                param_name.as_deref(),
+                &receiver,
+                source,
+            )?
+            .map(|shape| vec![shape])
+        };
+        let Some(arm_shapes) = arm_shapes else {
             return Ok(None);
         };
-        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
-            return Ok(None);
-        };
-        if seen.insert(spelling) {
-            shapes.push(shape);
+        for shape in arm_shapes {
+            let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+                return Ok(None);
+            };
+            if seen.insert(spelling) {
+                shapes.push(shape);
+            }
         }
     }
     if shapes.len() < 2 {
