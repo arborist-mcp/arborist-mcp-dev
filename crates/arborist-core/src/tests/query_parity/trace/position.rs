@@ -57189,3 +57189,104 @@ class Caller : Base {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_await_foreach_fails_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    int varArray() {
+        await foreach (var item in makeItems()) { item.helper(1); }
+        return 0;
+    }
+    int typedArray() {
+        await foreach (Helper item in makeItems()) { item.helper(2); }
+        return 0;
+    }
+    int varField() {
+        await foreach (var item in this.holderItems) { item.helper(3); }
+        return 0;
+    }
+    int fromSync() {
+        foreach (var item in makeItems()) { item.helper(4); }
+        return 0;
+    }
+    Helper[] makeItems() => new Helper[2];
+    private Helper[] holderItems = new Helper[2];
+}
+",
+    )
+    .unwrap();
+
+    // An `await foreach` loop iterates an async stream whose element type is
+    // capability-gated, so its loop variable binds an empty type and the
+    // member call fails closed for both `var` and explicitly typed variables
+    // and for array-factory and `this.`-rooted field collections, while a
+    // synchronous `foreach` over the same collection still traces.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::fromSync");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::fromSync");
+}
+
+#[test]
+fn traces_csharp_await_foreach_fails_closed_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    int run() {
+        await foreach (var item in makeItems()) { item.helper(1); }
+        foreach (var item in makeItems()) { item.helper(2); }
+        return 0;
+    }
+    Helper[] makeItems() => new Helper[2];
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}

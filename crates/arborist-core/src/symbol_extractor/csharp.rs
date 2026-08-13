@@ -951,7 +951,10 @@ fn collect_typed_local_bindings(
             if name.is_empty() {
                 return Ok(());
             }
-            // An explicitly typed foreach variable such as
+            // An `await foreach` loop iterates an async stream whose element
+            // type is capability-gated; bind an empty type and fail closed
+            // instead of inferring from a synchronous array/factory/member
+            // collection. An explicitly typed foreach variable such as
             // `foreach (Helper row in matrix)` binds the declared type, and a
             // `var` foreach variable infers its element type from the
             // collection expression when it names a bound array-typed value,
@@ -960,7 +963,9 @@ fn collect_typed_local_bindings(
             // nested `Helper[]` component. Unresolvable collections (factory
             // calls, generic collections, primitives, and unknown names)
             // bind an empty type and fail closed.
-            let type_name = if let Some(type_name) = csharp_declared_type_name(node, source)? {
+            let type_name = if csharp_foreach_statement_is_await(node) {
+                None
+            } else if let Some(type_name) = csharp_declared_type_name(node, source)? {
                 Some(type_name)
             } else {
                 match node.child_by_field_name("right") {
@@ -985,6 +990,14 @@ fn collect_typed_local_bindings(
         collect(child, source, &mut bindings)?;
     }
     Ok(bindings)
+}
+
+/// Returns whether a `foreach_statement` is an `await foreach` async stream
+/// iteration whose element type is capability-gated and fails closed.
+fn csharp_foreach_statement_is_await(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "await")
 }
 
 /// Returns the inner expression of a `parenthesized_expression` such as
