@@ -2390,20 +2390,107 @@ fn resolve_csharp_var_factory_method<'a>(
         );
     }
     if let Some(method_name) = factory_name.strip_prefix("this.") {
-        if method_name.is_empty() || method_name.contains('.') {
+        if method_name.is_empty() {
             return Ok(None);
         }
-        return resolve_csharp_factory_instance_method(
-            source_symbol,
+        if !method_name.contains('.') {
+            return resolve_csharp_factory_instance_method(
+                source_symbol,
+                method_name,
+                factory_arity,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        // A `this.`-rooted factory chain such as
+        // `this.thisGroup().GetItems()` or `this.holder.GetInner().MakeHelper()`
+        // resolves the leading member on the unique enclosing type, walks any
+        // intermediate field, property, event, or arity-matched method-call
+        // hops through the same member-chain rules (nearest declaring ancestor
+        // pins each hop), and dispatches the trailing factory method on the
+        // resulting type; static callers, unknown or primitive hops, and
+        // missing, static, or arity-mismatched factories fail closed.
+        if csharp_method_is_static(source_symbol) {
+            return Ok(None);
+        }
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if type_candidates.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = type_candidates[0];
+        let (hops, method_name) = match method_name.rsplit_once('.') {
+            Some((hops, method_name)) => {
+                let hops = if hops.is_empty() {
+                    Vec::new()
+                } else {
+                    hops.split('.').collect::<Vec<_>>()
+                };
+                (hops, method_name)
+            }
+            None => (Vec::new(), method_name),
+        };
+        if method_name.is_empty() || method_name.contains(['(', ')', '.']) {
+            return Ok(None);
+        }
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(None);
+        }
+        let binding = CSharpBaseTypeBinding {
+            semantic_type_path: scope_path.to_string(),
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        };
+        let (binding, dispatch_source_symbol) = if hops.is_empty() {
+            (binding, type_symbol)
+        } else {
+            let Some((binding, dispatch)) = resolve_csharp_member_chain_binding(
+                type_symbol,
+                binding,
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            (binding, dispatch)
+        };
+        let symbol_id = resolve_csharp_instance_method_on_binding(
+            dispatch_source_symbol,
+            &binding,
             method_name,
-            factory_arity,
             raw_symbols,
             semantic_path_index,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
+            factory_arity,
             deadline,
-        );
+        )?;
+        return Ok(symbol_id.and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
     }
     // An explicit `base.`-rooted factory resolves as an instance method call
     // on the unique class/record base chain, such as
