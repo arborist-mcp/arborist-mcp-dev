@@ -1629,6 +1629,15 @@ fn kotlin_scope_lambda_branch_arm_shapes(
     receiver: &str,
     source: &str,
 ) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
+    // An arm that is itself a scope-function call on a branch-local receiver
+    // (such as `g1.let { g -> g.items[0].item }` over a branch local `g1`)
+    // binds the nested lambda once per branch arm, flattening into the same
+    // shapes as the local's arms.
+    if arm.kind() == "call_expression"
+        && let Some(shapes) = kotlin_scope_branch_local_scope_call_shapes(arm, locals, source)?
+    {
+        return Ok(Some(shapes));
+    }
     let arm_text = node_text(arm, source)?.trim().to_string();
     if let Some(shapes) = kotlin_scope_lambda_local_branch_shapes(&arm_text, locals) {
         return Ok(Some(shapes));
@@ -1648,14 +1657,14 @@ fn kotlin_scope_lambda_branch_arm_shapes(
 /// g1.let { g -> g.items[0].item } }`, by binding the nested lambda once per
 /// branch arm with the arm's receiver spelling (a factory-callee arm keeps
 /// its call marker so the nested chain walks the hop as a call), so the outer
-/// initializer binds through the local's branch spellings. `apply`/`also`
-/// outers, receivers that are not branch locals, malformed calls or lambdas,
-/// and arms that cannot bind fail closed.
-fn kotlin_scope_branch_local_scope_call_spellings(
+/// initializer or branch arm binds through the local's branch spellings.
+/// `apply`/`also` outers, receivers that are not branch locals, malformed
+/// calls or lambdas, and arms that cannot bind fail closed.
+fn kotlin_scope_branch_local_scope_call_shapes(
     call: Node<'_>,
     locals: &KotlinScopeLocals,
     source: &str,
-) -> Result<Option<Vec<String>>> {
+) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
     if call.kind() != "call_expression" {
         return Ok(None);
     }
@@ -1689,7 +1698,7 @@ fn kotlin_scope_branch_local_scope_call_spellings(
     let Some((param_name, statements, result)) = kotlin_scope_lambda_body(lambda, source)? else {
         return Ok(None);
     };
-    let mut spellings = Vec::new();
+    let mut shapes = Vec::new();
     let mut seen = BTreeSet::new();
     for branch in branches {
         let receiver = branch.with_suffix("");
@@ -1717,11 +1726,35 @@ fn kotlin_scope_branch_local_scope_call_spellings(
         let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
             return Ok(None);
         };
-        if seen.insert(spelling.clone()) {
-            spellings.push(spelling);
+        if seen.insert(spelling) {
+            shapes.push(shape);
         }
     }
-    if spellings.len() < 2 {
+    if shapes.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(shapes))
+}
+
+/// Returns the deduplicated branch spellings of a scope-function call on a
+/// branch-local receiver, mapped from the binding shapes of
+/// [`kotlin_scope_branch_local_scope_call_shapes`].
+fn kotlin_scope_branch_local_scope_call_spellings(
+    call: Node<'_>,
+    locals: &KotlinScopeLocals,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let Some(shapes) = kotlin_scope_branch_local_scope_call_shapes(call, locals, source)? else {
+        return Ok(None);
+    };
+    let mut spellings = Vec::new();
+    for shape in shapes {
+        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+            return Ok(None);
+        };
+        spellings.push(spelling);
+    }
+    if spellings.is_empty() {
         return Ok(None);
     }
     Ok(Some(spellings))
