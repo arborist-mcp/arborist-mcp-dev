@@ -212,6 +212,19 @@ fn csharp_member_hop_receiver_and_name(node: Node<'_>) -> Option<(Node<'_>, Node
     }
 }
 
+/// Returns the element-binding child of a conditional access such as the
+/// `?[0]` hop of `group?.items?[0]` or `(new Group()).GetItems()?[0]`, which
+/// indexes the condition expression as an array. Member-binding conditionals
+/// and other node kinds return `None`.
+fn csharp_conditional_access_element_binding(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() != "conditional_access_expression" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == "element_binding_expression")
+}
+
 /// Builds the spelling of a member chain whose leading receiver is a locally
 /// bound value, `this`, or `base`, such as `group.inner().helper` or
 /// `this.holder.inner().helper`. Field, property, and event hops keep their
@@ -239,15 +252,38 @@ fn csharp_instance_member_chain_spelling(
     loop {
         match current.kind() {
             "member_access_expression" | "conditional_access_expression" => {
-                let Some((receiver, name)) = csharp_member_hop_receiver_and_name(current) else {
-                    return Ok(None);
-                };
-                let name = crate::language::node_text(name, source)?.trim();
-                if name.is_empty() {
-                    return Ok(None);
+                // A null-conditional element binding such as
+                // `group?.items?[0]` or `(new Group()).GetItems()?[0]`
+                // indexes the condition expression as an array, so it spells
+                // the same as a plain element access and the resolver strips
+                // one array component layer before continuing the chain;
+                // member-binding conditionals keep the plain member hop.
+                if let Some(element_binding) = csharp_conditional_access_element_binding(current) {
+                    let subscript_text =
+                        crate::language::node_text(element_binding, source)?.trim();
+                    if subscript_text.is_empty()
+                        || !subscript_text.starts_with('[')
+                        || !subscript_text.ends_with(']')
+                    {
+                        return Ok(None);
+                    }
+                    segments.push(subscript_text.to_string());
+                    let Some(condition) = current.child_by_field_name("condition") else {
+                        return Ok(None);
+                    };
+                    current = condition;
+                } else {
+                    let Some((receiver, name)) = csharp_member_hop_receiver_and_name(current)
+                    else {
+                        return Ok(None);
+                    };
+                    let name = crate::language::node_text(name, source)?.trim();
+                    if name.is_empty() {
+                        return Ok(None);
+                    }
+                    segments.push(name.to_string());
+                    current = receiver;
                 }
-                segments.push(name.to_string());
-                current = receiver;
             }
             "invocation_expression" => {
                 let Some(function) = current.child_by_field_name("function") else {
@@ -458,7 +494,10 @@ fn csharp_direct_invocation_name(
         // only kept when static type-qualified roots are allowed.
         if matches!(
             receiver.kind(),
-            "invocation_expression" | "parenthesized_expression" | "element_access_expression"
+            "invocation_expression"
+                | "parenthesized_expression"
+                | "element_access_expression"
+                | "conditional_access_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, true)?
             && spelling.contains('(')
