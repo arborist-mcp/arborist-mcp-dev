@@ -2443,6 +2443,37 @@ fn resolve_csharp_var_factory_method<'a>(
                 .find(|candidate| candidate.symbol_id == symbol_id)
         }));
     }
+    // A constructed-receiver factory such as `new Group().MakeHelper()` or
+    // `var helper = new Group().holder.MakeHelper()` resolves the constructed
+    // type in the caller's namespace/import scope and dispatches the factory
+    // as an instance method on that type, walking any intermediate field,
+    // property, event, or arity-matched method-call hops through the same
+    // member-chain rules as a constructed-receiver member chain; unknown or
+    // primitive constructed types, unknown hops, and missing, static, or
+    // arity-mismatched factories fail closed.
+    if let Some(rest) = factory_name.strip_prefix("new ") {
+        if rest.is_empty() {
+            return Ok(None);
+        }
+        return match resolve_csharp_constructor_receiver_call(
+            source_symbol,
+            rest,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            factory_arity,
+            deadline,
+        )? {
+            CSharpConstructorReceiverResolution::Resolved(symbol_id) => Ok(raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)),
+            CSharpConstructorReceiverResolution::NotConstructorReceiver
+            | CSharpConstructorReceiverResolution::Blocked => Ok(None),
+        };
+    }
     // A dotted factory whose leading segment is a bound receiver resolves as
     // an instance method call on the receiver's declared type, such as
     // `var helper = holder.MakeHelper()`, `var helper = holder.GetInner().MakeHelper()`,
