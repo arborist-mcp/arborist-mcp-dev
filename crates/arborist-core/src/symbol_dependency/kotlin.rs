@@ -860,6 +860,46 @@ type KotlinPropertyBinding = (String, String, Option<String>, Option<String>);
 /// name.
 type KotlinScopeFunctionBinding = (String, Option<String>, Option<String>);
 
+/// One receiver-qualified branch arm of a scope-function lambda branch local:
+/// a dotted factory-call callee (resolved as a call, so a chain base keeps the
+/// call marker) or a property chain / bare receiver.
+#[derive(Clone, Debug)]
+enum KotlinScopeLocalBranch {
+    Callee(String),
+    Chain(String),
+}
+
+impl KotlinScopeLocalBranch {
+    fn from_binding(binding: &KotlinScopeFunctionBinding) -> Option<Self> {
+        let (type_name, _, chain) = binding;
+        if !type_name.is_empty() {
+            Some(Self::Callee(type_name.clone()))
+        } else {
+            chain.clone().map(Self::Chain)
+        }
+    }
+
+    /// The bare branch-initializer spelling (a callee without its call
+    /// marker), matching the branch spellings of a direct branch result.
+    fn branch_spelling(&self) -> String {
+        match self {
+            Self::Callee(callee) => callee.clone(),
+            Self::Chain(chain) => chain.clone(),
+        }
+    }
+
+    /// The call-marker local spelling with a chain suffix applied: a callee
+    /// keeps its `()` marker so the base resolves the hop as a call
+    /// (`h.make()` becomes `h.make().items[0].item`), while a chain appends
+    /// the suffix directly.
+    fn with_suffix(&self, suffix: &str) -> String {
+        match self {
+            Self::Callee(callee) => format!("{callee}(){suffix}"),
+            Self::Chain(chain) => format!("{chain}{suffix}"),
+        }
+    }
+}
+
 /// The receiver-qualified spelling of a scope-function lambda `val` local:
 /// either a single spelling (the same call-callee, property-chain, or
 /// bare-receiver forms as a single-expression body) or the branch spellings
@@ -871,7 +911,7 @@ type KotlinScopeFunctionBinding = (String, Option<String>, Option<String>);
 #[derive(Clone, Debug)]
 enum KotlinScopeLocalSpelling {
     Single(String),
-    Branches(Vec<String>),
+    Branches(Vec<KotlinScopeLocalBranch>),
 }
 
 type KotlinScopeLocals = BTreeMap<String, KotlinScopeLocalSpelling>;
@@ -1105,8 +1145,9 @@ fn kotlin_scope_lambda_body<'a>(
 /// `val g1 = it.make().let { g -> g }` stores the call's
 /// receiver-qualified lambda-result spelling instead of its raw source text,
 /// and an `if`/`when`/elvis initializer stores the receiver-qualified branch
-/// spellings of its arms so a result that is exactly the local binds through
-/// the branch rules.
+/// spellings of its arms (with factory-call callees keeping their call
+/// marker) so a result that is exactly the local, or a chain rooted on the
+/// local, binds through the branch rules.
 fn kotlin_scope_lambda_locals(
     statements: &[Node<'_>],
     source: &str,
@@ -1170,7 +1211,7 @@ fn kotlin_scope_lambda_locals(
             children[1].kind(),
             "if_expression" | "when_expression" | "binary_expression"
         ) {
-            match kotlin_scope_lambda_branch_spellings(
+            match kotlin_scope_lambda_branch_shapes(
                 children[1],
                 &locals,
                 scope_name,
@@ -1178,9 +1219,12 @@ fn kotlin_scope_lambda_locals(
                 receiver,
                 source,
             )? {
-                Some(spellings) if !spellings.is_empty() => {
-                    KotlinScopeLocalSpelling::Branches(spellings)
-                }
+                Some(shapes) if !shapes.is_empty() => KotlinScopeLocalSpelling::Branches(
+                    shapes
+                        .into_iter()
+                        .filter_map(|shape| KotlinScopeLocalBranch::from_binding(&shape))
+                        .collect(),
+                ),
                 _ => KotlinScopeLocalSpelling::Single(initializer.clone()),
             }
         } else {
@@ -1319,54 +1363,38 @@ fn kotlin_scope_lambda_expression_binding(
     Ok(kotlin_scope_body_binding(&rewritten))
 }
 
-/// Rewrites a single expression of a scope-function lambda to its
-/// receiver-qualified spelling string (the factory callee, property-chain
-/// base, or bare receiver of
-/// [`kotlin_scope_lambda_expression_binding`]), used for each branch of an
-/// `if`/`when`/elvis result.
-fn kotlin_scope_lambda_branch_spelling(
-    branch: Node<'_>,
-    locals: &KotlinScopeLocals,
-    scope_name: &str,
-    param_name: Option<&str>,
-    receiver: &str,
-    source: &str,
-) -> Result<Option<String>> {
-    let Some((type_name, _, property_chain_base)) = kotlin_scope_lambda_expression_binding(
-        branch, locals, scope_name, param_name, receiver, source,
-    )?
-    else {
-        return Ok(None);
-    };
+/// Returns the bare receiver-qualified spelling of a scope-function lambda
+/// binding shape: the dotted factory-callee name when the shape is a callee,
+/// or the property-chain / bare-receiver spelling otherwise.
+fn kotlin_scope_function_binding_spelling(binding: &KotlinScopeFunctionBinding) -> Option<String> {
+    let (type_name, _, chain) = binding;
     if !type_name.is_empty() {
-        return Ok(Some(type_name));
+        Some(type_name.clone())
+    } else {
+        chain.clone()
     }
-    if let Some(chain) = property_chain_base {
-        return Ok(Some(chain));
-    }
-    Ok(None)
 }
 
-/// Returns the deduplicated receiver-qualified branch spellings of a
-/// scope-function lambda result that is an `if`/`when` or elvis (`?:`)
-/// expression, such as the `it.make()` and `it.makeAlt()` branches of
-/// `h.let { if (flag) it.make() else it.makeAlt() }`. Each branch expands its
+/// Collects the receiver-qualified binding shapes of a scope-function lambda
+/// result that is an `if`/`when` or elvis (`?:`) expression, such as the
+/// `it.make()` and `it.makeAlt()` shapes of
+/// `h.let { if (flag) it.make() else it.makeAlt() }`. Each arm expands its
 /// `val` local roots and rewrites through the same receiver rules as a
-/// single-expression body, yielding the same call-callee, property-chain, or
-/// bare-receiver spellings as a direct branch initializer; an `if` must have
-/// an `else` arm (or else-if arms) with at least two distinct spellings, a
-/// `when` must include an `else` arm, and an elvis expression must use the
-/// `?:` operator with both operands, otherwise the whole binding fails
-/// closed.
-fn kotlin_scope_lambda_branch_spellings(
+/// single-expression body, keeping the call-callee / property-chain
+/// classification so a branch local can expand a chain base with the correct
+/// call marker; an `if` must have an `else` arm (or else-if arms) with at
+/// least two distinct spellings, a `when` must include an `else` arm, and an
+/// elvis expression must use the `?:` operator with both operands, otherwise
+/// the whole binding fails closed.
+fn kotlin_scope_lambda_branch_shapes(
     result: Node<'_>,
     locals: &KotlinScopeLocals,
     scope_name: &str,
     param_name: Option<&str>,
     receiver: &str,
     source: &str,
-) -> Result<Option<Vec<String>>> {
-    let mut spellings = Vec::new();
+) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
+    let mut shapes = Vec::new();
     let mut seen = BTreeSet::new();
     if result.kind() == "if_expression" {
         let mut cursor = result.walk();
@@ -1375,33 +1403,39 @@ fn kotlin_scope_lambda_branch_spellings(
         // (an `else if` arm is itself a nested `if_expression`).
         for branch in children.iter().skip(1) {
             if matches!(branch.kind(), "if_expression" | "when_expression") {
-                let Some(nested) = kotlin_scope_lambda_branch_spellings(
+                let Some(nested) = kotlin_scope_lambda_branch_shapes(
                     *branch, locals, scope_name, param_name, receiver, source,
                 )?
                 else {
                     return Ok(None);
                 };
-                for spelling in nested {
-                    if seen.insert(spelling.clone()) {
-                        spellings.push(spelling);
+                for shape in nested {
+                    if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
+                        && seen.insert(spelling)
+                    {
+                        shapes.push(shape);
                     }
                 }
-            } else if let Some(spelling) = kotlin_scope_lambda_branch_spelling(
-                *branch, locals, scope_name, param_name, receiver, source,
-            )? {
-                if seen.insert(spelling.clone()) {
-                    spellings.push(spelling);
-                }
             } else {
-                return Ok(None);
+                let Some(shape) = kotlin_scope_lambda_expression_binding(
+                    *branch, locals, scope_name, param_name, receiver, source,
+                )?
+                else {
+                    return Ok(None);
+                };
+                if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
+                    && seen.insert(spelling)
+                {
+                    shapes.push(shape);
+                }
             }
         }
         // An `if` without an `else` arm (or whose distinct branches collapse
         // to a single spelling) has no value type to bind.
-        if spellings.len() < 2 {
+        if shapes.len() < 2 {
             return Ok(None);
         }
-        return Ok(Some(spellings));
+        return Ok(Some(shapes));
     }
     if result.kind() == "when_expression" {
         let mut cursor = result.walk();
@@ -1417,22 +1451,24 @@ fn kotlin_scope_lambda_branch_spellings(
             let Some(body) = entry_children.last().copied() else {
                 return Ok(None);
             };
-            let Some(spelling) = kotlin_scope_lambda_branch_spelling(
+            let Some(shape) = kotlin_scope_lambda_expression_binding(
                 body, locals, scope_name, param_name, receiver, source,
             )?
             else {
                 return Ok(None);
             };
-            if seen.insert(spelling.clone()) {
-                spellings.push(spelling);
+            if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
+                && seen.insert(spelling)
+            {
+                shapes.push(shape);
             }
         }
         // A `when` used as an expression without an `else` arm has no value
         // type to bind (its type includes `Unit`), so it fails closed.
-        if !has_else || spellings.is_empty() {
+        if !has_else || shapes.is_empty() {
             return Ok(None);
         }
-        return Ok(Some(spellings));
+        return Ok(Some(shapes));
     }
     if result.kind() == "binary_expression" {
         let mut cursor = result.walk();
@@ -1450,17 +1486,88 @@ fn kotlin_scope_lambda_branch_spellings(
             return Ok(None);
         }
         for operand in [children[0], children[1]] {
-            let Some(spelling) = kotlin_scope_lambda_branch_spelling(
+            let Some(shape) = kotlin_scope_lambda_expression_binding(
                 operand, locals, scope_name, param_name, receiver, source,
             )?
             else {
                 return Ok(None);
             };
-            spellings.push(spelling);
+            shapes.push(shape);
         }
-        return Ok(Some(spellings));
+        return Ok(Some(shapes));
     }
     Ok(None)
+}
+
+/// Returns the deduplicated receiver-qualified branch spellings of a
+/// scope-function lambda result that is an `if`/`when` or elvis (`?:`)
+/// expression, such as the `it.make()` and `it.makeAlt()` branches of
+/// `h.let { if (flag) it.make() else it.makeAlt() }`, by mapping each binding
+/// shape of [`kotlin_scope_lambda_branch_shapes`] to its bare spelling.
+fn kotlin_scope_lambda_branch_spellings(
+    result: Node<'_>,
+    locals: &KotlinScopeLocals,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let Some(shapes) = kotlin_scope_lambda_branch_shapes(
+        result, locals, scope_name, param_name, receiver, source,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut spellings = Vec::new();
+    let mut seen = BTreeSet::new();
+    for shape in shapes {
+        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+            return Ok(None);
+        };
+        if seen.insert(spelling.clone()) {
+            spellings.push(spelling);
+        }
+    }
+    if spellings.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(spellings))
+}
+
+/// Expands a scope-function lambda result whose root is a branch local into
+/// the local's branch spellings with the chain suffix applied, so
+/// `g1.items[0].item` over a branch local whose arms are `h.make()` and
+/// `h.makeAlt()` expands to `h.make().items[0].item` and
+/// `h.makeAlt().items[0].item`. A bare result (`g1`) converts each stored
+/// callee back to its bare branch-initializer spelling; a result that does
+/// not root on a branch local returns `None`.
+fn kotlin_scope_lambda_local_branch_spellings(
+    text: &str,
+    locals: &KotlinScopeLocals,
+) -> Option<Vec<String>> {
+    if text.is_empty() {
+        return None;
+    }
+    let root = text.split(['.', '[', '(']).next().unwrap_or_default();
+    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(root) else {
+        return None;
+    };
+    if branches.is_empty() {
+        return None;
+    }
+    let suffix = &text[root.len()..];
+    Some(
+        branches
+            .iter()
+            .map(|branch| {
+                if suffix.is_empty() {
+                    branch.branch_spelling()
+                } else {
+                    branch.with_suffix(suffix)
+                }
+            })
+            .collect(),
+    )
 }
 
 /// Extracts a branch initializer binding from a `val`/`var` declaration whose
@@ -1470,8 +1577,11 @@ fn kotlin_scope_lambda_branch_spellings(
 /// `val first = h.let { when (flag) { true -> it.make().items[0].item; else ->
 /// it.makeAlt().items[0].item } }`, or whose lambda result is exactly a `val`
 /// local with an `if`/`when`/elvis initializer, such as
-/// `val group = h.let { val g1 = if (flag) it.make() else it.makeAlt(); g1 }`.
-/// Each branch is expanded through the lambda's `val` locals and rewritten to
+/// `val group = h.let { val g1 = if (flag) it.make() else it.makeAlt(); g1 }`,
+/// or a chain rooted on such a local, such as
+/// `val first = h.let { val g1 = if (flag) it.make() else it.makeAlt();
+/// g1.items[0].item }`. Each branch is expanded through the lambda's `val`
+/// locals and rewritten to
 /// the receiver-qualified spelling of a direct branch initializer, and the
 /// common type is resolved at trace time through the same branch rules; an
 /// explicitly typed declaration binds through the declared type instead.
@@ -1564,20 +1674,17 @@ fn kotlin_scope_branch_initializer_binding(
             &receiver,
             source,
         )?
-    } else if result.kind() == "identifier" {
-        // A result that is exactly a `val` local whose initializer is an
-        // `if`/`when`/elvis branch expands to the local's branch spellings, so
-        // `h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1 }`
-        // binds through the same branch rules as a direct branch result.
-        let name = node_text(result, source)?.trim().to_string();
-        match locals.get(&name) {
-            Some(KotlinScopeLocalSpelling::Branches(spellings)) if !spellings.is_empty() => {
-                Some(spellings.clone())
-            }
-            _ => None,
-        }
     } else {
-        None
+        // A result that is exactly a `val` local whose initializer is an
+        // `if`/`when`/elvis branch, or a chain rooted on such a local, expands
+        // to the local's branch spellings (each arm converted back to its
+        // branch-initializer spelling, or with the chain suffix applied), so
+        // `h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1 }` and
+        // `h.let { val g1 = if (flag()) it.make() else it.makeAlt();
+        // g1.items[0].item }` bind through the same branch rules as a direct
+        // branch result.
+        let result_text = node_text(result, source)?.trim().to_string();
+        kotlin_scope_lambda_local_branch_spellings(&result_text, &locals)
     }) else {
         return Ok(None);
     };

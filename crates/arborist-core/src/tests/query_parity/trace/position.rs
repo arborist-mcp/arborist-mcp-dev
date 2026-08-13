@@ -53506,3 +53506,109 @@ fn traces_kotlin_scope_function_lambda_branch_local_bindings_in_live_workspace_a
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_chain_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun branchChainLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.items[0].item }\n        return first.helper(1)\n    }\n    fun branchChainRunLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); g1.items[0].item }\n        return first.helper(2)\n    }\n    fun branchChainWithLocal(): Int {\n        val first = with(h) { val g1 = if (flag()) make() else makeAlt(); g1.items[0].item }\n        return first.helper(3)\n    }\n    fun branchChainCallLocal(): Int {\n        val group = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.make() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun branchChainWhenLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.items[0].item }\n        return first.helper(5)\n    }\n    fun branchChainMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) plainH.make() else plainH.makeAlt(); g1.items[0].item }\n        return first.helper(6)\n    }\n    fun branchChainElvisLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.items[0].item }\n        return first.helper(7)\n    }\n    fun branchChainDivergentFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else Item(); g1.items[0].item }\n        return first.helper(8)\n    }\n    fun branchChainNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make(); g1.items[0].item }\n        return first.helper(9)\n    }\n    fun branchChainChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2.items[0].item }\n        return first.helper(10)\n    }\n    fun branchChainUnknownMemberFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.missing().items[0].item }\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda result that walks a chain through a branch local
+    // (`g1.items[0].item` or `g1.make()` over
+    // `val g1 = if (flag()) it.make() else it.makeAlt()`) expands each of the
+    // local's branch spellings with the chain suffix, keeping the call marker
+    // on a factory-callee arm (`h.make()` becomes `h.make().items[0].item`), so
+    // the property binds through the same branch rules as a direct branch
+    // result. This covers `let`, `run`, `with`, a method-call chain base
+    // (`g1.make()`), a `when` branch local, an enclosing-member-rooted branch
+    // local (`val g1 = if (flag()) plainH.make() else plainH.makeAlt(); g1`),
+    // and an elvis local with a nested scope-call arm, all dispatching the
+    // terminal member on the imported `com.lib.Holder` declaration. Divergent
+    // branch types (`it.make()` vs `Item()`), an `if` without an `else` arm,
+    // chained locals referencing the branch local (`val g2 = g1`), and a chain
+    // through an unknown terminal method (`g1.missing()`) all fail closed, so
+    // the seven chain-base branch-local callers in `Util` dispatch on
+    // `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::Util::branchChainLetLocal",
+        "com::example::Util::branchChainRunLocal",
+        "com::example::Util::branchChainWithLocal",
+        "com::example::Util::branchChainCallLocal",
+        "com::example::Util::branchChainWhenLocal",
+        "com::example::Util::branchChainMemberLocal",
+        "com::example::Util::branchChainElvisLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::branchChainDivergentFailsClosed",
+        "com::example::Util::branchChainNoElseFailsClosed",
+        "com::example::Util::branchChainChainedLocalFailsClosed",
+        "com::example::Util::branchChainUnknownMemberFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::Util::branchChainLetLocal",
+        "com::example::Util::branchChainRunLocal",
+        "com::example::Util::branchChainWithLocal",
+        "com::example::Util::branchChainCallLocal",
+        "com::example::Util::branchChainWhenLocal",
+        "com::example::Util::branchChainMemberLocal",
+        "com::example::Util::branchChainElvisLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::branchChainDivergentFailsClosed",
+        "com::example::Util::branchChainNoElseFailsClosed",
+        "com::example::Util::branchChainChainedLocalFailsClosed",
+        "com::example::Util::branchChainUnknownMemberFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
