@@ -59546,3 +59546,162 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_parenthesized_factory_chain_var_initializer_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int fromParensBareChain() {
+        var items = (makeGroup()).GetItems();
+        return items[0].helper(1);
+    }
+    int fromParensThisCondChain() {
+        var items = (this.makeGroup())?.GetItems();
+        return items[0].helper(2);
+    }
+    int fromParensStaticChain() {
+        var items = (Util.MakeGroup()).GetItems();
+        return items[0].helper(3);
+    }
+    int fromNestedParensChain() {
+        var items = ((makeGroup())).GetItems();
+        return items[0].helper(4);
+    }
+    int failures() {
+        var missing = (doesNotExist()).GetItems();
+        return missing[0].helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a parenthesized factory chain such as
+    // `var items = (makeGroup()).GetItems()`, `var items = (this.makeGroup())?.GetItems()`,
+    // or `var items = (Util.MakeGroup()).GetItems()` unwraps the balanced
+    // outer parentheses (including nested parentheses) to the same bare,
+    // `this.`-, or static-type-qualified factory-chain shape as the
+    // unparenthesized form, so an element access on the local dispatches on
+    // the trailing factory return array's element component type, while
+    // unknown leading factories still fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromParensBareChain",
+        "Demo::Caller::fromParensThisCondChain",
+        "Demo::Caller::fromParensStaticChain",
+        "Demo::Caller::fromNestedParensChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromParensBareChain",
+        "Demo::Caller::fromParensThisCondChain",
+        "Demo::Caller::fromParensStaticChain",
+        "Demo::Caller::fromNestedParensChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_parenthesized_factory_chain_var_initializer_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int run() {
+        var items = (makeGroup())?.GetItems();
+        return items[0].helper(1);
+    }
+    int fail() {
+        var items = (doesNotExist())?.GetItems();
+        return items[0].helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
