@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use super::super::c::{CIncludeContext, c_include_context_for_file_before_with_overrides};
+use super::super::c::{
+    CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
+};
 use crate::symbol_index_model::IndexedSymbol;
 
 pub(super) fn cpp_qualified_reference_path_groups(
@@ -8,6 +10,7 @@ pub(super) fn cpp_qualified_reference_path_groups(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Vec<Vec<String>> {
     cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
         .into_iter()
@@ -17,6 +20,7 @@ pub(super) fn cpp_qualified_reference_path_groups(
                 raw_symbols,
                 source_symbol,
                 file_overrides,
+                include_targets_cache,
             )
         })
         .collect()
@@ -27,11 +31,13 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Vec<Vec<String>> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &source_symbol.file_path,
         source_symbol.byte_range.0,
         file_overrides,
+        include_targets_cache,
     )
     .ok();
     let scopes = source_symbol
@@ -84,6 +90,7 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
                                     raw_symbols,
                                     directive,
                                     file_overrides,
+                                    include_targets_cache,
                                 )
                             }),
                     );
@@ -98,6 +105,7 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
                                 raw_symbols,
                                 directive,
                                 file_overrides,
+                                include_targets_cache,
                             )
                         })
                         .map(|path| format!("{path}::{reference_name}")),
@@ -123,11 +131,13 @@ pub(super) fn cpp_qualified_reference_path_group(
     raw_symbols: &[IndexedSymbol],
     visibility_source: &IndexedSymbol,
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Vec<String> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &visibility_source.file_path,
         visibility_source.byte_range.0,
         file_overrides,
+        include_targets_cache,
     )
     .ok();
     let mut pending = VecDeque::from([reference_path]);

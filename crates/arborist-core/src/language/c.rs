@@ -101,16 +101,21 @@ pub fn c_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
     )
 }
 
-pub(crate) fn c_include_targets_before(
+/// Returns each include target with the byte offset of its directive, honoring
+/// the same preprocessor conditions as `c_include_targets`. Callers that need
+/// "before offset" semantics repeatedly for one source can extract this list
+/// once and filter by offset instead of re-parsing and re-walking the tree.
+pub(crate) fn c_include_targets_with_offsets(
     root: Node<'_>,
     source: &str,
-    byte_offset: usize,
-) -> Result<Vec<String>> {
-    include_targets_for_nodes(
-        c_include_target_nodes(root, source, Some(byte_offset))?,
-        source,
-        normalize_include_target,
-    )
+) -> Result<Vec<(usize, String)>> {
+    let mut targets = Vec::new();
+    for include in c_include_target_nodes(root, source, None)? {
+        if let Some(target) = include_target_for_node(include, source, normalize_include_target)? {
+            targets.push((include.start_byte(), target));
+        }
+    }
+    Ok(targets)
 }
 
 fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {

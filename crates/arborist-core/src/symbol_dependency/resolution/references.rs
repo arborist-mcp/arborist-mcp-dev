@@ -3,7 +3,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
+use super::super::c::{
+    CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_with_overrides_and_deadline,
+};
 use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
@@ -148,6 +150,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
@@ -164,6 +167,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         file_overrides,
         languages_by_file,
         include_contexts_by_file,
+        include_targets_cache,
         javascript_import_contexts_by_file,
         go_import_contexts_by_file,
         rust_out_of_line_module_context,
@@ -185,6 +189,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
@@ -252,6 +257,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     semantic_path_index,
                     file_overrides,
                     include_contexts_by_file,
+                    include_targets_cache,
                     javascript_import_contexts_by_file,
                     go_import_contexts_by_file,
                     rust_out_of_line_module_context,
@@ -277,6 +283,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             semantic_path_index,
             file_overrides,
             include_contexts_by_file,
+            include_targets_cache,
             javascript_import_contexts_by_file,
             go_import_contexts_by_file,
             rust_out_of_line_module_context,
@@ -309,6 +316,7 @@ fn resolve_reference_path_with_deadline<'a>(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
@@ -1496,32 +1504,40 @@ fn resolve_reference_path_with_deadline<'a>(
     let scoped_cpp_direct_call =
         language_id == Some(LanguageId::Cpp) && call_arity.is_some() && !qualified_cpp_reference;
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
-        cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols, file_overrides)
-            .into_iter()
-            .find_map(|qualified_paths| {
-                let candidates = symbol_indexes_for_paths_with_template_fallback(
-                    &qualified_paths,
-                    semantic_path_index,
-                );
-                (!candidates.is_empty()).then_some(candidates)
-            })
-            .or_else(|| {
-                cpp_type_alias_member_candidates(
-                    lookup_name,
-                    source_symbol,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                )
-            })
-            .map(|candidates| (candidates, false))
-            .unwrap_or_default()
+        cpp_qualified_reference_path_groups(
+            lookup_name,
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            include_targets_cache,
+        )
+        .into_iter()
+        .find_map(|qualified_paths| {
+            let candidates = symbol_indexes_for_paths_with_template_fallback(
+                &qualified_paths,
+                semantic_path_index,
+            );
+            (!candidates.is_empty()).then_some(candidates)
+        })
+        .or_else(|| {
+            cpp_type_alias_member_candidates(
+                lookup_name,
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                include_targets_cache,
+            )
+        })
+        .map(|candidates| (candidates, false))
+        .unwrap_or_default()
     } else if scoped_cpp_direct_call {
         let scoped_candidates = cpp_unqualified_call_candidate_groups(
             lookup_name,
             source_symbol,
             raw_symbols,
             file_overrides,
+            include_targets_cache,
         )
         .into_iter()
         .find_map(|paths| {
@@ -1634,6 +1650,7 @@ fn resolve_reference_path_with_deadline<'a>(
             raw_symbols,
             semantic_path_index,
             file_overrides,
+            include_targets_cache,
         );
         let callable_candidates = hinted_candidates
             .iter()
@@ -16179,6 +16196,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::resolve_dependencies_for_symbol_with_deadline;
+    use crate::symbol_dependency::c::CIncludeTargetsCache;
     use crate::symbol_dependency::rust::RustOutOfLineModuleContext;
     use crate::symbol_index_model::IndexedSymbol;
     use crate::workspace_scan::WorkspaceScanDeadline;
@@ -16216,6 +16234,7 @@ mod tests {
             None,
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
+            &mut CIncludeTargetsCache::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &RustOutOfLineModuleContext::default(),

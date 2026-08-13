@@ -7,6 +7,7 @@ use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
+use super::super::c::CIncludeTargetsCache;
 use super::super::csharp::csharp_global_import_context_for_files_with_overrides_and_deadline;
 use super::super::rust::rust_out_of_line_module_context_for_files_with_overrides_and_deadline;
 use super::indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
@@ -30,6 +31,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
     let mut include_contexts_by_file = HashMap::new();
+    let mut include_targets_cache = CIncludeTargetsCache::new();
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
@@ -62,6 +64,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 file_overrides,
                 &mut languages_by_file,
                 &mut include_contexts_by_file,
+                &mut include_targets_cache,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &rust_out_of_line_module_context,
@@ -124,6 +127,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
     let mut include_contexts_by_file = HashMap::new();
+    let mut include_targets_cache = CIncludeTargetsCache::new();
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
@@ -155,6 +159,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 file_overrides,
                 &mut languages_by_file,
                 &mut include_contexts_by_file,
+                &mut include_targets_cache,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &rust_out_of_line_module_context,

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::c::CIncludeContext;
+use super::c::{CIncludeContext, CIncludeTargetsCache};
 use super::csharp::{
     CSharpImportContext, csharp_global_import_context_for_files_with_overrides_and_deadline,
 };
@@ -86,6 +86,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     let mut resolved_map = old_resolved_map.clone();
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
     let mut include_contexts_by_file: HashMap<&str, Option<CIncludeContext>> = HashMap::new();
+    let mut include_targets_cache = CIncludeTargetsCache::new();
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::<String, GoImportContext>::new();
     let mut java_import_contexts_by_file = BTreeMap::<String, JavaImportContext>::new();
@@ -122,6 +123,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 file_overrides,
                 &mut languages_by_file,
                 &mut include_contexts_by_file,
+                &mut include_targets_cache,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &rust_out_of_line_module_context,

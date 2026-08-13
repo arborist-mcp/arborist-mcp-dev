@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
-use super::super::c::{CIncludeContext, c_include_context_for_file_before_with_overrides};
+use super::super::c::{
+    CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
+};
 use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
@@ -21,21 +23,26 @@ pub(super) fn cpp_type_alias_member_candidates(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Option<Vec<usize>> {
     let (alias_name, member_name) = reference_name.rsplit_once("::")?;
-    let alias_indexes =
-        cpp_qualified_reference_path_groups(alias_name, source_symbol, raw_symbols, file_overrides)
-            .into_iter()
-            .flat_map(|paths| {
-                symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index)
-            })
-            .collect::<Vec<_>>();
+    let alias_indexes = cpp_qualified_reference_path_groups(
+        alias_name,
+        source_symbol,
+        raw_symbols,
+        file_overrides,
+        include_targets_cache,
+    )
+    .into_iter()
+    .flat_map(|paths| symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index))
+    .collect::<Vec<_>>();
     let member_paths = cpp_type_alias_target_indexes(
         &alias_indexes,
         source_symbol,
         raw_symbols,
         semantic_path_index,
         file_overrides,
+        include_targets_cache,
     )
     .into_iter()
     .map(|index| format!("{}::{member_name}", raw_symbols[index].semantic_path))
@@ -58,11 +65,13 @@ pub(super) fn cpp_type_alias_target_indexes(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Vec<usize> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &source_symbol.file_path,
         source_symbol.byte_range.0,
         file_overrides,
+        include_targets_cache,
     )
     .ok();
     let mut pending = candidates
@@ -89,8 +98,13 @@ pub(super) fn cpp_type_alias_target_indexes(
         };
 
         for path in cpp_lexical_qualified_reference_paths(&target, alias) {
-            for path in cpp_qualified_reference_path_group(path, raw_symbols, alias, file_overrides)
-            {
+            for path in cpp_qualified_reference_path_group(
+                path,
+                raw_symbols,
+                alias,
+                file_overrides,
+                include_targets_cache,
+            ) {
                 for target_index in
                     symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
                 {

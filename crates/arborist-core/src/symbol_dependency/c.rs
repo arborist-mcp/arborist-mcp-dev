@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use anyhow::Result;
 
 use crate::language::{
-    c_companion_source_path, c_include_targets, c_include_targets_before, detect_language,
+    c_companion_source_path, c_include_targets, c_include_targets_with_offsets, detect_language,
     is_c_header_path, normalize_path, parse_document, parse_document_with_timeout, read_source,
     resolve_local_c_include,
 };
@@ -66,10 +66,27 @@ pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
     })
 }
 
+/// A per-resolution-pass cache of each parsed C/C++ source file's include
+/// targets (with their byte offsets). Resolution walks the same overlay or
+/// indexed file once per reference; memoizing the parse here avoids re-parsing
+/// the same source hundreds of times per pass (the parse dominated C++ overlay
+/// trace cost).
+#[derive(Default)]
+pub(crate) struct CIncludeTargetsCache {
+    by_file: HashMap<String, Vec<(usize, String)>>,
+}
+
+impl CIncludeTargetsCache {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+}
+
 pub(crate) fn c_include_context_for_file_before_with_overrides(
     file_path: &str,
     byte_offset: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_targets_cache: &mut CIncludeTargetsCache,
 ) -> Result<CIncludeContext> {
     let path = Path::new(file_path);
     if !matches!(
@@ -79,11 +96,10 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
         return Ok(CIncludeContext::default());
     }
 
-    let source = source_for_path(path, file_overrides)?;
-    let document = parse_document(path, &source)?;
     let mut include_paths = BTreeSet::new();
     let mut visited = BTreeSet::from([normalize_path(path)]);
-    for include_target in c_include_targets_before(document.tree.root_node(), &source, byte_offset)?
+    for include_target in
+        c_include_targets_before_cached(path, file_overrides, byte_offset, include_targets_cache)?
     {
         let Some(include_path) =
             resolve_local_c_include_with_overrides(path, &include_target, file_overrides)
@@ -114,6 +130,26 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
         include_paths,
         companion_source_paths,
     })
+}
+
+fn c_include_targets_before_cached(
+    path: &Path,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    byte_offset: usize,
+    include_targets_cache: &mut CIncludeTargetsCache,
+) -> Result<Vec<String>> {
+    let key = normalize_path(path);
+    if !include_targets_cache.by_file.contains_key(&key) {
+        let source = source_for_path(path, file_overrides)?;
+        let document = parse_document(path, &source)?;
+        let targets = c_include_targets_with_offsets(document.tree.root_node(), &source)?;
+        include_targets_cache.by_file.insert(key.clone(), targets);
+    }
+    Ok(include_targets_cache.by_file[&key]
+        .iter()
+        .filter(|(offset, _)| *offset < byte_offset)
+        .map(|(_, target)| target.clone())
+        .collect())
 }
 
 pub(super) fn c_symbol_family_anchor(
@@ -245,7 +281,10 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
 
-    use super::c_include_context_for_file_with_overrides;
+    use super::{
+        CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
+        c_include_context_for_file_with_overrides,
+    };
     use crate::language::{normalize_path, write_source_atomic};
 
     #[test]
@@ -279,6 +318,82 @@ mod tests {
                 .include_paths
                 .contains(&normalize_path(&header_path))
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn include_context_before_offset_memoizes_parse_across_calls() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-c-include-before-cache-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temporary include workspace should be created");
+        let source_path = root.join("main.c");
+        let first_header = root.join("first.h");
+        let second_header = root.join("second.h");
+        let source = "#include \"first.h\"\nint before(void) { return 0; }\n#include \"second.h\"\nint after(void) { return 0; }\n";
+        write_source_atomic(&source_path, source).expect("source should be written");
+        write_source_atomic(&first_header, "#define FIRST 1\n").expect("first header");
+        write_source_atomic(&second_header, "#define SECOND 1\n").expect("second header");
+
+        let normalized_source = normalize_path(&source_path);
+        let before_offset = source.find("int before").expect("before symbol");
+        let after_offset = source.find("int after").expect("after symbol");
+        let mut cache = CIncludeTargetsCache::new();
+
+        let before = c_include_context_for_file_before_with_overrides(
+            &normalized_source,
+            before_offset,
+            None,
+            &mut cache,
+        )
+        .expect("before include context should load");
+        assert!(
+            before
+                .include_paths
+                .contains(&normalize_path(&first_header))
+        );
+        assert!(
+            !before
+                .include_paths
+                .contains(&normalize_path(&second_header))
+        );
+
+        let after = c_include_context_for_file_before_with_overrides(
+            &normalized_source,
+            after_offset,
+            None,
+            &mut cache,
+        )
+        .expect("after include context should load");
+        assert!(after.include_paths.contains(&normalize_path(&first_header)));
+        assert!(
+            after
+                .include_paths
+                .contains(&normalize_path(&second_header))
+        );
+
+        // A fresh cache still returns the same per-offset visibility.
+        let mut fresh_cache = CIncludeTargetsCache::new();
+        let fresh_before = c_include_context_for_file_before_with_overrides(
+            &normalized_source,
+            before_offset,
+            None,
+            &mut fresh_cache,
+        )
+        .expect("fresh before include context should load");
+        assert!(
+            fresh_before
+                .include_paths
+                .contains(&normalize_path(&first_header))
+        );
+        assert!(
+            !fresh_before
+                .include_paths
+                .contains(&normalize_path(&second_header))
+        );
+
         let _ = fs::remove_dir_all(&root);
     }
 }
