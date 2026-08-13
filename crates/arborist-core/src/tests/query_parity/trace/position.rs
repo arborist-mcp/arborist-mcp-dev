@@ -54277,15 +54277,17 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
     // member, a chain stored as a local then consumed (`val g2 = ...; g2`),
     // and a branch arm that uses the `apply` navigation, all dispatching the
     // terminal member on the imported `com.lib.Item` declaration. A
-    // `let`/`run`/`with` scope call with a trailing member chain, a chain
-    // through an unknown terminal method (`g1.apply { this }.missing()...`),
-    // chained bare locals (`val g2 = g1`), and a branch local without an
-    // `else` arm fail closed, so the seven apply-navigation callers in `Util`
-    // dispatch on `com::lib::Item::helper`.
+    // `let`/`run`/`with` scope call with a trailing member chain
+    // (`g1.let { g -> g.make() }.items[0].item`) binds through the later
+    // scope-call-navigation slice, so it is also a positive caller here. A
+    // chain through an unknown terminal method
+    // (`g1.apply { this }.missing()...`), chained bare locals (`val g2 = g1`),
+    // and a branch local without an `else` arm fail closed, so the eight
+    // apply-navigation callers in `Util` dispatch on `com::lib::Item::helper`.
     let item_path = "com::lib::Item::helper";
     let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.symbol.symbol_id, item_path);
-    assert_eq!(live.callers.len(), 7);
+    assert_eq!(live.callers.len(), 8);
     for caller in [
         "com::example::Util::applyNavLetLocal",
         "com::example::Util::alsoNavLetLocal",
@@ -54294,6 +54296,7 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
         "com::example::Util::applyNavBareLocal",
         "com::example::Util::applyNavLocalLocal",
         "com::example::Util::applyNavArmLocal",
+        "com::example::Util::applyNavLetChainFailsClosed",
     ] {
         assert!(
             live.callers
@@ -54303,7 +54306,6 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
         );
     }
     for caller in [
-        "com::example::Util::applyNavLetChainFailsClosed",
         "com::example::Util::applyNavUnknownMethodFailsClosed",
         "com::example::Util::applyNavChainedLocalFailsClosed",
         "com::example::Util::applyNavNoElseFailsClosed",
@@ -54320,7 +54322,7 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 7);
+    assert_eq!(persisted.callers.len(), 8);
     for caller in [
         "com::example::Util::applyNavLetLocal",
         "com::example::Util::alsoNavLetLocal",
@@ -54329,6 +54331,7 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
         "com::example::Util::applyNavBareLocal",
         "com::example::Util::applyNavLocalLocal",
         "com::example::Util::applyNavArmLocal",
+        "com::example::Util::applyNavLetChainFailsClosed",
     ] {
         assert!(
             persisted
@@ -54339,10 +54342,116 @@ fn traces_kotlin_scope_function_lambda_branch_local_apply_navigation_bindings_in
         );
     }
     for caller in [
-        "com::example::Util::applyNavLetChainFailsClosed",
         "com::example::Util::applyNavUnknownMethodFailsClosed",
         "com::example::Util::applyNavChainedLocalFailsClosed",
         "com::example::Util::applyNavNoElseFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    fun flag(): Boolean = true\n    fun letNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(1)\n    }\n    fun runNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.run { make() }.items[0].item }\n        return first.helper(2)\n    }\n    fun withNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); with(g1) { make() }.items[0].item }\n        return first.helper(3)\n    }\n    fun letNavRunOuterLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(4)\n    }\n    fun letNavMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) plainH.make() else plainH.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(5)\n    }\n    fun letNavLocalLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1.let { g -> g.make() }.items[0].item; g2 }\n        return first.helper(6)\n    }\n    fun letNavArmLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); if (flag()) g1.let { g -> g.make() }.items[0].item else g1.items[0].item }\n        return first.helper(7)\n    }\n    fun letNavUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make() }.missing().items[0].item }\n        return first.helper(8)\n    }\n    fun letNavChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2.let { g -> g.make() }.items[0].item }\n        return first.helper(9)\n    }\n    fun letNavNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(10)\n    }\n    fun letNavNestedNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> if (flag()) g.make() }.items[0].item }\n        return first.helper(11)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda result that chains a result-bearing
+    // scope-function call (`let`/`run`/`with`) over a branch-local receiver
+    // into a trailing member chain, such as `g1.let { g -> g.make()
+    // }.items[0].item` over `val g1 = if (flag()) it.make() else
+    // it.makeAlt()`, expands the nested call once per branch arm and applies
+    // the trailing navigation suffix per arm, so the outer initializer binds
+    // through the local's branch spellings. This covers `let`, `run`, and
+    // `with` bodies, a branch local inside a `run` outer, an
+    // enclosing-member-rooted branch local, a chain stored as a local then
+    // consumed (`val g2 = ...; g2`), and a branch arm that uses the
+    // scope-call navigation, all dispatching the terminal member on the
+    // imported `com.lib.Item` declaration. A chain through an unknown
+    // terminal method (`g1.let { ... }.missing()...`), chained bare locals
+    // (`val g2 = g1`), a branch local without an `else` arm, and a nested
+    // scope-call body without an `else` arm fail closed, so the seven
+    // scope-call-navigation callers in `Util` dispatch on
+    // `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "com::example::Util::letNavLetLocal",
+        "com::example::Util::runNavLetLocal",
+        "com::example::Util::withNavLetLocal",
+        "com::example::Util::letNavRunOuterLocal",
+        "com::example::Util::letNavMemberLocal",
+        "com::example::Util::letNavLocalLocal",
+        "com::example::Util::letNavArmLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::letNavUnknownMethodFailsClosed",
+        "com::example::Util::letNavChainedLocalFailsClosed",
+        "com::example::Util::letNavNoElseFailsClosed",
+        "com::example::Util::letNavNestedNoElseFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "com::example::Util::letNavLetLocal",
+        "com::example::Util::runNavLetLocal",
+        "com::example::Util::withNavLetLocal",
+        "com::example::Util::letNavRunOuterLocal",
+        "com::example::Util::letNavMemberLocal",
+        "com::example::Util::letNavLocalLocal",
+        "com::example::Util::letNavArmLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::letNavUnknownMethodFailsClosed",
+        "com::example::Util::letNavChainedLocalFailsClosed",
+        "com::example::Util::letNavNoElseFailsClosed",
+        "com::example::Util::letNavNestedNoElseFailsClosed",
     ] {
         assert!(
             !persisted
