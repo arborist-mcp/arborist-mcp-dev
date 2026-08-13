@@ -53716,3 +53716,111 @@ fn traces_kotlin_scope_function_lambda_branch_result_branch_local_bindings_in_li
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_scope_call_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun branchScopeCallLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.items[0].item } }\n        return first.helper(1)\n    }\n    fun branchScopeCallRunLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.run { items[0].item } }\n        return first.helper(2)\n    }\n    fun branchScopeCallWithLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); with(g1) { items[0].item } }\n        return first.helper(3)\n    }\n    fun branchScopeCallMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) plainH.make() else plainH.makeAlt(); g1.let { g -> g.items[0].item } }\n        return first.helper(4)\n    }\n    fun branchScopeCallElvisLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> g.items[0].item } }\n        return first.helper(5)\n    }\n    fun branchScopeCallParamLocal(): Int {\n        val first = h.let { holder -> val g1 = if (flag()) holder.make() else holder.makeAlt(); g1.let { g -> g.items[0].item } }\n        return first.helper(6)\n    }\n    fun branchScopeCallChainArmLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.make().items[0].item } }\n        return first.helper(7)\n    }\n    fun branchScopeCallRunOuterLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); g1.let { g -> g.items[0].item } }\n        return first.helper(8)\n    }\n    fun branchScopeCallUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> g.missing().items[0].item } }\n        return first.helper(9)\n    }\n    fun branchScopeCallChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); val g2 = g1; g2.let { g -> g.items[0].item } }\n        return first.helper(10)\n    }\n    fun branchScopeCallNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make(); g1.let { g -> g.items[0].item } }\n        return first.helper(11)\n    }\n    fun branchScopeCallDivergentFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else Item(); g1.let { g -> g.items[0].item } }\n        return first.helper(12)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda result that is itself a scope-function call on
+    // a branch-local receiver (`g1.let { g -> g.items[0].item }` over
+    // `val g1 = if (flag()) it.make() else it.makeAlt()`) binds the nested
+    // lambda against each of the local's branch spellings as the receiver, so
+    // the outer initializer binds through the local's branch arms. This
+    // covers `let`, `run`, `with(g1)`, an enclosing-member-rooted branch
+    // local, an elvis local with a nested scope-call arm, an explicit outer
+    // parameter, a chain through a nested factory call (`g.make()`), and a
+    // branch local inside a `run` outer, all dispatching the terminal member
+    // on the imported `com.lib.Item` declaration. A chain through an unknown
+    // terminal method (`g.missing().items[0].item`) and divergent branch
+    // types (`it.make()` vs `Item()`) fail closed at trace time, while
+    // chained locals referencing the branch local (`val g2 = g1`) and a
+    // branch local without an `else` arm fail closed at index time, so the
+    // eight branch-local scope-call callers in `Util` dispatch on
+    // `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::branchScopeCallLetLocal",
+        "com::example::Util::branchScopeCallRunLocal",
+        "com::example::Util::branchScopeCallWithLocal",
+        "com::example::Util::branchScopeCallMemberLocal",
+        "com::example::Util::branchScopeCallElvisLocal",
+        "com::example::Util::branchScopeCallParamLocal",
+        "com::example::Util::branchScopeCallChainArmLocal",
+        "com::example::Util::branchScopeCallRunOuterLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::branchScopeCallUnknownMethodFailsClosed",
+        "com::example::Util::branchScopeCallChainedLocalFailsClosed",
+        "com::example::Util::branchScopeCallNoElseFailsClosed",
+        "com::example::Util::branchScopeCallDivergentFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::branchScopeCallLetLocal",
+        "com::example::Util::branchScopeCallRunLocal",
+        "com::example::Util::branchScopeCallWithLocal",
+        "com::example::Util::branchScopeCallMemberLocal",
+        "com::example::Util::branchScopeCallElvisLocal",
+        "com::example::Util::branchScopeCallParamLocal",
+        "com::example::Util::branchScopeCallChainArmLocal",
+        "com::example::Util::branchScopeCallRunOuterLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::branchScopeCallUnknownMethodFailsClosed",
+        "com::example::Util::branchScopeCallChainedLocalFailsClosed",
+        "com::example::Util::branchScopeCallNoElseFailsClosed",
+        "com::example::Util::branchScopeCallDivergentFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}

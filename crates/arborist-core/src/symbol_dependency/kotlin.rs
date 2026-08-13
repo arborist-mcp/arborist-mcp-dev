@@ -1642,6 +1642,91 @@ fn kotlin_scope_lambda_branch_arm_shapes(
     Ok(Some(vec![shape]))
 }
 
+/// Binds a scope-function lambda result that is itself a scope-function call
+/// on a branch-local receiver, such as the `g1.let { g -> g.items[0].item }`
+/// of `h.let { val g1 = if (flag()) it.make() else it.makeAlt();
+/// g1.let { g -> g.items[0].item } }`, by binding the nested lambda once per
+/// branch arm with the arm's receiver spelling (a factory-callee arm keeps
+/// its call marker so the nested chain walks the hop as a call), so the outer
+/// initializer binds through the local's branch spellings. `apply`/`also`
+/// outers, receivers that are not branch locals, malformed calls or lambdas,
+/// and arms that cannot bind fail closed.
+fn kotlin_scope_branch_local_scope_call_spellings(
+    call: Node<'_>,
+    locals: &KotlinScopeLocals,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    if call.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let mut cursor = call.walk();
+    let children = call.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 {
+        return Ok(None);
+    }
+    let Some(lambda) = children
+        .iter()
+        .find(|child| child.kind() == "annotated_lambda")
+        .copied()
+    else {
+        return Ok(None);
+    };
+    let Some((receiver_text, scope_name)) = kotlin_scope_function_callee(children[0], source)?
+    else {
+        return Ok(None);
+    };
+    if !matches!(scope_name.as_str(), "let" | "run" | "with") {
+        return Ok(None);
+    }
+    // The nested receiver must name a branch local so the lambda binds once
+    // per arm; any other receiver falls through to the caller's rules.
+    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(&receiver_text) else {
+        return Ok(None);
+    };
+    if branches.is_empty() {
+        return Ok(None);
+    }
+    let Some((param_name, statements, result)) = kotlin_scope_lambda_body(lambda, source)? else {
+        return Ok(None);
+    };
+    let mut spellings = Vec::new();
+    let mut seen = BTreeSet::new();
+    for branch in branches {
+        let receiver = branch.with_suffix("");
+        let Some(nested_locals) = kotlin_scope_lambda_locals(
+            &statements,
+            source,
+            &scope_name,
+            param_name.as_deref(),
+            &receiver,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(shape) = kotlin_scope_lambda_expression_binding(
+            result,
+            &nested_locals,
+            &scope_name,
+            param_name.as_deref(),
+            &receiver,
+            source,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(spelling) = kotlin_scope_function_binding_spelling(&shape) else {
+            return Ok(None);
+        };
+        if seen.insert(spelling.clone()) {
+            spellings.push(spelling);
+        }
+    }
+    if spellings.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(spellings))
+}
+
 /// Extracts a branch initializer binding from a `val`/`var` declaration whose
 /// initializer is a scope-function call whose lambda result is an `if`/`when`
 /// or elvis (`?:`) expression, such as
@@ -1746,6 +1831,15 @@ fn kotlin_scope_branch_initializer_binding(
             &receiver,
             source,
         )?
+    } else if let Some(scope_call_branches) =
+        kotlin_scope_branch_local_scope_call_spellings(result, &locals, source)?
+    {
+        // A result that is itself a scope-function call on a branch-local
+        // receiver, such as `g1.let { g -> g.items[0].item }` over
+        // `val g1 = if (flag()) it.make() else it.makeAlt()`, binds the
+        // nested lambda once per branch arm so the outer initializer binds
+        // through the local's branch spellings.
+        Some(scope_call_branches)
     } else {
         // A result that is exactly a `val` local whose initializer is an
         // `if`/`when`/elvis branch, or a chain rooted on such a local, expands
