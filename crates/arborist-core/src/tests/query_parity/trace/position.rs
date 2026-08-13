@@ -54900,3 +54900,117 @@ fn traces_kotlin_scope_function_lambda_branch_local_when_elvis_scope_call_naviga
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_when_elvis_nested_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun whenNestedNavLetLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(1)\n    }\n    fun whenNestedNavElvisInnerLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = nullableH?.let { it.make() } ?: g.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(2)\n    }\n    fun elvisNestedNavLetLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(3)\n    }\n    fun whenNestedNavRunOuterLocal(): Int {\n        val first = h.run { val g1 = when (flag()) { true -> make(); else -> makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(4)\n    }\n    fun whenNestedNavMemberLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> plainH.make(); else -> plainH.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(5)\n    }\n    fun elvisNestedNavApplyLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.apply { this }.items[0].item } }\n        return first.helper(6)\n    }\n    fun whenNestedNavLocalLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; val g3 = g2.let { g3b -> g3b.make() }.items[0].item; g3 } }\n        return first.helper(7)\n    }\n    fun whenNestedNavArmLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; if (flag()) g2.let { g3 -> g3.make() }.items[0].item else g2.items[0].item } }\n        return first.helper(8)\n    }\n    fun nullableReceiverNavLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1?.let { g -> g.make() }.items[0].item }\n        return first.helper(9)\n    }\n    fun whenNestedNavNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(10)\n    }\n    fun elvisNestedNavUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; g2.let { g3 -> g3.make() }.missing().items[0].item } }\n        return first.helper(11)\n    }\n    fun whenNestedNavChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> g.makeAlt() }; val g3 = g2; g3.let { g4 -> g4.make() }.items[0].item } }\n        return first.helper(12)\n    }\n    fun whenNestedNavDivergentFailsClosed(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> val g2 = when (flag()) { true -> g.make(); else -> Item() }; g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(13)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch local whose initializer is a `when`
+    // expression or an elvis (`?:`) expression, with a nested scope-call body
+    // that itself declares a nested branch local (`val g2 = when ...` or
+    // `val g2 = nullableH?.let { it.make() } ?: ...`) and consumes it through
+    // a scope-call / apply navigation with a trailing member chain, expands
+    // every branch local once per arm through the same branch rules as an
+    // `if` branch local, so the outer initializer binds through the cross
+    // product of the outer and nested when/elvis arms. This covers a `when`
+    // outer with a `when` or elvis inner, an elvis outer with a `when` inner,
+    // a `when` branch local inside a `run` outer, an enclosing-member-rooted
+    // `when` branch local, an `apply` navigation on the nested result, a
+    // chain stored as a local then consumed (`val g3 = ...; g3`), a branch
+    // arm that uses the nested scope-call navigation, and a nullable receiver
+    // on the branch local (`g1?.let { g -> g.make() }.items[0].item`), all
+    // dispatching the terminal member on the imported `com.lib.Item`
+    // declaration. A nested `when` without an `else` arm, a chain through an
+    // unknown terminal method, chained bare locals (`val g3 = g2`), and
+    // divergent nested branch types fail closed, so the nine when/elvis
+    // nested scope-call-navigation callers in `Util` dispatch on
+    // `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::whenNestedNavLetLocal",
+        "com::example::Util::whenNestedNavElvisInnerLocal",
+        "com::example::Util::elvisNestedNavLetLocal",
+        "com::example::Util::whenNestedNavRunOuterLocal",
+        "com::example::Util::whenNestedNavMemberLocal",
+        "com::example::Util::elvisNestedNavApplyLocal",
+        "com::example::Util::whenNestedNavLocalLocal",
+        "com::example::Util::whenNestedNavArmLocal",
+        "com::example::Util::nullableReceiverNavLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::whenNestedNavNoElseFailsClosed",
+        "com::example::Util::elvisNestedNavUnknownMethodFailsClosed",
+        "com::example::Util::whenNestedNavChainedLocalFailsClosed",
+        "com::example::Util::whenNestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::whenNestedNavLetLocal",
+        "com::example::Util::whenNestedNavElvisInnerLocal",
+        "com::example::Util::elvisNestedNavLetLocal",
+        "com::example::Util::whenNestedNavRunOuterLocal",
+        "com::example::Util::whenNestedNavMemberLocal",
+        "com::example::Util::elvisNestedNavApplyLocal",
+        "com::example::Util::whenNestedNavLocalLocal",
+        "com::example::Util::whenNestedNavArmLocal",
+        "com::example::Util::nullableReceiverNavLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::whenNestedNavNoElseFailsClosed",
+        "com::example::Util::elvisNestedNavUnknownMethodFailsClosed",
+        "com::example::Util::whenNestedNavChainedLocalFailsClosed",
+        "com::example::Util::whenNestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
