@@ -41,12 +41,13 @@ pub(in crate::symbol_dependency) struct CSharpReceiverTypeBindings {
     /// closed.
     array_component_types: BTreeMap<String, String>,
     /// `var` locals bound from an element-access initializer such as
-    /// `var first = items[0]` record the base spelling and call arity so the
-    /// local resolves to the base array's element component type;
-    /// factory-call bases carry the call's argument count. Multi-dimensional
-    /// and other unsupported initializer shapes leave the map empty and fail
-    /// closed.
-    element_access_initializers_by_name: BTreeMap<String, (String, usize)>,
+    /// `var first = items[0]` record the base spelling, call arity, and
+    /// element-access depth so the local resolves to the base array's element
+    /// component type; factory-call bases carry the call's argument count,
+    /// and a jagged initializer such as `var first = matrix[0][0]` records a
+    /// depth of two. Unsupported initializer shapes leave the map empty and
+    /// fail closed.
+    element_access_initializers_by_name: BTreeMap<String, (String, usize, usize)>,
     /// Names of members declared `static` on a type. Only member bindings
     /// (per-type fields, properties, and events) populate this set; local
     /// receiver bindings leave it empty so instance dispatch never consults
@@ -93,19 +94,20 @@ impl CSharpReceiverTypeBindings {
             .cloned()
     }
 
-    /// Returns the array-typed base spelling and call arity for a `var`
-    /// local bound from an element-access initializer such as
-    /// `var first = items[0]` or `var first = makeItems()[0]`, which resolves
-    /// to the base array's element component type; factory-call bases carry
-    /// the call's argument count. Names without an element-access initializer
-    /// return `None`.
+    /// Returns the array-typed base spelling, call arity, and element-access
+    /// depth for a `var` local bound from an element-access initializer such
+    /// as `var first = items[0]` or `var first = matrix[0][0]`, which
+    /// resolves to the base array's element component type; factory-call
+    /// bases carry the call's argument count, and the depth counts how many
+    /// element-component layers the initializer strips. Names without an
+    /// element-access initializer return `None`.
     pub(in crate::symbol_dependency) fn element_access_base_for(
         &self,
         name: &str,
-    ) -> Option<(String, usize)> {
+    ) -> Option<(String, usize, usize)> {
         self.element_access_initializers_by_name
             .get(name)
-            .filter(|(base_name, _)| !base_name.is_empty())
+            .filter(|(base_name, _, _)| !base_name.is_empty())
             .cloned()
     }
 
@@ -703,7 +705,7 @@ fn collect_csharp_function_bindings(
                                 csharp_var_initializer_type_binding(node, source, bindings)?
                             {
                                 Some(type_name)
-                            } else if let Some((base_spelling, call_arity)) =
+                            } else if let Some((base_spelling, call_arity, depth)) =
                                 csharp_initializer_element_access_from_declarator(node, source)?
                             {
                                 insert_csharp_element_access_initializer(
@@ -711,6 +713,7 @@ fn collect_csharp_function_bindings(
                                     name,
                                     base_spelling,
                                     call_arity,
+                                    depth,
                                 );
                                 None
                             } else {
@@ -790,18 +793,19 @@ fn csharp_var_initializer_type_binding(
 
 /// Records a `var` local whose initializer is an element access such as
 /// `var first = items[0]`, returning the array-typed base spelling and call
-/// arity so the local resolves to the base array's element component type.
-/// Plain-identifier bases such as `items`, `local`, or a bare enclosing-class
-/// field name and member-access bases such as `this.fieldItems` or
-/// `group.holder.fieldItems` record the spelling with arity zero; factory-call
-/// bases such as `makeItems()` or `Util.makeItems()` record the reference with
-/// a trailing `()` marker and the call's argument count. Multi-dimensional
-/// element access and other initializer shapes record nothing and fail
+/// arity, and element-access depth so the local resolves to the base array's
+/// element component type. Plain-identifier bases such as `items`, `local`,
+/// or a bare enclosing-class field name and member-access bases such as
+/// `this.fieldItems` or `group.holder.fieldItems` record the spelling with
+/// arity zero and depth one; factory-call bases such as `makeItems()` or
+/// `Util.makeItems()` record the reference with a trailing `()` marker and
+/// the call's argument count, and a jagged base such as `matrix[0][0]`
+/// records depth two. Unsupported initializer shapes record nothing and fail
 /// closed. Mirrors the extractor's element-access binding rules.
 fn csharp_initializer_element_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
-) -> Result<Option<(String, usize)>> {
+) -> Result<Option<(String, usize, usize)>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
     };
@@ -817,7 +821,20 @@ fn csharp_initializer_element_access_from_declarator(
     if initializer.kind() != "element_access_expression" {
         return Ok(None);
     }
-    let Some(mut array) = initializer.child_by_field_name("expression") else {
+    csharp_element_access_base_binding(initializer, source)
+}
+
+/// Resolves the base spelling, call arity, and element-access depth of an
+/// element-access initializer root such as `items[0]` (depth one),
+/// `matrix[0][0]` (depth two), `makeItems()[0]`, or `(this.fieldItems)[0]`.
+/// A nested element-access base recurses and increments the depth, and a
+/// parenthesized base array unwraps to the same shape as the unparenthesized
+/// form. Unsupported base shapes return `None` and fail closed.
+fn csharp_element_access_base_binding(
+    element_access: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<(String, usize, usize)>> {
+    let Some(mut array) = element_access.child_by_field_name("expression") else {
         return Ok(None);
     };
     // A parenthesized base array such as `(Util.makeItems())` in
@@ -828,6 +845,16 @@ fn csharp_initializer_element_access_from_declarator(
             return Ok(None);
         };
         array = inner;
+    }
+    if array.kind() == "element_access_expression" {
+        // A jagged element access such as `matrix[0][0]` nests element-access
+        // nodes; recurse into the inner access and count one more layer.
+        let Some((base_spelling, call_arity, depth)) =
+            csharp_element_access_base_binding(array, source)?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some((base_spelling, call_arity, depth + 1)));
     }
     let (base_spelling, call_arity) = match array.kind() {
         "identifier" | "member_access_expression" => {
@@ -862,7 +889,7 @@ fn csharp_initializer_element_access_from_declarator(
     if base_spelling.is_empty() {
         return Ok(None);
     }
-    Ok(Some((base_spelling, call_arity)))
+    Ok(Some((base_spelling, call_arity, 1)))
 }
 
 /// Infers a receiver type binding from an initializer expression, unwrapping
@@ -1205,22 +1232,25 @@ fn csharp_insert_receiver_binding(
     }
 }
 
-/// Records the element-access initializer base spelling and call arity for a
-/// `var` local bound from an element access such as `var first = items[0]` or
-/// `var first = makeItems()[0]`. Repeated declarations overwrite the recorded
-/// base so the latest binding wins, matching the other C# local-binding rules.
+/// Records the element-access initializer base spelling, call arity, and
+/// element-access depth for a `var` local bound from an element access such
+/// as `var first = items[0]`, `var first = makeItems()[0]`, or
+/// `var first = matrix[0][0]` (depth two). Repeated declarations overwrite
+/// the recorded base so the latest binding wins, matching the other C#
+/// local-binding rules.
 fn insert_csharp_element_access_initializer(
     bindings: &mut CSharpReceiverTypeBindings,
     name: &str,
     base_spelling: String,
     call_arity: usize,
+    depth: usize,
 ) {
     if name.is_empty() {
         return;
     }
     bindings
         .element_access_initializers_by_name
-        .insert(name.to_string(), (base_spelling, call_arity));
+        .insert(name.to_string(), (base_spelling, call_arity, depth));
 }
 
 /// Extracts the element component type from an array spelling such as
@@ -1279,6 +1309,60 @@ pub(in crate::symbol_dependency) fn csharp_array_type_component_name(text: &str)
         return None;
     }
     Some(component.to_string())
+}
+
+/// Strips one element-component layer from an array type spelling such as
+/// `Helper[]` (`Helper`), `Helper[,]` (`Helper`), or `Helper[][]`
+/// (`Helper[]`), keeping the raw remaining spelling so trace-time resolution
+/// can resolve it in the declaring scope. Malformed or non-array spellings
+/// return `None` and fail closed. Unlike `csharp_array_type_component_name`,
+/// an intermediate jagged component (`Helper[]` from `Helper[][]`) is kept so
+/// callers can strip further layers.
+fn csharp_array_element_component_spelling(text: &str) -> Option<&str> {
+    let name = text.trim();
+    let close = name.rfind(']')?;
+    let open = name[..close].rfind('[')?;
+    let bracket = &name[open..=close];
+    let is_single = bracket == "[]";
+    let is_multidimensional = bracket.starts_with("[,")
+        && bracket.ends_with(']')
+        && bracket[1..bracket.len() - 1]
+            .chars()
+            .all(|character| character == ',');
+    if !is_single && !is_multidimensional {
+        return None;
+    }
+    let component = name[..open].trim();
+    if component.is_empty() {
+        return None;
+    }
+    Some(component)
+}
+
+/// Strips `depth` element-component layers from an array type spelling such
+/// as `Helper[]` (depth one -> `Helper`), `Helper[,]` (depth one -> `Helper`),
+/// or `Helper[][]` (depth two -> `Helper`), keeping the raw final spelling so
+/// trace-time resolution can resolve it in the declaring scope. A depth of
+/// zero returns the spelling unchanged. Primitive, `var`, `void`,
+/// `global::`-qualified, malformed, and non-array spellings, and depths
+/// beyond the array's layer count return `None` and fail closed.
+pub(in crate::symbol_dependency) fn csharp_array_component_spelling_at_depth(
+    text: &str,
+    depth: usize,
+) -> Option<String> {
+    if depth == 0 {
+        let name = text.trim();
+        return if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        };
+    }
+    let mut current = text.trim();
+    for _ in 0..depth {
+        current = csharp_array_element_component_spelling(current)?;
+    }
+    Some(current.to_string())
 }
 
 fn csharp_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {

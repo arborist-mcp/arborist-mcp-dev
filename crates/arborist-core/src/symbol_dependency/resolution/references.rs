@@ -9,10 +9,10 @@ use super::super::c::{
 use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
-    CSharpTypeAliasBinding, csharp_array_type_component_name,
-    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
-    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
-    csharp_type_alias_name_is_ambiguous_for_reference,
+    CSharpTypeAliasBinding, csharp_array_component_spelling_at_depth,
+    csharp_array_type_component_name, csharp_global_type_alias_name_is_ambiguous,
+    csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
+    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -1883,6 +1883,7 @@ fn resolve_csharp_instance_receiver_call(
                 source_symbol,
                 &factory_name,
                 factory_arity,
+                1,
                 &bindings,
                 raw_symbols,
                 semantic_path_index,
@@ -1929,22 +1930,24 @@ fn resolve_csharp_instance_receiver_call(
             csharp_import_contexts_by_file,
             deadline,
         )?
-    } else if let Some((base_reference, base_arity)) =
+    } else if let Some((base_reference, base_arity, base_depth)) =
         bindings.element_access_base_for(receiver_name)
     {
         // A `var` local bound from an element access such as
-        // `var first = items[0]` resolves to the base array's element
-        // component type; a qualified base such as
+        // `var first = items[0]` or `var first = matrix[0][0]` resolves to
+        // the base array's element component type, stripping one component
+        // layer per element access; a qualified base such as
         // `var fourth = this.fieldItems[0]` resolves the field chain's
         // terminal array field, and a factory-call base such as
         // `var first = makeItems()[0]` resolves through the same factory
-        // rules as other `var` initializers. An unbound or non-array base
-        // fails closed.
+        // rules as other `var` initializers. An unbound or non-array base,
+        // and a depth beyond the base array's layer count, fail closed.
         if let Some(factory_call) = base_reference.strip_suffix("()") {
             csharp_factory_array_component_binding(
                 source_symbol,
                 factory_call,
                 base_arity,
+                base_depth,
                 &bindings,
                 raw_symbols,
                 semantic_path_index,
@@ -1958,6 +1961,7 @@ fn resolve_csharp_instance_receiver_call(
             csharp_qualified_element_access_component_type_path(
                 source_symbol,
                 &base_reference,
+                base_depth,
                 &bindings,
                 raw_symbols,
                 semantic_path_index,
@@ -1968,7 +1972,12 @@ fn resolve_csharp_instance_receiver_call(
                 deadline,
             )?
         } else {
-            let Some(component_type) = bindings.array_component_for(&base_reference) else {
+            let Some(declared_type) = bindings.type_for(&base_reference) else {
+                return Ok(CSharpInstanceReceiverResolution::Blocked);
+            };
+            let Some(component_type) =
+                csharp_array_component_spelling_at_depth(&declared_type, base_depth)
+            else {
                 return Ok(CSharpInstanceReceiverResolution::Blocked);
             };
             resolve_csharp_receiver_type_binding(
@@ -3778,10 +3787,11 @@ fn resolve_csharp_bare_factory_array_member_chain(
 /// on the named static type (requiring a static terminal field). Intermediate
 /// hops resolve through the same field/property/event and method-call-hop
 /// rules as member chains, and the terminal hop must be a uniquely declared
-/// single-level array member whose element component type pins the receiver.
-/// Unknown, ambiguous, or non-array terminal members, unbound or non-array
-/// receivers, method-call bases, and non-static fields on a static type
-/// receiver fail closed.
+/// array member whose element component type pins the receiver, stripping one
+/// component layer per element-access depth (so `this.fieldMatrix[0][0]` over
+/// `Helper[][]` dispatches on `Helper`). Unknown, ambiguous, or non-array
+/// terminal members, unbound or non-array receivers, method-call bases, and
+/// non-static fields on a static type receiver fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# qualified element-access base resolution inputs explicit"
@@ -3789,6 +3799,7 @@ fn resolve_csharp_bare_factory_array_member_chain(
 fn csharp_qualified_element_access_component_type_path(
     source_symbol: &IndexedSymbol,
     base_reference: &str,
+    depth: usize,
     bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -3986,7 +3997,11 @@ fn csharp_qualified_element_access_component_type_path(
         if !member_bindings.is_static_member(&terminal) {
             return Ok(None);
         }
-        let Some(component_type) = member_bindings.array_component_for(&terminal) else {
+        let Some(declared_type) = member_bindings.type_for(&terminal) else {
+            return Ok(None);
+        };
+        let Some(component_type) = csharp_array_component_spelling_at_depth(&declared_type, depth)
+        else {
             return Ok(None);
         };
         resolve_csharp_receiver_type_binding(
@@ -4001,10 +4016,11 @@ fn csharp_qualified_element_access_component_type_path(
             deadline,
         )
     } else {
-        // The terminal hop is the accessed array member; mark it as an
-        // element-access hop so the member-chain walk requires a single-level
-        // array member and pins its element component type.
-        let terminal_refs = [format!("{terminal}[0]")];
+        // The terminal hop is the accessed array member; mark it as one
+        // element-access hop per depth so the member-chain walk requires an
+        // array member with enough layers and pins its element component
+        // type.
+        let terminal_refs = [format!("{terminal}{}", "[0]".repeat(depth))];
         let terminal_refs = terminal_refs.iter().map(String::as_str).collect::<Vec<_>>();
         let Some((binding, _)) = resolve_csharp_member_chain_binding(
             scope_source_symbol,
@@ -4025,15 +4041,16 @@ fn csharp_qualified_element_access_component_type_path(
 }
 
 /// Resolves the element component type binding of a factory-call
-/// element-access base such as `makeItems()` in `var first = makeItems()[0]`
-/// or `Util.makeItems()` in `var second = Util.makeItems()[0]`: the leading
-/// call resolves through the same factory rules as a `var` initializer (a
-/// unique enclosing-type instance call, base-type or static-imported method,
-/// or type-qualified static method with matching arity), and the component
-/// type resolves in the factory's own file and enclosing scope, canonicalized
-/// so callers in other namespaces dispatch on the canonical declared type.
-/// Unknown or arity-mismatched factories and primitive or multi-dimensional
-/// return arrays fail closed.
+/// element-access base such as `makeItems()` in `var first = makeItems()[0]`,
+/// `Util.makeItems()` in `var second = Util.makeItems()[0]`, or
+/// `makeMatrix()` in `var third = makeMatrix()[0][0]`: the leading call
+/// resolves through the same factory rules as a `var` initializer (a unique
+/// enclosing-type instance call, base-type or static-imported method, or
+/// type-qualified static method with matching arity), and the component type
+/// resolves in the factory's own file and enclosing scope, canonicalized so
+/// callers in other namespaces dispatch on the canonical declared type,
+/// stripping one element-component layer per depth. Unknown or
+/// arity-mismatched factories and primitive return arrays fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# factory array component resolution inputs explicit"
@@ -4042,6 +4059,7 @@ fn csharp_factory_array_component_binding(
     source_symbol: &IndexedSymbol,
     factory_reference: &str,
     factory_arity: usize,
+    depth: usize,
     bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -4070,7 +4088,7 @@ fn csharp_factory_array_component_binding(
     let Some(return_type) = method.return_type.as_deref() else {
         return Ok(None);
     };
-    let Some(component_name) = csharp_array_type_component_name(return_type) else {
+    let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, depth) else {
         return Ok(None);
     };
     let Some(component_binding) = resolve_csharp_receiver_type_binding(
@@ -4450,8 +4468,9 @@ fn resolve_csharp_member_chain_binding<'a>(
         // hop method as an instance call and continues the chain on its
         // declared return type; field, property, and event hops resolve the
         // member's declared type directly. An element-access hop such as
-        // `items[0]` strips the bracket and requires the named member to be a
-        // single-level array whose element component type pins the next hop.
+        // `items[0]` or `fieldItems[0][0]` strips the brackets and requires
+        // the named member to be an array with enough layers whose element
+        // component type pins the next hop.
         let array_member_name = csharp_array_access_member_name(hop);
         let member_name = array_member_name.unwrap_or(hop);
         if let Some((method_name, hop_arity)) = csharp_method_call_hop_spelling(hop) {
@@ -4494,12 +4513,19 @@ fn resolve_csharp_member_chain_binding<'a>(
                     return Ok(None);
                 };
                 if member_bindings.contains(member_name) {
-                    // An element-access hop requires a single-level
-                    // array-typed member; the element component type pins the
-                    // next hop, while non-array, primitive-array, and
-                    // multi-dimensional-array members fail closed.
-                    let hop_type_name = if array_member_name.is_some() {
-                        member_bindings.array_component_for(member_name)
+                    // An element-access hop requires an array-typed member;
+                    // the element component type pins the next hop, stripping
+                    // one component layer per element access in the hop, while
+                    // non-array and primitive-array members fail closed.
+                    let hop_type_name = if let Some(array_member_name) = array_member_name {
+                        let Some(declared_type) = member_bindings.type_for(array_member_name)
+                        else {
+                            return Ok(None);
+                        };
+                        let Some(depth) = csharp_array_access_depth(hop) else {
+                            return Ok(None);
+                        };
+                        csharp_array_component_spelling_at_depth(&declared_type, depth)
                     } else {
                         member_bindings.type_for(member_name)
                     };
@@ -4610,9 +4636,9 @@ fn csharp_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
 }
 
 /// Parses an element-access hop spelling such as `items[0]` or
-/// `fieldItems[1]` into the accessed member name. Plain member hops,
-/// malformed brackets, and multi-dimensional or nested element access return
-/// `None` so they fall through to member resolution and fail closed.
+/// `fieldItems[1]` into the accessed member name. Plain member hops and
+/// malformed brackets return `None` so they fall through to member
+/// resolution and fail closed.
 fn csharp_array_access_member_name(hop: &str) -> Option<&str> {
     let open = hop.find('[')?;
     let (base, bracket) = hop.split_at(open);
@@ -4620,6 +4646,36 @@ fn csharp_array_access_member_name(hop: &str) -> Option<&str> {
         return None;
     }
     Some(base)
+}
+
+/// Counts the element-access layers in a hop spelling such as `items[0]`
+/// (one) or `fieldItems[0][0]` (two). The bracket suffix must be one or more
+/// well-formed, non-nested bracket groups; malformed or empty bases return
+/// `None` and fail closed.
+fn csharp_array_access_depth(hop: &str) -> Option<usize> {
+    let open = hop.find('[')?;
+    if hop[..open].is_empty() {
+        return None;
+    }
+    let mut rest = &hop[open..];
+    let mut depth = 0usize;
+    while let Some(close) = rest.find(']') {
+        if close == 0 || rest[1..close].contains(['[', ']']) {
+            return None;
+        }
+        depth += 1;
+        rest = &rest[close + 1..];
+        if rest.is_empty() {
+            break;
+        }
+        if !rest.starts_with('[') {
+            return None;
+        }
+    }
+    if depth == 0 || !rest.is_empty() {
+        return None;
+    }
+    Some(depth)
 }
 
 /// Parses a bare factory-call root with a trailing element-access suffix such

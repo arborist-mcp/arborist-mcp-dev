@@ -16992,10 +16992,10 @@ class Helper {
 class Caller {
     int run(Helper[] items, int[] counts, Helper[][] matrix) {
         var unbound = counts[0];
-        var matrixAccess = matrix[0][0];
+        var matrixRow = matrix[0];
         var unknown = unknownItems[0];
         return unbound.helper(1)
-            + matrixAccess.helper(2)
+            + matrixRow.helper(2)
             + unknown.helper(3);
     }
     int control(Helper[] items) {
@@ -17007,9 +17007,10 @@ class Caller {
     )
     .unwrap();
 
-    // A primitive-array base, a multi-dimensional element access, and an
-    // unbound base all fail closed; only the resolvable element-access
-    // initializer in `control` traces.
+    // A primitive-array base, a single element access on a jagged array
+    // (whose element component type is itself an array), and an unbound base
+    // all fail closed; only the resolvable element-access initializer in
+    // `control` traces.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -17157,7 +17158,7 @@ class Caller {
     int run(int[] counts, Helper[][] matrix) {
         var nonArray = this.holder[0];
         var unbound = unknownObj.fieldItems[0];
-        var matrixAccess = matrix[0][0];
+        var matrixRow = matrix[0];
         var unknownFactory = makeUnknown()[0];
         var primitiveFactory = makeCounts()[0];
         var multiFactory = makeMatrix()[0];
@@ -17166,7 +17167,7 @@ class Caller {
         var staticInstanceField = Util.instanceItems[0];
         return nonArray.helper(1)
             + unbound.helper(2)
-            + matrixAccess.helper(3)
+            + matrixRow.helper(3)
             + unknownFactory.helper(4)
             + primitiveFactory.helper(5)
             + multiFactory.helper(6)
@@ -17184,7 +17185,7 @@ class Caller {
     .unwrap();
 
     // `var` locals bound from element accesses with a non-array `this`-rooted
-    // member, an unbound receiver, a multi-dimensional element access,
+    // member, an unbound receiver, a single element access on a jagged array,
     // unknown/primitive-/multi-dimensional-returning/arity-mismatched
     // factory-call bases, an unresolvable `base` receiver, or a non-static
     // field on a static type receiver all fail closed; only the `this`-rooted
@@ -55168,7 +55169,7 @@ class Caller {
         return first.helper(5);
     }
     int jaggedFailsClosed() {
-        var first = Util.makeJagged()[0][0];
+        var first = Util.makeJagged()[0];
         return first.helper(6);
     }
 }
@@ -55182,9 +55183,10 @@ class Caller {
     // type of `Helper[,]` (and `Helper[,,]`) is the same base type as a
     // single-level array, so field bases, qualified and `this`-rooted factory
     // bases, and bound-receiver bases all resolve `first.helper(...)` to the
-    // imported `Demo::Helper` declaration. A jagged element access
-    // (`var first = Util.makeJagged()[0][0]`) still fails closed because its
-    // element component type is a nested array, so the five
+    // imported `Demo::Helper` declaration. A single element access on a
+    // jagged array (`var first = Util.makeJagged()[0]`) still fails closed
+    // because stripping one layer from `Helper[][]` leaves the nested
+    // `Helper[]` component, which is not a resolvable type, so the five
     // multi-dimensional element-access callers in `Caller` dispatch on
     // `Demo::Helper::helper`.
     let helper_symbol = "Demo::Helper::helper";
@@ -55423,6 +55425,190 @@ class Caller {
     int run() {
         var first = (Util.makeItems())[0];
         return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn traces_csharp_var_jagged_array_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[][] makeMatrix() => new Helper[2][];
+    public static Helper[][][] makeCube() => new Helper[2][][];
+    public static Helper[][] makeJagged() => new Helper[2][];
+}
+class Caller {
+    Helper[][] fieldMatrix = new Helper[2][];
+    Helper[][] makeLocalMatrix() => new Helper[2][];
+    int fromParam(Helper[][] matrix) {
+        var first = matrix[0][0];
+        return first.helper(1);
+    }
+    int fromFactory() {
+        var first = Util.makeMatrix()[0][0];
+        return first.helper(2);
+    }
+    int fromCube() {
+        var first = Util.makeCube()[0][0][0];
+        return first.helper(3);
+    }
+    int fromField() {
+        var first = this.fieldMatrix[0][1];
+        return first.helper(4);
+    }
+    int fromLocalFactory() {
+        var first = this.makeLocalMatrix()[0][0];
+        return first.helper(5);
+    }
+    int singleAccessFailsClosed() {
+        var row = Util.makeJagged()[0];
+        return row.helper(6);
+    }
+    int paramRowFailsClosed(Helper[][] matrix) {
+        var row = matrix[0];
+        return row.helper(7);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a jagged array element access such as
+    // `var first = matrix[0][0]` or `var first = Util.makeMatrix()[0][0]`
+    // strips one element-component layer per element access and dispatches on
+    // the base array's element component type: parameter bases, qualified and
+    // `this`-rooted factory bases, `this.`-rooted field bases, and
+    // three-level `Helper[][][]` bases all resolve `first.helper(...)` to the
+    // imported `Demo::Helper` declaration. A single element access on a
+    // jagged array (`var row = Util.makeJagged()[0]` or `var row = matrix[0]`)
+    // still fails closed because stripping one layer from `Helper[][]` leaves
+    // the nested `Helper[]` component, which is not a resolvable type, so the
+    // five jagged element-access callers in `Caller` dispatch on
+    // `Demo::Helper::helper`.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromCube",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromLocalFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::paramRowFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected blocked caller {blocked}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromCube",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromLocalFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::paramRowFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected persisted blocked caller {blocked}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_jagged_array_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[][] makeMatrix() => new Helper[2][];
+}
+class Caller {
+    Helper[][] fieldMatrix = new Helper[2][];
+    int run(Helper[][] matrix) {
+        var first = Util.makeMatrix()[0][0];
+        var second = matrix[0][0];
+        var third = this.fieldMatrix[0][1];
+        return first.helper(1) + second.helper(2) + third.helper(3);
     }
 }
 ";

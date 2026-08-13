@@ -762,7 +762,9 @@ fn collect_typed_local_bindings(
                                 Some(type_name)
                             } else {
                                 csharp_initializer_element_access_from_declarator(node, source)?
-                                    .map(|(base_spelling, _)| format!("@element:{base_spelling}"))
+                                    .map(|(base_spelling, _, _)| {
+                                        format!("@element:{base_spelling}")
+                                    })
                             }
                         }
                     }
@@ -846,7 +848,7 @@ fn csharp_var_initializer_type_binding(
 fn csharp_initializer_element_access_from_declarator(
     declarator: Node<'_>,
     source: &str,
-) -> Result<Option<(String, usize)>> {
+) -> Result<Option<(String, usize, usize)>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
     };
@@ -862,7 +864,20 @@ fn csharp_initializer_element_access_from_declarator(
     if initializer.kind() != "element_access_expression" {
         return Ok(None);
     }
-    let Some(mut array) = initializer.child_by_field_name("expression") else {
+    csharp_element_access_base_binding(initializer, source)
+}
+
+/// Resolves the base spelling, call arity, and element-access depth of an
+/// element-access initializer root such as `items[0]` (depth one),
+/// `matrix[0][0]` (depth two), `makeItems()[0]`, or `(this.fieldItems)[0]`.
+/// A nested element-access base recurses and increments the depth, and a
+/// parenthesized base array unwraps to the same shape as the unparenthesized
+/// form. Unsupported base shapes return `None` and fail closed.
+fn csharp_element_access_base_binding(
+    element_access: Node<'_>,
+    source: &str,
+) -> Result<Option<(String, usize, usize)>> {
+    let Some(mut array) = element_access.child_by_field_name("expression") else {
         return Ok(None);
     };
     // A parenthesized base array such as `(Util.makeItems())` in
@@ -873,6 +888,16 @@ fn csharp_initializer_element_access_from_declarator(
             return Ok(None);
         };
         array = inner;
+    }
+    if array.kind() == "element_access_expression" {
+        // A jagged element access such as `matrix[0][0]` nests element-access
+        // nodes; recurse into the inner access and count one more layer.
+        let Some((base_spelling, call_arity, depth)) =
+            csharp_element_access_base_binding(array, source)?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some((base_spelling, call_arity, depth + 1)));
     }
     let (base_spelling, call_arity) = match array.kind() {
         "identifier" | "member_access_expression" => {
@@ -909,7 +934,7 @@ fn csharp_initializer_element_access_from_declarator(
     if base_spelling.is_empty() {
         return Ok(None);
     }
-    Ok(Some((base_spelling, call_arity)))
+    Ok(Some((base_spelling, call_arity, 1)))
 }
 
 /// Infers a receiver type binding from an initializer expression, unwrapping
