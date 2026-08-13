@@ -60339,3 +60339,204 @@ class Caller {
         "unexpected persisted overlay failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_bare_factory_root_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Helper[] GetItems() => new Helper[2];
+    public Group holder;
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int fromCondMemberVarInit() {
+        var first = makeGroup()?.items[0];
+        return first.helper(1);
+    }
+    int fromCondMemberForeach() {
+        foreach (var item in makeGroup()?.items) {
+            item.helper(2);
+        }
+        return 0;
+    }
+    int fromCondMemberChainHopVarInit() {
+        var first = makeGroup().holder?.items[0];
+        return first.helper(3);
+    }
+    int fromParenthesizedCondMemberVarInit() {
+        var first = (makeGroup())?.items[0];
+        return first.helper(4);
+    }
+    int failures() {
+        var unknown = doesNotExist()?.items[0];
+        var missingMember = makeGroup()?.Missing[0];
+        foreach (var item in makeGroup()?.Missing) {
+            item.helper(1);
+        }
+        return unknown.helper(1) + missingMember.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a bare
+    // factory call such as `makeGroup()?.items[0]` or
+    // `foreach (var item in makeGroup()?.items)` resolves the leading call as
+    // a unique arity-matched factory method on the enclosing type, the unique
+    // base chain, or a static-imported type, canonicalizes its declared
+    // return type, and walks any intermediate field hops and the terminal
+    // array member as an instance receiver (including parenthesized call
+    // roots such as `(makeGroup())?.items[0]`); unknown factories, missing
+    // members, and non-array terminals fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromCondMemberVarInit",
+        "Demo::Caller::fromCondMemberForeach",
+        "Demo::Caller::fromCondMemberChainHopVarInit",
+        "Demo::Caller::fromParenthesizedCondMemberVarInit",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromCondMemberVarInit",
+        "Demo::Caller::fromCondMemberForeach",
+        "Demo::Caller::fromCondMemberChainHopVarInit",
+        "Demo::Caller::fromParenthesizedCondMemberVarInit",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_bare_factory_root_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int run() {
+        var first = makeGroup()?.items[0];
+        return first.helper(1);
+    }
+    int runForeach() {
+        foreach (var item in makeGroup()?.items) {
+            item.helper(2);
+        }
+        return 0;
+    }
+    int fail() {
+        var first = doesNotExist()?.items[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::runForeach"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing overlay caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fail"),
+        "unexpected overlay failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::runForeach"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted overlay caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fail"),
+        "unexpected persisted overlay failures caller"
+    );
+}
