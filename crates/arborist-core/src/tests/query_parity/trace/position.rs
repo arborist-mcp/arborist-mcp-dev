@@ -54797,3 +54797,106 @@ fn traces_kotlin_cross_file_scope_function_lambda_branch_local_nested_scope_call
         );
     }
 }
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_when_elvis_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun flag(): Boolean = true\n    fun whenNavLetLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.let { g -> g.make() }.items[0].item }\n        return first.helper(1)\n    }\n    fun whenNavRunInnerLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.run { make() }.items[0].item }\n        return first.helper(2)\n    }\n    fun whenNavWithInnerLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; with(g1) { make() }.items[0].item }\n        return first.helper(3)\n    }\n    fun whenNavApplyInnerLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make(); else -> it.makeAlt() }; g1.apply { this }.items[0].item }\n        return first.helper(4)\n    }\n    fun whenNavRunOuterLocal(): Int {\n        val first = h.run { val g1 = when (flag()) { true -> make(); else -> makeAlt() }; g1.let { g -> g.make() }.items[0].item }\n        return first.helper(5)\n    }\n    fun whenNavMemberLocal(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> plainH.make(); else -> plainH.makeAlt() }; g1.let { g -> g.make() }.items[0].item }\n        return first.helper(6)\n    }\n    fun elvisNavLetLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> g.make() }.items[0].item }\n        return first.helper(7)\n    }\n    fun elvisNavApplyInnerLocal(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.apply { this }.items[0].item }\n        return first.helper(8)\n    }\n    fun whenNavNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = when (flag()) { true -> it.make() }; g1.let { g -> g.make() }.items[0].item }\n        return first.helper(9)\n    }\n    fun elvisNavUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = nullableH?.let { it.make() } ?: it.makeAlt(); g1.let { g -> g.make() }.missing().items[0].item }\n        return first.helper(10)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch local whose initializer is a `when`
+    // expression or an elvis (`?:`) expression, consumed through a
+    // scope-call / apply navigation with a trailing member chain such as
+    // `g1.let { g -> g.make() }.items[0].item`, binds through the same
+    // per-arm expansion rules as an `if` branch local: a `when` with an
+    // `else` arm stores the receiver-qualified spellings of every arm, and an
+    // elvis local stores both operands (including a safe-call scope-function
+    // left operand such as `nullableH?.let { it.make() }`). This covers `let`,
+    // `run`, and `with` inner calls, an `apply` navigation, a `when` branch
+    // local inside a `run` outer, and an enclosing-member-rooted `when` branch
+    // local, all dispatching the terminal member on the imported
+    // `com.lib.Item` declaration. A `when` without an `else` arm (whose
+    // expression type includes `Unit`) and a chain through an unknown terminal
+    // method (`g1.let { g -> g.make() }.missing().items[0].item`) fail closed,
+    // so the eight when/elvis scope-call-navigation callers in `Util` dispatch
+    // on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::whenNavLetLocal",
+        "com::example::Util::whenNavRunInnerLocal",
+        "com::example::Util::whenNavWithInnerLocal",
+        "com::example::Util::whenNavApplyInnerLocal",
+        "com::example::Util::whenNavRunOuterLocal",
+        "com::example::Util::whenNavMemberLocal",
+        "com::example::Util::elvisNavLetLocal",
+        "com::example::Util::elvisNavApplyInnerLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::whenNavNoElseFailsClosed",
+        "com::example::Util::elvisNavUnknownMethodFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::whenNavLetLocal",
+        "com::example::Util::whenNavRunInnerLocal",
+        "com::example::Util::whenNavWithInnerLocal",
+        "com::example::Util::whenNavApplyInnerLocal",
+        "com::example::Util::whenNavRunOuterLocal",
+        "com::example::Util::whenNavMemberLocal",
+        "com::example::Util::elvisNavLetLocal",
+        "com::example::Util::elvisNavApplyInnerLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::whenNavNoElseFailsClosed",
+        "com::example::Util::elvisNavUnknownMethodFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
