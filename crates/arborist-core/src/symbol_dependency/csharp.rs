@@ -1544,7 +1544,9 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 /// such as `makeItems()` binds a factory-element marker the resolver expands
 /// to the factory return array's element component type, a member-access
 /// collection such as `group.items` binds a chain-element marker the resolver
-/// expands to the terminal array member's element component type, a `var`
+/// expands to the terminal array member's element component type, a
+/// null-conditional member collection such as `group?.items` spells the same
+/// chain and binds the same marker, a `var`
 /// local collection bound from a factory call or field/property chain (such
 /// as `var items = makeItems()` or `var items = this.fieldItems`) keeps the
 /// corresponding element marker, and primitive, non-array, and unresolvable
@@ -1591,6 +1593,22 @@ fn csharp_foreach_collection_element_type(
                 // `group.items` binds a chain-element marker the resolver
                 // expands to the terminal array member's element component
                 // type.
+                return Ok(Some(format!("@chain-element:{text}")));
+            }
+        }
+        "conditional_access_expression" => {
+            // A null-conditional member collection such as `group?.items` or
+            // `this.holder?.items` spells the same chain as the plain dotted
+            // form so the loop variable binds a chain-element marker the
+            // resolver walks to the terminal array member's element component
+            // type.
+            let text = node_text(right, source)?.trim().replace("?.", ".");
+            if text.is_empty() {
+                return Ok(None);
+            }
+            if let Some(member) = text.strip_prefix("this.") {
+                member.to_string()
+            } else {
                 return Ok(Some(format!("@chain-element:{text}")));
             }
         }

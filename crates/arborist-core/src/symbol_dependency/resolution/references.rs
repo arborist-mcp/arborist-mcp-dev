@@ -4276,9 +4276,12 @@ fn resolve_csharp_bare_factory_array_member_chain(
 /// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]`,
 /// `base.inheritedItems` in `var sixth = base.inheritedItems[0]`,
 /// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`, or
-/// `Util.fieldItems` in `var seventh = Util.fieldItems[0]`. `this`-rooted
-/// bases start on the enclosing type, `base`-rooted bases on the unique base
-/// type, other bound receivers on their declared type, and unbound receivers
+/// `Util.fieldItems` in `var seventh = Util.fieldItems[0]`, or
+/// `group.items` in `var first = group?.items[0]`. `this`-rooted bases start
+/// on the enclosing type, `base`-rooted bases on the unique base type, other
+/// bound receivers on their declared type, receivers bound to a factory or
+/// member-chain marker (`var group = makeGroup()` or `var group = holder`)
+/// resolve through the same factory and chain rules, and unbound receivers
 /// on the named static type (requiring a static terminal field). Intermediate
 /// hops resolve through the same field/property/event and method-call-hop
 /// rules as member chains, and the terminal hop must be a uniquely declared
@@ -4412,6 +4415,50 @@ fn csharp_qualified_element_access_component_type_path(
             deadline,
         )?
         else {
+            return Ok(None);
+        };
+        (binding, source_symbol, false)
+    } else if bindings.contains(receiver) {
+        // A receiver bound to a factory or member-chain marker
+        // (`var group = makeGroup()` or `var group = holder`) resolves its
+        // receiver type through the same factory and chain rules before the
+        // terminal array member walk; untyped or unresolvable bound receivers
+        // fail closed instead of falling through to a same-named static type.
+        let Some(raw_binding) = bindings.raw_for(receiver) else {
+            return Ok(None);
+        };
+        let binding =
+            if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding) {
+                resolve_csharp_factory_receiver_binding(
+                    source_symbol,
+                    &factory_name,
+                    factory_arity,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+                resolve_csharp_initializer_chain_binding(
+                    source_symbol,
+                    chain,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                None
+            };
+        let Some(binding) = binding else {
             return Ok(None);
         };
         (binding, source_symbol, false)
