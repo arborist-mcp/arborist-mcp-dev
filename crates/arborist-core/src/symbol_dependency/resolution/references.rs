@@ -2028,8 +2028,12 @@ fn resolve_csharp_instance_receiver_call(
         // `var fourth = this.fieldItems[0]` resolves the field chain's
         // terminal array field, and a factory-call base such as
         // `var first = makeItems()[0]` resolves through the same factory
-        // rules as other `var` initializers. An unbound or non-array base,
-        // and a depth beyond the base array's layer count, fail closed.
+        // rules as other `var` initializers. A bare base that is itself a
+        // marker-bound collection local such as `var items = makeItems()`,
+        // `var items = group.GetItems()`, or `var items = group?.items`
+        // resolves the collection's element component type through the same
+        // factory and member-chain rules. An unbound or non-array base, and
+        // a depth beyond the base array's layer count, fail closed.
         if let Some(factory_call) = base_reference.strip_suffix("()") {
             csharp_factory_array_component_binding(
                 source_symbol,
@@ -2060,25 +2064,103 @@ fn resolve_csharp_instance_receiver_call(
                 deadline,
             )?
         } else {
-            let Some(declared_type) = bindings.type_for(&base_reference) else {
+            // A bare base resolves through its declared array type first
+            // (parameters, typed locals, and enclosing-class fields); a base
+            // that is itself a marker-bound collection local (`var items =
+            // makeItems()`, `var items = group.GetItems()`, or `var items =
+            // group?.items`) resolves the collection's element component type
+            // through the same factory and chain rules before stripping one
+            // component layer per element-access depth; a bare field chain
+            // (`var items = holder`) resolves the chain terminal's declared
+            // array type directly. Untyped, unknown, and non-array bases fail
+            // closed.
+            let marker_binding = if let Some(declared_type) = bindings.type_for(&base_reference) {
+                let Some(component_type) =
+                    csharp_array_component_spelling_at_depth(&declared_type, base_depth)
+                else {
+                    return Ok(CSharpInstanceReceiverResolution::Blocked);
+                };
+                resolve_csharp_receiver_type_binding(
+                    source_symbol,
+                    &component_type,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                let raw_binding = bindings.raw_for(&base_reference).unwrap_or_default();
+                if let Some((factory_name, factory_arity)) =
+                    csharp_var_factory_spelling(raw_binding)
+                {
+                    csharp_factory_array_component_binding(
+                        source_symbol,
+                        &factory_name,
+                        factory_arity,
+                        base_depth,
+                        &bindings,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
+                } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+                    if chain.contains('.') {
+                        csharp_qualified_element_access_component_type_path(
+                            source_symbol,
+                            chain,
+                            base_depth,
+                            &bindings,
+                            raw_symbols,
+                            semantic_path_index,
+                            source_namespace_path,
+                            csharp_global_import_context,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )?
+                    } else {
+                        // A bare chain names a bound field, property, local,
+                        // or parameter whose declared array type pins the
+                        // element component type; a marker-bound or untyped
+                        // chain member fails closed.
+                        let Some(declared_type) = bindings.raw_for(chain) else {
+                            return Ok(CSharpInstanceReceiverResolution::Blocked);
+                        };
+                        if declared_type.is_empty() || declared_type.starts_with('@') {
+                            return Ok(CSharpInstanceReceiverResolution::Blocked);
+                        }
+                        let Some(component_type) =
+                            csharp_array_component_spelling_at_depth(declared_type, base_depth)
+                        else {
+                            return Ok(CSharpInstanceReceiverResolution::Blocked);
+                        };
+                        resolve_csharp_receiver_type_binding(
+                            source_symbol,
+                            &component_type,
+                            raw_symbols,
+                            semantic_path_index,
+                            source_namespace_path,
+                            csharp_global_import_context,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )?
+                    }
+                } else {
+                    None
+                }
+            };
+            let Some(binding) = marker_binding else {
                 return Ok(CSharpInstanceReceiverResolution::Blocked);
             };
-            let Some(component_type) =
-                csharp_array_component_spelling_at_depth(&declared_type, base_depth)
-            else {
-                return Ok(CSharpInstanceReceiverResolution::Blocked);
-            };
-            resolve_csharp_receiver_type_binding(
-                source_symbol,
-                &component_type,
-                raw_symbols,
-                semantic_path_index,
-                source_namespace_path,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
+            Some(binding)
         }
     } else if raw_binding.is_empty() {
         None
