@@ -55998,3 +55998,200 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+#[test]
+fn traces_csharp_foreach_var_array_element_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    private Group[] groups = new Group[1];
+
+    int fromParam(Helper[] items) {
+        foreach (var item in items) { item.helper(1); }
+        return 0;
+    }
+    int fromField() {
+        foreach (var item in this.fieldItems) { item.helper(2); }
+        return 0;
+    }
+    int fromTyped(Helper[] items) {
+        foreach (Helper item in items) { item.helper(3); }
+        return 0;
+    }
+    int fromTypedJagged(Helper[][] matrix) {
+        foreach (Helper[] row in matrix) { row[0].helper(4); }
+        return 0;
+    }
+    int fromJagged(Helper[][] matrix) {
+        foreach (var row in matrix) { row[0].helper(5); }
+        return 0;
+    }
+    int fromHop(Group[] gs) {
+        foreach (var g in gs) { g.inner().helper(6); }
+        return 0;
+    }
+    int failures(Helper[] items, int[] counts, Helper[][] matrix) {
+        foreach (var item in makeItems()) { item.helper(7); }
+        foreach (var c in counts) { c.helper(8); }
+        foreach (var row in matrix) { row.helper(9); }
+        foreach (var x in unknown) { x.helper(10); }
+        return 0;
+    }
+    Helper[] makeItems() => new Helper[2];
+}
+",
+    )
+    .unwrap();
+
+    // A `var` foreach variable infers its element type from a bound
+    // array-typed parameter or `this.`-rooted field collection, an explicitly
+    // typed foreach variable binds its declared type (including a nested
+    // jagged component), and a member chain on the loop variable dispatches on
+    // the element type; factory, primitive, unknown, and direct member calls
+    // on a nested jagged row all fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromTyped",
+        "Demo::Caller::fromTypedJagged",
+        "Demo::Caller::fromJagged",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromTyped",
+        "Demo::Caller::fromTypedJagged",
+        "Demo::Caller::fromJagged",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::fromHop");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(
+        group_persisted.callers[0].symbol_id,
+        "Demo::Caller::fromHop"
+    );
+}
+
+#[test]
+fn traces_csharp_foreach_var_array_element_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    int fromParam(Helper[] items) {
+        foreach (var item in items) { item.helper(1); }
+        return 0;
+    }
+    int fromField() {
+        foreach (var item in this.fieldItems) { item.helper(2); }
+        return 0;
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::fromParam", "Demo::Caller::fromField"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::fromParam", "Demo::Caller::fromField"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}

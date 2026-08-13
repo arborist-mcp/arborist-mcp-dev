@@ -683,12 +683,109 @@ fn csharp_declared_type_name(node: Node<'_>, source: &str) -> Result<Option<Stri
     Ok(Some(type_name.to_string()))
 }
 
+/// Strips one element-component layer from an array type spelling such as
+/// `Helper[]` (`Helper`), `Helper[,]` (`Helper`), or `Helper[][]`
+/// (`Helper[]`), keeping the raw remaining spelling so trace-time resolution
+/// can resolve it in the declaring scope. Malformed or non-array spellings
+/// return `None` and fail closed.
+fn csharp_array_element_component_spelling(text: &str) -> Option<&str> {
+    let name = text.trim();
+    let close = name.rfind(']')?;
+    let open = name[..close].rfind('[')?;
+    let bracket = &name[open..=close];
+    let is_single = bracket == "[]";
+    let is_multidimensional = bracket.starts_with("[,")
+        && bracket.ends_with(']')
+        && bracket[1..bracket.len() - 1]
+            .chars()
+            .all(|character| character == ',');
+    if !is_single && !is_multidimensional {
+        return None;
+    }
+    let component = name[..open].trim();
+    if component.is_empty() {
+        return None;
+    }
+    Some(component)
+}
+
+/// Returns whether an array component spelling is a C# primitive, `void`, or
+/// `var`, which never names a user-defined receiver type and therefore fails
+/// closed for instance dispatch.
+fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
+    matches!(
+        component,
+        "bool"
+            | "byte"
+            | "sbyte"
+            | "short"
+            | "ushort"
+            | "int"
+            | "uint"
+            | "long"
+            | "ulong"
+            | "nint"
+            | "nuint"
+            | "float"
+            | "double"
+            | "decimal"
+            | "char"
+            | "string"
+            | "object"
+            | "void"
+            | "var"
+    )
+}
+
+/// Infers the element type of a `var` foreach variable from its collection
+/// expression, such as `items` in `foreach (var item in items)`: a bound
+/// array-typed identifier or `this.`-rooted member access yields the raw
+/// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
+/// `Helper`, `Helper[][]` -> `Helper[]`), and primitive, non-array, and
+/// unresolvable collections return `None` and fail closed. Mirrors the
+/// dependency resolver's foreach element-type inference so the extractor and
+/// resolver bindings stay aligned.
+fn csharp_foreach_collection_element_type(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Option<String>> {
+    let spelling = match node.kind() {
+        "identifier" => crate::language::node_text(node, source)?.trim().to_string(),
+        "member_access_expression" => {
+            let text = crate::language::node_text(node, source)?.trim();
+            let Some(member) = text.strip_prefix("this.") else {
+                return Ok(None);
+            };
+            member.to_string()
+        }
+        _ => return Ok(None),
+    };
+    if spelling.is_empty() {
+        return Ok(None);
+    }
+    let Some(declared_type) = bindings.get(&spelling) else {
+        return Ok(None);
+    };
+    if declared_type.is_empty() {
+        return Ok(None);
+    }
+    let Some(element_type) = csharp_array_element_component_spelling(declared_type) else {
+        return Ok(None);
+    };
+    if csharp_array_component_spelling_is_primitive(element_type) {
+        return Ok(None);
+    }
+    Ok(Some(element_type.to_string()))
+}
+
 /// Collects locally bound receiver names with their declared type spellings
 /// for a function. Parameters, typed locals, and enclosing-type fields and
-/// properties carry their declared type; `var` locals, lambda parameters,
-/// `foreach` variables, local functions, and type parameters are bound with an
-/// empty type so they still suppress static type interpretation while failing
-/// closed for instance dispatch.
+/// properties carry their declared type; `var` locals and `foreach` variables
+/// carry a receiver type when their initializer or collection expression
+/// resolves to one; lambda parameters, local functions, and type parameters
+/// are bound with an empty type so they still suppress static type
+/// interpretation while failing closed for instance dispatch.
 fn collect_typed_local_bindings(
     symbol_node: Node<'_>,
     source: &str,
@@ -778,7 +875,27 @@ fn collect_typed_local_bindings(
             && left.kind() == "identifier"
         {
             let name = crate::language::node_text(left, source)?.trim();
-            csharp_insert_binding(bindings, name, None);
+            if name.is_empty() {
+                return Ok(());
+            }
+            // An explicitly typed foreach variable such as
+            // `foreach (Helper row in matrix)` binds the declared type, and a
+            // `var` foreach variable infers its element type from the
+            // collection expression when it names a bound array-typed value,
+            // so `foreach (var item in items)` over `Helper[]` binds `item`
+            // to `Helper` and a jagged `Helper[][]` collection binds the
+            // nested `Helper[]` component. Unresolvable collections (factory
+            // calls, generic collections, primitives, and unknown names)
+            // bind an empty type and fail closed.
+            let type_name = if let Some(type_name) = csharp_declared_type_name(node, source)? {
+                Some(type_name)
+            } else {
+                match node.child_by_field_name("right") {
+                    Some(right) => csharp_foreach_collection_element_type(right, source, bindings)?,
+                    None => None,
+                }
+            };
+            csharp_insert_binding(bindings, name, type_name);
         }
 
         let mut cursor = node.walk();

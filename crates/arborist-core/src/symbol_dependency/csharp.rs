@@ -523,12 +523,14 @@ fn collect_csharp_member_type_bindings_by_range(
 
 /// Collects locally bound receiver names with their declared type spellings
 /// for a function. Parameters, typed locals, and enclosing-type fields and
-/// properties carry their declared type; `var` locals, lambda parameters,
-/// `foreach` variables, local functions, and type parameters are bound with an
-/// empty type so they still suppress static type interpretation while failing
-/// closed for instance dispatch. This mirrors the extractor's binding rules so
-/// the resolver classifies `receiver.method(...)` facts the same way the
-/// extractor recorded them.
+/// properties carry their declared type, and `var` foreach variables infer
+/// the collection's element type when it names a bound array-typed value;
+/// `var` locals, lambda parameters, unresolvable `foreach` variables, local
+/// functions, and type parameters are bound with an empty type so they still
+/// suppress static type interpretation while failing closed for instance
+/// dispatch. This mirrors the extractor's binding rules so the resolver
+/// classifies `receiver.method(...)` facts the same way the extractor
+/// recorded them.
 fn csharp_receiver_type_bindings_for_node(
     function: tree_sitter::Node<'_>,
     source: &str,
@@ -731,7 +733,27 @@ fn collect_csharp_function_bindings(
             && left.kind() == "identifier"
         {
             let name = node_text(left, source)?.trim();
-            csharp_insert_receiver_binding(bindings, name, None);
+            if name.is_empty() {
+                return Ok(());
+            }
+            // An explicitly typed foreach variable such as
+            // `foreach (Helper row in matrix)` binds the declared type, and a
+            // `var` foreach variable infers its element type from the
+            // collection expression when it names a bound array-typed value,
+            // so `foreach (var item in items)` over `Helper[]` binds `item`
+            // to `Helper` and a jagged `Helper[][]` collection binds the
+            // nested `Helper[]` component. Unresolvable collections (factory
+            // calls, generic collections, primitives, and unknown names) bind
+            // an empty type and fail closed.
+            let type_name = if let Some(type_name) = csharp_declared_type_name(node, source)? {
+                Some(type_name)
+            } else {
+                match node.child_by_field_name("right") {
+                    Some(right) => csharp_foreach_collection_element_type(right, source, bindings)?,
+                    None => None,
+                }
+            };
+            csharp_insert_receiver_binding(bindings, name, type_name);
         }
 
         let mut cursor = node.walk();
@@ -1363,6 +1385,71 @@ pub(in crate::symbol_dependency) fn csharp_array_component_spelling_at_depth(
         current = csharp_array_element_component_spelling(current)?;
     }
     Some(current.to_string())
+}
+
+/// Returns whether an array component spelling is a C# primitive, `void`, or
+/// `var`, which never names a user-defined receiver type and therefore fails
+/// closed for instance dispatch.
+fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
+    matches!(
+        component,
+        "bool"
+            | "byte"
+            | "sbyte"
+            | "short"
+            | "ushort"
+            | "int"
+            | "uint"
+            | "long"
+            | "ulong"
+            | "nint"
+            | "nuint"
+            | "float"
+            | "double"
+            | "decimal"
+            | "char"
+            | "string"
+            | "object"
+            | "void"
+            | "var"
+    )
+}
+
+/// Infers the element type of a `var` foreach variable from its collection
+/// expression, such as `items` in `foreach (var item in items)`: a bound
+/// array-typed identifier or `this.`-rooted member access yields the raw
+/// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
+/// `Helper`, `Helper[][]` -> `Helper[]`), and primitive, non-array, and
+/// unresolvable collections return `None` and fail closed.
+fn csharp_foreach_collection_element_type(
+    right: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &CSharpReceiverTypeBindings,
+) -> Result<Option<String>> {
+    let spelling = match right.kind() {
+        "identifier" => node_text(right, source)?.trim().to_string(),
+        "member_access_expression" => {
+            let text = node_text(right, source)?.trim();
+            let Some(member) = text.strip_prefix("this.") else {
+                return Ok(None);
+            };
+            member.to_string()
+        }
+        _ => return Ok(None),
+    };
+    if spelling.is_empty() {
+        return Ok(None);
+    }
+    let Some(declared_type) = bindings.type_for(&spelling) else {
+        return Ok(None);
+    };
+    let Some(element_type) = csharp_array_element_component_spelling(&declared_type) else {
+        return Ok(None);
+    };
+    if csharp_array_component_spelling_is_primitive(element_type) {
+        return Ok(None);
+    }
+    Ok(Some(element_type.to_string()))
 }
 
 fn csharp_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
