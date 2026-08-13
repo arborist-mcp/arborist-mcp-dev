@@ -1417,12 +1417,15 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 
 /// Infers the element type of a `var` foreach variable from its collection
 /// expression, such as `items` in `foreach (var item in items)`: a bound
-/// array-typed identifier or `this.`-rooted member access yields the raw
+/// array-typed identifier or `this.`-rooted field access yields the raw
 /// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
 /// `Helper`, `Helper[][]` -> `Helper[]`), a factory-returned array collection
 /// such as `makeItems()` binds a factory-element marker the resolver expands
-/// to the factory return array's element component type, and primitive,
-/// non-array, and unresolvable collections return `None` and fail closed.
+/// to the factory return array's element component type, a member-access
+/// collection such as `group.items` binds a chain-element marker the resolver
+/// expands to the terminal array member's element component type, and
+/// primitive, non-array, and unresolvable collections return `None` and fail
+/// closed.
 fn csharp_foreach_collection_element_type(
     right: tree_sitter::Node<'_>,
     source: &str,
@@ -1446,10 +1449,18 @@ fn csharp_foreach_collection_element_type(
         "identifier" => node_text(right, source)?.trim().to_string(),
         "member_access_expression" => {
             let text = node_text(right, source)?.trim();
-            let Some(member) = text.strip_prefix("this.") else {
-                return Ok(None);
-            };
-            member.to_string()
+            if let Some(member) = text.strip_prefix("this.") {
+                // A `this.`-rooted member access keeps its member spelling;
+                // a single field hop resolves directly below while deeper
+                // chains fall back to a chain-element marker.
+                member.to_string()
+            } else {
+                // A bound-receiver or static-rooted member chain such as
+                // `group.items` binds a chain-element marker the resolver
+                // expands to the terminal array member's element component
+                // type.
+                return Ok(Some(format!("@chain-element:{text}")));
+            }
         }
         _ => return Ok(None),
     };
@@ -1457,7 +1468,9 @@ fn csharp_foreach_collection_element_type(
         return Ok(None);
     }
     let Some(declared_type) = bindings.type_for(&spelling) else {
-        return Ok(None);
+        // A `this.`-rooted deeper chain such as `this.holder.items` is not
+        // directly bound; resolve it through the chain-element marker.
+        return Ok(Some(format!("@chain-element:this.{spelling}")));
     };
     let Some(element_type) = csharp_array_element_component_spelling(&declared_type) else {
         return Ok(None);

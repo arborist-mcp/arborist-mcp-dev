@@ -1935,6 +1935,23 @@ fn resolve_csharp_instance_receiver_call(
             )?
         {
             Some(binding)
+        } else if let Some(chain) = csharp_foreach_chain_element_spelling(raw_binding)
+            && let Some(element_depth) = csharp_array_access_depth(raw_receiver_name)
+            && let Some(binding) = csharp_qualified_element_access_component_type_path(
+                source_symbol,
+                chain,
+                element_depth + 1,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            Some(binding)
         } else {
             return Ok(CSharpInstanceReceiverResolution::Blocked);
         }
@@ -1964,6 +1981,20 @@ fn resolve_csharp_instance_receiver_call(
             source_symbol,
             &factory_name,
             factory_arity,
+            1,
+            &bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if let Some(chain) = csharp_foreach_chain_element_spelling(raw_binding) {
+        csharp_qualified_element_access_component_type_path(
+            source_symbol,
+            chain,
             1,
             &bindings,
             raw_symbols,
@@ -2155,6 +2186,18 @@ fn csharp_foreach_factory_element_spelling(binding: &str) -> Option<(String, usi
         arguments.parse::<usize>().ok()?
     };
     Some((factory_name.to_string(), arity))
+}
+
+/// Parses a `var` foreach chain-element marker binding such as
+/// `@chain-element:group.items` or `@chain-element:this.holder.items` into
+/// the member-chain spelling. The marker records that a `var` foreach
+/// variable inferred its element type from a member-access array collection,
+/// so the resolver walks the chain to the terminal array member and dispatches
+/// on its element component type, stripping one additional layer for an
+/// element access on the loop variable. Malformed markers return `None` and
+/// fail closed.
+fn csharp_foreach_chain_element_spelling(binding: &str) -> Option<&str> {
+    binding.strip_prefix("@chain-element:")
 }
 
 /// Resolves the receiver type binding for a `var` local initialized from a

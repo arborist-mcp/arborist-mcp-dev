@@ -56384,3 +56384,204 @@ class Caller {
         );
     }
 }
+#[test]
+fn traces_csharp_foreach_chain_element_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Holder {
+    public Helper[] items = new Helper[2];
+    public Helper[][] matrix = new Helper[2][];
+    public Group[] groups = new Group[1];
+}
+class Util {
+    public static Helper[] fieldItems = new Helper[2];
+}
+class Caller {
+    private Holder holder = new Holder();
+
+    int fromParam(Holder h) {
+        foreach (var item in h.items) { item.helper(1); }
+        return 0;
+    }
+    int fromField() {
+        foreach (var item in this.holder.items) { item.helper(2); }
+        return 0;
+    }
+    int fromJagged(Holder h) {
+        foreach (var row in h.matrix) { row[0].helper(3); }
+        return 0;
+    }
+    int fromHop(Holder h) {
+        foreach (var g in h.groups) { g.inner().helper(4); }
+        return 0;
+    }
+    int fromStatic() {
+        foreach (var item in Util.fieldItems) { item.helper(5); }
+        return 0;
+    }
+    int failures(Holder h) {
+        foreach (var item in h.missing) { item.helper(6); }
+        foreach (var item in h.items[0]) { item.helper(7); }
+        foreach (var row in h.matrix) { row.helper(8); }
+        return 0;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` foreach variable whose collection is a member-access chain
+    // dispatches on the terminal array member's element component type,
+    // including bound-parameter receivers (`h.items`), `this.`-rooted deeper
+    // chains (`this.holder.items`), static-rooted array fields
+    // (`Util.fieldItems`), element access on a jagged loop variable, and
+    // member chains on the loop variable; unknown members, element-access
+    // collections, and direct member calls on a nested jagged row all fail
+    // closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromJagged",
+        "Demo::Caller::fromStatic",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromJagged",
+        "Demo::Caller::fromStatic",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::fromHop");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(
+        group_persisted.callers[0].symbol_id,
+        "Demo::Caller::fromHop"
+    );
+}
+
+#[test]
+fn traces_csharp_foreach_chain_element_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Holder {
+    public Helper[] items = new Helper[2];
+}
+class Caller {
+    int fromParam(Holder h) {
+        foreach (var item in h.items) { item.helper(1); }
+        return 0;
+    }
+    int fromField() {
+        foreach (var item in this.holder.items) { item.helper(2); }
+        return 0;
+    }
+    private Holder holder = new Holder();
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::fromParam", "Demo::Caller::fromField"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::fromParam", "Demo::Caller::fromField"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
