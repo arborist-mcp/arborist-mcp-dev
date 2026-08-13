@@ -1858,15 +1858,35 @@ fn resolve_csharp_instance_receiver_call(
     let initial_binding = if array_access {
         // An element-access receiver such as `items[0].helper(...)` on a
         // single-level array-typed receiver dispatches on the array's element
-        // component type; indexing a non-array, primitive-array, or
-        // multi-dimensional-array receiver fails closed. A `var` local
-        // initialized from a factory call whose declared return type is a
-        // single-level array (`var items = makeItems()` or
-        // `var items = Util.makeItems()`) dispatches the element access
-        // through the factory's element component type too, with bare and
-        // qualified callees resolving through the same factory rules as other
-        // `var` initializers.
+        // component type, and a jagged element-access receiver such as
+        // `matrix[0][0].helper(...)` on `Helper[][]` or
+        // `matrix[0][0][0].helper(...)` on `Helper[][][]` strips one
+        // component layer per element access and dispatches on the remaining
+        // component type; indexing a non-array or primitive-array receiver,
+        // or an element access deeper than the receiver's array layers, fails
+        // closed. A `var` local initialized from a factory call whose
+        // declared return type is a single-level array (`var items =
+        // makeItems()` or `var items = Util.makeItems()`) dispatches the
+        // element access through the factory's element component type too,
+        // with bare and qualified callees resolving through the same factory
+        // rules as other `var` initializers.
         if let Some(component_type) = array_component {
+            resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if let Some(declared_type) = bindings.type_for(receiver_name)
+            && let Some(depth) = csharp_array_access_depth(raw_receiver_name)
+            && let Some(component_type) =
+                csharp_array_component_spelling_at_depth(&declared_type, depth)
+        {
             resolve_csharp_receiver_type_binding(
                 source_symbol,
                 &component_type,

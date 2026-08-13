@@ -16476,11 +16476,14 @@ class Helper {
     public int helper(int value) => value;
 }
 class Caller {
-    int run(Helper[] items, int[] counts, Helper[][] matrix) {
-        return items.helper(1)
-            + counts[0].helper(2)
-            + matrix[0][0].helper(3)
-            + matrix[0, 1].helper(4);
+    int run(Helper[][] matrix) {
+        return matrix[0][0].helper(1);
+    }
+    int failures(Helper[] items, int[] counts, Helper[][] matrix) {
+        return items.helper(2)
+            + counts[0].helper(3)
+            + matrix[0].helper(4)
+            + matrix[0, 1].helper(5);
     }
     int control(Helper[] items) => items[0].helper(1);
 }
@@ -16489,19 +16492,50 @@ class Caller {
     .unwrap();
 
     // A direct member call on an array, a primitive-component array, and a
-    // jagged or multi-dimensional array all fail closed; only the resolvable
-    // element-access receiver in `control` traces (factory-returned array
-    // receivers are covered by their own slice's tests).
+    // single element access on a jagged array (whose component type is a
+    // nested array) all fail closed; only the resolvable single-level and
+    // jagged element-access receivers in `run` and `control` trace
+    // (factory-returned array receivers are covered by their own slice's
+    // tests).
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 1);
-    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::control");
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::control"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 1);
-    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::control");
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::control"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
 }
 
 #[test]
@@ -55609,6 +55643,173 @@ class Caller {
         var second = matrix[0][0];
         var third = this.fieldMatrix[0][1];
         return first.helper(1) + second.helper(2) + third.helper(3);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn traces_csharp_array_jagged_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[][] fieldMatrix = new Helper[2][];
+    Helper[][][] fieldCube = new Helper[2][][];
+    int fromParam(Helper[][] matrix) {
+        return matrix[0][0].helper(1);
+    }
+    int fromParamCube(Helper[][][] cube) {
+        return cube[0][0][0].helper(2);
+    }
+    int fromField() {
+        return fieldMatrix[0][0].helper(3);
+    }
+    int fromThisField() {
+        return this.fieldMatrix[0][0].helper(4);
+    }
+    int fromFieldCube() {
+        return fieldCube[0][0][0].helper(5);
+    }
+    int singleAccessFailsClosed(Helper[][] matrix) {
+        return matrix[0].helper(6);
+    }
+    int primitiveFailsClosed(int[] counts) {
+        return counts[0].helper(7);
+    }
+    int directMemberFailsClosed(Helper[] items) {
+        return items.helper(8);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A direct element-access receiver on a jagged array such as
+    // `matrix[0][0].helper(...)` over `Helper[][]` or
+    // `cube[0][0][0].helper(...)` over `Helper[][][]` strips one element
+    // component layer per access and dispatches on the remaining component
+    // type, for parameter receivers and bare or `this.`-rooted field
+    // receivers. A single element access on a jagged array (`matrix[0]`,
+    // component `Helper[]`), a primitive-component array, and a direct member
+    // call on an array all fail closed, so the five jagged element-access
+    // receivers in `Caller` dispatch on `Demo::Helper::helper`.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromParamCube",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromThisField",
+        "Demo::Caller::fromFieldCube",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::primitiveFailsClosed",
+        "Demo::Caller::directMemberFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected blocked caller {blocked}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromParamCube",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromThisField",
+        "Demo::Caller::fromFieldCube",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::primitiveFailsClosed",
+        "Demo::Caller::directMemberFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected persisted blocked caller {blocked}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_array_jagged_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[][] fieldMatrix = new Helper[2][];
+    int run(Helper[][] matrix) {
+        return matrix[0][0].helper(1) + this.fieldMatrix[0][0].helper(2);
     }
 }
 ";
