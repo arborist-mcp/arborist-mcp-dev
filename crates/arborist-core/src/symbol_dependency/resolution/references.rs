@@ -2771,6 +2771,14 @@ fn resolve_csharp_var_factory_method<'a>(
     // factories, unknown or primitive hops, and missing, static, or
     // arity-mismatched trailing factories fail closed.
     if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(factory_name)
+        && let Some(mut leading_call) =
+            csharp_outer_parenthesized_inner(leading_call).or(Some(leading_call))
+        && {
+            while let Some(inner) = csharp_outer_parenthesized_inner(leading_call) {
+                leading_call = inner;
+            }
+            true
+        }
         && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
         && let Some(leading_method) = resolve_csharp_var_factory_method(
             source_symbol,
@@ -5131,6 +5139,34 @@ fn resolve_csharp_member_chain_binding<'a>(
 /// call segment (scanned up to its balanced argument list) and the remaining
 /// member chain. Spellings without a call root, without a trailing member
 /// chain, or with an unbalanced argument list return `None` and fail closed.
+/// Returns the inner expression of a spelling fully wrapped in one balanced
+/// outer parenthesis group, such as `(makeGroup())` -> `makeGroup()` or
+/// `(this.makeGroup())` -> `this.makeGroup()`. Spellings that are not fully
+/// wrapped, that wrap a non-call expression, or with unbalanced parentheses
+/// return `None` and leave the spelling unchanged.
+fn csharp_outer_parenthesized_inner(spelling: &str) -> Option<&str> {
+    if !spelling.starts_with('(') || !spelling.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in spelling.bytes().enumerate() {
+        match byte as char {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    if index != spelling.len() - 1 {
+                        return None;
+                    }
+                    return Some(&spelling[1..index]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn csharp_factory_chain_leading_call(factory_name: &str) -> Option<(&str, &str)> {
     let open = factory_name.find('(')?;
     let mut depth = 0usize;
