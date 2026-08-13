@@ -2273,6 +2273,36 @@ fn resolve_csharp_factory_receiver_binding(
     ))
 }
 
+/// Unwraps a leading parenthesized constructed-receiver factory root such as
+/// `(new Group()).GetItems` to the unparenthesized `new Group().GetItems`
+/// spelling. Other leading-parenthesis spellings, unbalanced parentheses,
+/// and parentheses without a trailing member chain return `None` and fail
+/// closed.
+fn csharp_parenthesized_constructed_factory_spelling(factory_name: &str) -> Option<String> {
+    if !factory_name.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in factory_name.bytes().enumerate() {
+        match byte as char {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let inner = &factory_name[1..index];
+                    let remainder = factory_name[index + 1..].strip_prefix('.')?;
+                    if !inner.starts_with("new ") || remainder.is_empty() {
+                        return None;
+                    }
+                    return Some(format!("{inner}.{remainder}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Normalizes a constructed-receiver factory spelling such as
 /// `Group().GetItems`, `Group(1).GetItems`, `Outer.Inner(1).holder.GetItems`,
 /// or `Group { Capacity = 2 }.GetItems` (the text after a `new ` prefix) into
@@ -2341,6 +2371,24 @@ fn resolve_csharp_var_factory_method<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<&'a IndexedSymbol>> {
+    // A parenthesized constructed-receiver factory root such as
+    // `(new Group()).GetItems` unwraps to the same shape as the
+    // unparenthesized form before dispatch.
+    if let Some(unwrapped) = csharp_parenthesized_constructed_factory_spelling(factory_name) {
+        return resolve_csharp_var_factory_method(
+            source_symbol,
+            &unwrapped,
+            factory_arity,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
     if let Some(method_name) = factory_name.strip_prefix("this.") {
         if method_name.is_empty() || method_name.contains('.') {
             return Ok(None);
