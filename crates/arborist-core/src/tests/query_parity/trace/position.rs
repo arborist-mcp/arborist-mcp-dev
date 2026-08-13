@@ -57290,3 +57290,176 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_foreach_factory_chain_and_multi_dimension_collection_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+    public Helper[][] GetMatrix() => new Helper[2][];
+    public Helper GetSingle() => new Helper();
+    public int[] GetCounts() => new int[2];
+}
+class Util {
+    public static Helper[] MakeItems() => new Helper[2];
+    public static Helper[][] MakeMatrix() => new Helper[2][];
+}
+class Base {
+    protected Helper[][] makeMatrix() => new Helper[2][];
+}
+class Caller : Base {
+    int fromBoundFactory(Group g) {
+        foreach (var item in g.GetItems()) { item.helper(1); }
+        return 0;
+    }
+    int fromBoundJaggedFactory(Group g) {
+        foreach (var row in g.GetMatrix()) { row[0].helper(2); }
+        return 0;
+    }
+    int fromStaticFactory() {
+        foreach (var item in Util.MakeItems()) { item.helper(3); }
+        return 0;
+    }
+    int fromStaticJaggedFactory() {
+        foreach (var row in Util.MakeMatrix()) { row[0].helper(4); }
+        return 0;
+    }
+    int fromBaseJaggedFactory() {
+        foreach (var row in base.makeMatrix()) { row[0].helper(5); }
+        return 0;
+    }
+    int fromMultiDim(Helper[,] grid) {
+        foreach (var item in grid) { item.helper(6); }
+        return 0;
+    }
+    int failures(Group g) {
+        foreach (var item in g.GetSingle()) { item.helper(7); }
+        foreach (var n in g.GetCounts()) { n.helper(8); }
+        return 0;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` foreach variable whose collection is a factory-returned array
+    // on a bound receiver, static root, or `base.` root dispatches on the
+    // return array's element component type (including jagged loop
+    // variables), and a bound multi-dimensional array collection dispatches
+    // on its element component type; non-array factory returns and primitive
+    // return arrays fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromBoundFactory",
+        "Demo::Caller::fromBoundJaggedFactory",
+        "Demo::Caller::fromStaticFactory",
+        "Demo::Caller::fromStaticJaggedFactory",
+        "Demo::Caller::fromBaseJaggedFactory",
+        "Demo::Caller::fromMultiDim",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromBoundFactory",
+        "Demo::Caller::fromBoundJaggedFactory",
+        "Demo::Caller::fromStaticFactory",
+        "Demo::Caller::fromStaticJaggedFactory",
+        "Demo::Caller::fromBaseJaggedFactory",
+        "Demo::Caller::fromMultiDim",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_foreach_factory_chain_and_multi_dimension_collection_receiver_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Caller {
+    int run(Group g) {
+        foreach (var item in g.GetItems()) { item.helper(1); }
+        foreach (var item in (g.GetItems())) { item.helper(2); }
+        return 0;
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
