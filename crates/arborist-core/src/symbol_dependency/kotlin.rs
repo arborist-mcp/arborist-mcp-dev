@@ -1657,11 +1657,63 @@ fn kotlin_scope_lambda_local_branch_shapes(
     }
     Some(shapes)
 }
+/// Resolves one scope-function lambda result expression (a branch arm or a
+/// scope-call body result that is not itself an `if`/`when`/elvis branch) to
+/// its binding shapes: an expression that roots on a branch local flattens to
+/// the local's shapes (with any chain suffix), a scope-function call on a
+/// branch-local receiver binds the nested lambda once per branch arm (bare,
+/// or with a trailing member chain for `apply`/`also`/`let`/`run`/`with`), and
+/// any other expression resolves through the single-expression rules of
+/// [`kotlin_scope_lambda_expression_binding`]. A nested branch local declared
+/// in a scope-call body therefore expands through the same branch rules as a
+/// direct branch result, covering the cross product of every enclosing branch
+/// local's arms.
+fn kotlin_scope_lambda_result_binding_shapes(
+    expression: Node<'_>,
+    locals: &KotlinScopeLocals,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
+    // An expression that is itself a scope-function call on a branch-local
+    // receiver (such as `g2.let { g -> g.items[0].item }` over a branch local
+    // `g2`) binds the nested lambda once per branch arm, flattening into the
+    // same shapes as the local's arms.
+    if expression.kind() == "call_expression"
+        && let Some(shapes) =
+            kotlin_scope_branch_local_scope_call_shapes(expression, locals, source)?
+    {
+        return Ok(Some(shapes));
+    }
+    // An expression that is a scope-function call over a branch-local receiver
+    // with a trailing member chain (or bare for `apply`/`also`), such as
+    // `g2.let { g -> g.make() }.items[0].item`, binds the call once per
+    // branch arm.
+    if matches!(
+        expression.kind(),
+        "call_expression" | "navigation_expression"
+    ) && let Some(shapes) =
+        kotlin_scope_branch_local_scope_call_navigation_shapes(expression, locals, source)?
+    {
+        return Ok(Some(shapes));
+    }
+    let expression_text = node_text(expression, source)?.trim().to_string();
+    if let Some(shapes) = kotlin_scope_lambda_local_branch_shapes(&expression_text, locals) {
+        return Ok(Some(shapes));
+    }
+    let Some(shape) = kotlin_scope_lambda_expression_binding(
+        expression, locals, scope_name, param_name, receiver, source,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(vec![shape]))
+}
 
-/// Resolves one scope-function lambda branch arm to its binding shapes: an
-/// arm that roots on a branch local flattens to the local's shapes (with any
-/// chain suffix), otherwise the arm resolves through the single-expression
-/// rules of [`kotlin_scope_lambda_expression_binding`].
+/// Resolves one scope-function lambda branch arm to its binding shapes, using
+/// the shared result-expression rules of
+/// [`kotlin_scope_lambda_result_binding_shapes`].
 fn kotlin_scope_lambda_branch_arm_shapes(
     arm: Node<'_>,
     locals: &KotlinScopeLocals,
@@ -1670,36 +1722,7 @@ fn kotlin_scope_lambda_branch_arm_shapes(
     receiver: &str,
     source: &str,
 ) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
-    // An arm that is itself a scope-function call on a branch-local receiver
-    // (such as `g1.let { g -> g.items[0].item }` over a branch local `g1`)
-    // binds the nested lambda once per branch arm, flattening into the same
-    // shapes as the local's arms.
-    if arm.kind() == "call_expression"
-        && let Some(shapes) = kotlin_scope_branch_local_scope_call_shapes(arm, locals, source)?
-    {
-        return Ok(Some(shapes));
-    }
-    // An arm that is a scope-function call over a branch-local receiver with
-    // a trailing member chain (or bare for `apply`/`also`), such as
-    // `g1.let { g -> g.make() }.items[0].item`, binds the call once per
-    // branch arm.
-    if matches!(arm.kind(), "call_expression" | "navigation_expression")
-        && let Some(shapes) =
-            kotlin_scope_branch_local_scope_call_navigation_shapes(arm, locals, source)?
-    {
-        return Ok(Some(shapes));
-    }
-    let arm_text = node_text(arm, source)?.trim().to_string();
-    if let Some(shapes) = kotlin_scope_lambda_local_branch_shapes(&arm_text, locals) {
-        return Ok(Some(shapes));
-    }
-    let Some(shape) = kotlin_scope_lambda_expression_binding(
-        arm, locals, scope_name, param_name, receiver, source,
-    )?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(vec![shape]))
+    kotlin_scope_lambda_result_binding_shapes(arm, locals, scope_name, param_name, receiver, source)
 }
 
 /// Binds a scope-function lambda result that is itself a scope-function call
@@ -1791,7 +1814,7 @@ fn kotlin_scope_branch_local_scope_call_shapes(
                 source,
             )?
         } else {
-            kotlin_scope_lambda_expression_binding(
+            kotlin_scope_lambda_result_binding_shapes(
                 result,
                 &nested_locals,
                 &scope_name,
@@ -1799,7 +1822,6 @@ fn kotlin_scope_branch_local_scope_call_shapes(
                 &receiver,
                 source,
             )?
-            .map(|shape| vec![shape])
         };
         let Some(arm_shapes) = arm_shapes else {
             return Ok(None);

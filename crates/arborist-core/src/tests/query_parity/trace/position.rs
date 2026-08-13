@@ -54569,3 +54569,113 @@ fn traces_kotlin_cross_file_scope_function_lambda_branch_local_scope_call_naviga
         );
     }
 }
+
+#[test]
+fn traces_kotlin_scope_function_lambda_branch_local_nested_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\nimport com.lib.Item\n\nclass Util {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n    fun flag(): Boolean = true\n    fun nestedNavLetLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(1)\n    }\n    fun nestedNavRunInnerLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.run { make() }.items[0].item } }\n        return first.helper(2)\n    }\n    fun nestedNavWithInnerLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); with(g2) { make() }.items[0].item } }\n        return first.helper(3)\n    }\n    fun nestedNavApplyInnerLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.apply { this }.items[0].item } }\n        return first.helper(4)\n    }\n    fun nestedNavRunOuterLocal(): Int {\n        val first = h.run { val g1 = if (flag()) make() else makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(5)\n    }\n    fun nestedNavMemberLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) plainH.make() else plainH.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(6)\n    }\n    fun nestedNavLocalLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); val g3 = g2.let { g3b -> g3b.make() }.items[0].item; g3 } }\n        return first.helper(7)\n    }\n    fun nestedNavArmLocal(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); if (flag()) g2.let { g3 -> g3.make() }.items[0].item else g2.items[0].item } }\n        return first.helper(8)\n    }\n    fun nestedNavUnknownMethodFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.missing().items[0].item } }\n        return first.helper(9)\n    }\n    fun nestedNavChainedLocalFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); val g3 = g2; g3.let { g4 -> g4.make() }.items[0].item } }\n        return first.helper(10)\n    }\n    fun nestedNavNoElseFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(11)\n    }\n    fun nestedNavDivergentFailsClosed(): Int {\n        val first = h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else Item(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(12)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda result that chains a scope-function call on a
+    // branch-local receiver whose body itself declares a nested branch local
+    // (`val g2 = if (flag()) g.make() else g.makeAlt()`) and consumes it
+    // through a result-bearing scope call (`let`/`run`/`with`) or a
+    // receiver-returning navigation (`apply`/`also`) with a trailing member
+    // chain expands both branch locals once per arm, so the outer initializer
+    // binds through the cross product of the outer local's arms and the
+    // nested local's arms. This covers `let`, `run`, and `with` inner calls,
+    // an `apply` navigation, a branch local inside a `run` outer, an
+    // enclosing-member-rooted nested branch local, a chain stored as a local
+    // then consumed (`val g3 = ...; g3`), and a branch arm that uses the
+    // nested scope-call navigation, all dispatching the terminal member on
+    // the imported `com.lib.Item` declaration. A chain through an unknown
+    // terminal method (`g2.let { ... }.missing()...`), chained bare locals
+    // (`val g3 = g2`), a nested branch local without an `else` arm, and
+    // divergent nested branch types (`g.make()` vs `Item()`) fail closed, so
+    // the eight nested scope-call-navigation callers in `Util` dispatch on
+    // `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "com::example::Util::nestedNavLetLocal",
+        "com::example::Util::nestedNavRunInnerLocal",
+        "com::example::Util::nestedNavWithInnerLocal",
+        "com::example::Util::nestedNavApplyInnerLocal",
+        "com::example::Util::nestedNavRunOuterLocal",
+        "com::example::Util::nestedNavMemberLocal",
+        "com::example::Util::nestedNavLocalLocal",
+        "com::example::Util::nestedNavArmLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::nestedNavUnknownMethodFailsClosed",
+        "com::example::Util::nestedNavChainedLocalFailsClosed",
+        "com::example::Util::nestedNavNoElseFailsClosed",
+        "com::example::Util::nestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "com::example::Util::nestedNavLetLocal",
+        "com::example::Util::nestedNavRunInnerLocal",
+        "com::example::Util::nestedNavWithInnerLocal",
+        "com::example::Util::nestedNavApplyInnerLocal",
+        "com::example::Util::nestedNavRunOuterLocal",
+        "com::example::Util::nestedNavMemberLocal",
+        "com::example::Util::nestedNavLocalLocal",
+        "com::example::Util::nestedNavArmLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::nestedNavUnknownMethodFailsClosed",
+        "com::example::Util::nestedNavChainedLocalFailsClosed",
+        "com::example::Util::nestedNavNoElseFailsClosed",
+        "com::example::Util::nestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
