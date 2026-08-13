@@ -58449,3 +58449,198 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_conditional_access_method_call_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+    public Helper? inner() => this;
+    public Helper? field;
+}
+class Wrapper {
+    public Helper? inner() => new Helper();
+}
+class Holder {
+    public Helper[] items = new Helper[2];
+}
+class Group {
+    public Holder holder = new Holder();
+    public Helper[] GetItems() => new Helper[2];
+    public Helper GetSingle() => new Helper();
+    public Helper? GetMaybe() => new Helper();
+    public Wrapper? GetWrapper() => new Wrapper();
+}
+class Caller {
+    Helper? field;
+    int fromCtorParensCond() {
+        var helper = (new Group()).GetMaybe();
+        return helper?.helper(1) ?? 0;
+    }
+    int fromCtorCond() {
+        var helper = new Group().GetMaybe();
+        return helper?.helper(2) ?? 0;
+    }
+    int fromCtorParensCondChain() {
+        var helper = (new Group()).GetWrapper();
+        return helper?.inner()?.helper(3) ?? 0;
+    }
+    int fromCtorCondMemberChain() {
+        var helper = (new Group()).GetSingle();
+        return helper?.inner()?.helper(4) ?? 0;
+    }
+    int fromGroupCondChain() {
+        var group = new Group();
+        return group?.GetSingle()?.helper(5) ?? 0;
+    }
+    int fromCondMemberThenElem() {
+        var group = new Group();
+        return group?.holder.items[0].helper(6) ?? 0;
+    }
+    int fromNestedCondMembers() {
+        var helper = (new Group()).GetSingle();
+        return helper?.field?.helper(7) ?? 0;
+    }
+    int fromThisCondField() {
+        return this?.field.helper(8) ?? 0;
+    }
+    int failures() {
+        var missing = (new Group()).Missing();
+        var unused = missing?.helper(1) ?? 0;
+        var group = new Group();
+        var noMember = group?.Missing()?.helper(1) ?? 0;
+        return unused + noMember;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional method-call receiver such as `helper?.helper(1)`,
+    // `helper?.inner()?.helper(1)`, or `group?.GetSingle()?.helper(1)`
+    // dispatches the same instance members as the plain dotted spelling, so
+    // the bound-receiver chain tracing covers conditional hops on
+    // constructed-receiver factory var-locals (parenthesized and plain),
+    // constructor-receiver var-locals, and member chains ending in an
+    // element access, nested conditional member hops such as
+    // `helper?.field?.helper(...)`, and `this?`-rooted conditional accesses
+    // (which dispatch the same members as a plain `this.` chain). An unknown
+    // factory return and an unknown conditional member fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::fromCtorParensCond",
+        "Demo::Caller::fromCtorCond",
+        "Demo::Caller::fromCtorParensCondChain",
+        "Demo::Caller::fromCtorCondMemberChain",
+        "Demo::Caller::fromGroupCondChain",
+        "Demo::Caller::fromCondMemberThenElem",
+        "Demo::Caller::fromNestedCondMembers",
+        "Demo::Caller::fromThisCondField",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::fromCtorParensCond",
+        "Demo::Caller::fromCtorCond",
+        "Demo::Caller::fromCtorParensCondChain",
+        "Demo::Caller::fromCtorCondMemberChain",
+        "Demo::Caller::fromGroupCondChain",
+        "Demo::Caller::fromCondMemberThenElem",
+        "Demo::Caller::fromNestedCondMembers",
+        "Demo::Caller::fromThisCondField",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_conditional_access_method_call_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper? GetMaybe() => new Helper();
+}
+class Caller {
+    int run() {
+        var helper = (new Group()).GetMaybe();
+        return helper?.helper(1) ?? 0;
+    }
+    int fail() {
+        var missing = new Group().Missing();
+        return missing?.helper(1) ?? 0;
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
