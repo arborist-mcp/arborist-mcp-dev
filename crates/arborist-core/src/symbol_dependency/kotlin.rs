@@ -1382,10 +1382,13 @@ fn kotlin_scope_function_binding_spelling(binding: &KotlinScopeFunctionBinding) 
 /// `val` local roots and rewrites through the same receiver rules as a
 /// single-expression body, keeping the call-callee / property-chain
 /// classification so a branch local can expand a chain base with the correct
-/// call marker; an `if` must have an `else` arm (or else-if arms) with at
-/// least two distinct spellings, a `when` must include an `else` arm, and an
-/// elvis expression must use the `?:` operator with both operands, otherwise
-/// the whole binding fails closed.
+/// call marker; a branch arm that roots on a branch local flattens to the
+/// local's arm shapes, so `if (flag()) g1 else it.makeAlt()` over a branch
+/// local `g1` binds through the same branch rules as a direct branch result.
+/// An `if` must have an `else` arm (or else-if arms) with at least two
+/// distinct spellings, a `when` must include an `else` arm, and an elvis
+/// expression must use the `?:` operator with both operands, otherwise the
+/// whole binding fails closed.
 fn kotlin_scope_lambda_branch_shapes(
     result: Node<'_>,
     locals: &KotlinScopeLocals,
@@ -1417,22 +1420,27 @@ fn kotlin_scope_lambda_branch_shapes(
                     }
                 }
             } else {
-                let Some(shape) = kotlin_scope_lambda_expression_binding(
+                let Some(arm_shapes) = kotlin_scope_lambda_branch_arm_shapes(
                     *branch, locals, scope_name, param_name, receiver, source,
                 )?
                 else {
                     return Ok(None);
                 };
-                if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
-                    && seen.insert(spelling)
-                {
-                    shapes.push(shape);
+                for shape in arm_shapes {
+                    if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
+                        && seen.insert(spelling)
+                    {
+                        shapes.push(shape);
+                    }
                 }
             }
         }
-        // An `if` without an `else` arm (or whose distinct branches collapse
-        // to a single spelling) has no value type to bind.
-        if shapes.len() < 2 {
+        // An `if` without an `else` arm has no value type to bind, and an
+        // `if` whose distinct branches collapse to a single spelling binds
+        // nothing either; a single arm that flattens a branch local still
+        // needs a real `else` arm before any binding is recorded.
+        let arm_count = children.len().saturating_sub(1);
+        if arm_count < 2 || shapes.len() < 2 {
             return Ok(None);
         }
         return Ok(Some(shapes));
@@ -1451,16 +1459,18 @@ fn kotlin_scope_lambda_branch_shapes(
             let Some(body) = entry_children.last().copied() else {
                 return Ok(None);
             };
-            let Some(shape) = kotlin_scope_lambda_expression_binding(
+            let Some(arm_shapes) = kotlin_scope_lambda_branch_arm_shapes(
                 body, locals, scope_name, param_name, receiver, source,
             )?
             else {
                 return Ok(None);
             };
-            if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
-                && seen.insert(spelling)
-            {
-                shapes.push(shape);
+            for shape in arm_shapes {
+                if let Some(spelling) = kotlin_scope_function_binding_spelling(&shape)
+                    && seen.insert(spelling)
+                {
+                    shapes.push(shape);
+                }
             }
         }
         // A `when` used as an expression without an `else` arm has no value
@@ -1486,13 +1496,13 @@ fn kotlin_scope_lambda_branch_shapes(
             return Ok(None);
         }
         for operand in [children[0], children[1]] {
-            let Some(shape) = kotlin_scope_lambda_expression_binding(
+            let Some(arm_shapes) = kotlin_scope_lambda_branch_arm_shapes(
                 operand, locals, scope_name, param_name, receiver, source,
             )?
             else {
                 return Ok(None);
             };
-            shapes.push(shape);
+            shapes.extend(arm_shapes);
         }
         return Ok(Some(shapes));
     }
@@ -1568,6 +1578,68 @@ fn kotlin_scope_lambda_local_branch_spellings(
             })
             .collect(),
     )
+}
+
+/// Expands a scope-function lambda result whose root is a branch local into
+/// the local's binding shapes with the chain suffix applied, so a branch arm
+/// that is exactly the local (`g1`) or a chain rooted on it (`g1.make()`)
+/// flattens into the same call-callee / property-chain shapes as the local's
+/// arms. A result that does not root on a branch local, or a chain expansion
+/// that cannot classify into a call-callee or property-chain shape, returns
+/// `None` so the consuming branch fails closed.
+fn kotlin_scope_lambda_local_branch_shapes(
+    text: &str,
+    locals: &KotlinScopeLocals,
+) -> Option<Vec<KotlinScopeFunctionBinding>> {
+    if text.is_empty() {
+        return None;
+    }
+    let root = text.split(['.', '[', '(']).next().unwrap_or_default();
+    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(root) else {
+        return None;
+    };
+    if branches.is_empty() {
+        return None;
+    }
+    let suffix = &text[root.len()..];
+    let mut shapes = Vec::new();
+    for branch in branches {
+        let shape = if suffix.is_empty() {
+            match branch {
+                KotlinScopeLocalBranch::Callee(callee) => (callee.clone(), None, None),
+                KotlinScopeLocalBranch::Chain(chain) => (String::new(), None, Some(chain.clone())),
+            }
+        } else {
+            kotlin_scope_body_binding(&branch.with_suffix(suffix))?
+        };
+        shapes.push(shape);
+    }
+    Some(shapes)
+}
+
+/// Resolves one scope-function lambda branch arm to its binding shapes: an
+/// arm that roots on a branch local flattens to the local's shapes (with any
+/// chain suffix), otherwise the arm resolves through the single-expression
+/// rules of [`kotlin_scope_lambda_expression_binding`].
+fn kotlin_scope_lambda_branch_arm_shapes(
+    arm: Node<'_>,
+    locals: &KotlinScopeLocals,
+    scope_name: &str,
+    param_name: Option<&str>,
+    receiver: &str,
+    source: &str,
+) -> Result<Option<Vec<KotlinScopeFunctionBinding>>> {
+    let arm_text = node_text(arm, source)?.trim().to_string();
+    if let Some(shapes) = kotlin_scope_lambda_local_branch_shapes(&arm_text, locals) {
+        return Ok(Some(shapes));
+    }
+    let Some(shape) = kotlin_scope_lambda_expression_binding(
+        arm, locals, scope_name, param_name, receiver, source,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(vec![shape]))
 }
 
 /// Extracts a branch initializer binding from a `val`/`var` declaration whose
