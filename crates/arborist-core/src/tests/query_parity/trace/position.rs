@@ -59018,3 +59018,182 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_conditional_access_element_access_method_call_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Helper[] GetItems() => new Helper[2];
+    public Group holder;
+}
+class Caller {
+    private Helper[] makeItems() => new Helper[2];
+    int fromCondMemberElem() {
+        var group = new Group();
+        return group?.items[0].helper(1);
+    }
+    int fromBareFactoryCondElem() {
+        return makeItems()?[0].helper(2);
+    }
+    int fromCondCallElem() {
+        var group = new Group();
+        return group?.GetItems()[0].helper(3);
+    }
+    int fromCtorParensCondElem() {
+        return (new Group()).GetItems()?[0].helper(4);
+    }
+    int fromCondElemBinding() {
+        var group = new Group();
+        return group?.items?[0].helper(5);
+    }
+    int fromCondCallCondElem() {
+        var group = new Group();
+        return group?.GetItems()?[0].helper(6);
+    }
+    int fromCondNestedHopElem() {
+        var group = new Group();
+        return group?.holder.items[0].helper(7);
+    }
+    int failures() {
+        var group = new Group();
+        var missing = group?.Missing()[0];
+        var wrong = group?.items[0][0];
+        return missing.helper(1) + wrong.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional element-access method-call receiver such as
+    // `group?.items[0].helper(...)`, `group?.GetItems()[0].helper(...)`, or
+    // `(new Group()).GetItems()?[0].helper(...)` dispatches the trailing
+    // member on the same element component type as the plain dotted
+    // spelling, including null-conditional element bindings such as
+    // `group?.items?[0]` or `group?.GetItems()?[0]` and nested conditional
+    // hops such as `group?.holder.items[0]`. Unknown conditional members,
+    // unknown factory returns, and element accesses deeper than the base
+    // array's layers still fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::fromCondMemberElem",
+        "Demo::Caller::fromBareFactoryCondElem",
+        "Demo::Caller::fromCondCallElem",
+        "Demo::Caller::fromCtorParensCondElem",
+        "Demo::Caller::fromCondElemBinding",
+        "Demo::Caller::fromCondCallCondElem",
+        "Demo::Caller::fromCondNestedHopElem",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::fromCondMemberElem",
+        "Demo::Caller::fromBareFactoryCondElem",
+        "Demo::Caller::fromCondCallElem",
+        "Demo::Caller::fromCtorParensCondElem",
+        "Demo::Caller::fromCondElemBinding",
+        "Demo::Caller::fromCondCallCondElem",
+        "Demo::Caller::fromCondNestedHopElem",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_conditional_access_element_access_method_call_receivers_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Helper[] GetItems() => new Helper[2];
+}
+class Caller {
+    int run() {
+        var group = new Group();
+        return group?.GetItems()?[0].helper(1);
+    }
+    int fail() {
+        var group = new Group();
+        var missing = group?.Missing()[0];
+        return missing.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
