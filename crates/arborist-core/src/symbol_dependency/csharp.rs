@@ -1416,7 +1416,9 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 }
 
 /// Infers the element type of a `var` foreach variable from its collection
-/// expression, such as `items` in `foreach (var item in items)`: a bound
+/// expression, such as `items` in `foreach (var item in items)`, with
+/// parenthesized collections such as `(items)` unwrapped to the same shape
+/// as the unparenthesized form: a bound
 /// array-typed identifier or `this.`-rooted field access yields the raw
 /// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
 /// `Helper`, `Helper[][]` -> `Helper[]`), a factory-returned array collection
@@ -1433,6 +1435,15 @@ fn csharp_foreach_collection_element_type(
     source: &str,
     bindings: &CSharpReceiverTypeBindings,
 ) -> Result<Option<String>> {
+    // A parenthesized collection such as `foreach (var item in (items))`
+    // unwraps to the same shape as the unparenthesized form; nested or
+    // malformed parentheses fail closed.
+    if right.kind() == "parenthesized_expression" {
+        let Some(inner) = csharp_parenthesized_inner_expression(right) else {
+            return Ok(None);
+        };
+        return csharp_foreach_collection_element_type(inner, source, bindings);
+    }
     if right.kind() == "invocation_expression" {
         // A factory-returned array collection such as
         // `foreach (var item in makeItems())` binds the loop variable to a

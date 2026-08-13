@@ -56782,3 +56782,220 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_foreach_parenthesized_collection_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Holder {
+    public Helper[] items = new Helper[2];
+    public Helper[][] matrix = new Helper[2][];
+    public Group[] groups = new Group[1];
+}
+class Util {
+    public static Helper[] fieldItems = new Helper[2];
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    private Holder holder = new Holder();
+
+    int fromParam(Holder h) {
+        foreach (var item in (h.items)) { item.helper(1); }
+        return 0;
+    }
+    int fromField() {
+        foreach (var item in (this.holder.items)) { item.helper(2); }
+        return 0;
+    }
+    int fromNestedParens(Holder h) {
+        foreach (var item in ((h.items))) { item.helper(3); }
+        return 0;
+    }
+    int fromBareField() {
+        foreach (var item in (fieldItems)) { item.helper(4); }
+        return 0;
+    }
+    int fromFactory() {
+        foreach (var item in (makeItems())) { item.helper(5); }
+        return 0;
+    }
+    int fromNestedFactory() {
+        foreach (var item in ((makeItems()))) { item.helper(6); }
+        return 0;
+    }
+    int fromJagged(Holder h) {
+        foreach (var row in (h.matrix)) { row[0].helper(7); }
+        return 0;
+    }
+    int fromHop(Holder h) {
+        foreach (var g in (h.groups)) { g.inner().helper(8); }
+        return 0;
+    }
+    int fromStatic() {
+        foreach (var item in (Util.fieldItems)) { item.helper(9); }
+        return 0;
+    }
+    int failures(Holder h) {
+        foreach (var item in (h.missing)) { item.helper(10); }
+        foreach (var item in (h.items[0])) { item.helper(11); }
+        foreach (var row in (h.matrix)) { row.helper(12); }
+        foreach (var item in (makeSingle())) { item.helper(13); }
+        foreach (var n in (makeCounts())) { n.helper(14); }
+        return 0;
+    }
+    Helper[] makeItems() => new Helper[2];
+    Helper makeSingle() => new Helper();
+    int[] makeCounts() => new int[2];
+}
+",
+    )
+    .unwrap();
+
+    // A `var` foreach variable whose collection is parenthesized unwraps the
+    // parentheses and dispatches on the same element type as the
+    // unparenthesized form, including bound-receiver member chains
+    // (`(h.items)`), `this.`-rooted deeper chains (`(this.holder.items)`),
+    // bare enclosing-type array fields (`(fieldItems)`), nested parentheses
+    // (`((h.items))`), factory calls (`(makeItems())`), jagged loop
+    // variables, member hops on the loop variable, and static-rooted array
+    // fields (`(Util.fieldItems)`); unknown members, element-access
+    // collections, direct member calls on a nested jagged row, non-array
+    // factory returns, and primitive return arrays all fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromNestedParens",
+        "Demo::Caller::fromBareField",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromNestedFactory",
+        "Demo::Caller::fromJagged",
+        "Demo::Caller::fromStatic",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::fromParam",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromNestedParens",
+        "Demo::Caller::fromBareField",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromNestedFactory",
+        "Demo::Caller::fromJagged",
+        "Demo::Caller::fromStatic",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::fromHop");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(
+        group_persisted.callers[0].symbol_id,
+        "Demo::Caller::fromHop"
+    );
+}
+
+#[test]
+fn traces_csharp_foreach_parenthesized_collection_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Holder {
+    public Helper[] items = new Helper[2];
+}
+class Caller {
+    int run(Holder h) {
+        foreach (var item in (h.items)) { item.helper(1); }
+        foreach (var item in (makeItems())) { item.helper(2); }
+        return 0;
+    }
+    Helper[] makeItems() => new Helper[2];
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
