@@ -2273,6 +2273,48 @@ fn resolve_csharp_factory_receiver_binding(
     ))
 }
 
+/// Normalizes a constructed-receiver factory spelling such as
+/// `Group().GetItems`, `Group(1).GetItems`, `Outer.Inner(1).holder.GetItems`,
+/// or `Group { Capacity = 2 }.GetItems` (the text after a `new ` prefix) into
+/// the dotted `Type().<chain>` shape the constructed-receiver resolver
+/// expects, stripping the constructor argument list or object-initializer
+/// body and normalizing generic type arguments to the raw type path. A
+/// spelling without a trailing member chain or with a malformed type or
+/// unbalanced argument list returns `None` and fails closed.
+fn csharp_constructed_factory_call_spelling(factory_spelling: &str) -> Option<String> {
+    let open_index = factory_spelling.find(['(', '{'])?;
+    let type_name = factory_spelling[..open_index].trim();
+    if type_name.is_empty() || type_name.contains(['(', ')', '[', ']', '?']) {
+        return None;
+    }
+    let open_character = factory_spelling.as_bytes()[open_index] as char;
+    let close_character = if open_character == '(' { ')' } else { '}' };
+    let mut depth = 0usize;
+    let mut rest = None;
+    for (index, byte) in factory_spelling.bytes().enumerate().skip(open_index) {
+        let character = byte as char;
+        if character == open_character {
+            depth += 1;
+        } else if character == close_character {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                rest = Some(&factory_spelling[index + 1..]);
+                break;
+            }
+        }
+    }
+    let member_chain = rest?.trim_start().strip_prefix('.')?;
+    if member_chain.is_empty() {
+        return None;
+    }
+    let semantic_path = crate::language::csharp_generic_type_semantic_path(type_name)?;
+    Some(format!(
+        "{}().{}",
+        semantic_path.replace("::", "."),
+        member_chain
+    ))
+}
+
 /// Resolves the factory call of a `var` initializer to a unique method
 /// symbol. Bare names resolve as enclosing-type instance calls first, then
 /// base-type and static-imported methods; `this.`-rooted names never fall
@@ -2455,9 +2497,16 @@ fn resolve_csharp_var_factory_method<'a>(
         if rest.is_empty() {
             return Ok(None);
         }
+        // The element-access initializer base keeps the raw constructed
+        // spelling such as `new Group(1).GetItems`, so normalize the
+        // constructor argument list or object-initializer body away before
+        // the constructed-receiver dispatch expects a `Type().member` shape.
+        let Some(constructed_spelling) = csharp_constructed_factory_call_spelling(rest) else {
+            return Ok(None);
+        };
         return match resolve_csharp_constructor_receiver_call(
             source_symbol,
-            rest,
+            &constructed_spelling,
             raw_symbols,
             semantic_path_index,
             source_namespace_path,
