@@ -745,10 +745,13 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 /// such as `makeItems()` binds a factory-element marker the resolver expands
 /// to the factory return array's element component type, a member-access
 /// collection such as `group.items` binds a chain-element marker the resolver
-/// expands to the terminal array member's element component type, and
-/// primitive, non-array, and unresolvable collections return `None` and fail
-/// closed. Mirrors the dependency resolver's foreach element-type inference
-/// so the extractor and resolver bindings stay aligned.
+/// expands to the terminal array member's element component type, a `var`
+/// local collection bound from a factory call or field/property chain (such
+/// as `var items = makeItems()` or `var items = this.fieldItems`) keeps the
+/// corresponding element marker, and primitive, non-array, and unresolvable
+/// collections return `None` and fail closed. Mirrors the dependency
+/// resolver's foreach element-type inference so the extractor and resolver
+/// bindings stay aligned.
 fn csharp_foreach_collection_element_type(
     node: Node<'_>,
     source: &str,
@@ -795,6 +798,37 @@ fn csharp_foreach_collection_element_type(
         // directly bound; resolve it through the chain-element marker.
         return Ok(Some(format!("@chain-element:this.{spelling}")));
     };
+    // A `var` local collection bound from a factory call such as
+    // `var items = makeItems()` keeps its factory marker so the loop
+    // variable dispatches on the factory return array's element component
+    // type.
+    if let Some(factory_call) = declared_type.strip_prefix("@factory:") {
+        return Ok(Some(format!("@factory-element:{factory_call}")));
+    }
+    // A `var` local collection bound from a field/property-access chain
+    // such as `var items = this.fieldItems` or `var items = holder.items`
+    // keeps a chain-element marker the resolver walks to the terminal array
+    // member's element component type; a bare-name chain such as
+    // `var items = fieldItems` resolves the bound member's declared type
+    // directly below.
+    if let Some(chain) = declared_type.strip_prefix("@init:") {
+        if chain.contains('.') {
+            return Ok(Some(format!("@chain-element:{chain}")));
+        }
+        let Some(chain_binding) = bindings.get(chain) else {
+            return Ok(None);
+        };
+        if chain_binding.starts_with('@') {
+            return Ok(None);
+        }
+        let Some(element_type) = csharp_array_element_component_spelling(chain_binding) else {
+            return Ok(None);
+        };
+        if csharp_array_component_spelling_is_primitive(element_type) {
+            return Ok(None);
+        }
+        return Ok(Some(element_type.to_string()));
+    }
     if declared_type.is_empty() {
         return Ok(None);
     }
