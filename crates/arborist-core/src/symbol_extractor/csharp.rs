@@ -1192,7 +1192,7 @@ fn csharp_initializer_type_binding(
             Ok(Some(type_name.to_string()))
         }
         "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
-        "member_access_expression" | "identifier" => {
+        "member_access_expression" | "conditional_access_expression" | "identifier" => {
             let Some(chain) =
                 csharp_instance_member_chain_spelling(initializer, source, bindings, true)?
             else {
@@ -1221,11 +1221,8 @@ fn csharp_factory_marker_from_initializer(
         "identifier" => crate::language::node_text(function, source)?
             .trim()
             .to_string(),
-        "member_access_expression" => {
-            let Some(expression) = function.child_by_field_name("expression") else {
-                return Ok(None);
-            };
-            let Some(name) = function.child_by_field_name("name") else {
+        "member_access_expression" | "conditional_access_expression" => {
+            let Some((expression, name)) = csharp_member_hop_receiver_and_name(function) else {
                 return Ok(None);
             };
             let expression_text = crate::language::node_text(expression, source)?.trim();
@@ -1237,6 +1234,11 @@ fn csharp_factory_marker_from_initializer(
         }
         _ => return Ok(None),
     };
+    // A null-conditional factory hop such as `group?.GetSingle()` or
+    // `new Group().GetMaybe()?.inner()` dispatches the same factory member as
+    // the plain dotted spelling, so the marker normalizes `?.` hops to `.`
+    // and the resolver expands the chain as if the access were unconditional.
+    let spelling = spelling.replace("?.", ".");
     if spelling.is_empty() {
         return Ok(None);
     }

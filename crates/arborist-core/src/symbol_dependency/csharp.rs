@@ -954,7 +954,7 @@ fn csharp_initializer_type_binding(
             Ok(Some(type_name.to_string()))
         }
         "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
-        "member_access_expression" | "identifier" => {
+        "member_access_expression" | "conditional_access_expression" | "identifier" => {
             let Some(chain) = csharp_initializer_chain_spelling(initializer, source, bindings)?
             else {
                 return Ok(None);
@@ -962,6 +962,34 @@ fn csharp_initializer_type_binding(
             Ok(Some(format!("@init:{chain}")))
         }
         _ => Ok(None),
+    }
+}
+
+/// Returns the receiver and member-name nodes of a member-access or
+/// null-conditional member hop such as `group.items`, `group?.items`, or the
+/// `?.inner()` function of `group?.inner()`. Null-conditional hops dispatch
+/// the same instance member on the condition's type, so they spell the same
+/// as plain member access. Mirrors the extractor's hop helper so resolver
+/// bindings stay aligned with extracted references.
+fn csharp_chain_member_hop_parts(
+    node: tree_sitter::Node<'_>,
+) -> Option<(tree_sitter::Node<'_>, tree_sitter::Node<'_>)> {
+    match node.kind() {
+        "member_access_expression" => {
+            let receiver = node.child_by_field_name("expression")?;
+            let name = node.child_by_field_name("name")?;
+            Some((receiver, name))
+        }
+        "conditional_access_expression" => {
+            let receiver = node.child_by_field_name("condition")?;
+            let mut cursor = node.walk();
+            let member_binding = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "member_binding_expression")?;
+            let name = member_binding.child_by_field_name("name")?;
+            Some((receiver, name))
+        }
+        _ => None,
     }
 }
 
@@ -984,8 +1012,8 @@ fn csharp_initializer_chain_spelling(
     let mut current = initializer;
     loop {
         match current.kind() {
-            "member_access_expression" => {
-                let Some(name) = current.child_by_field_name("name") else {
+            "member_access_expression" | "conditional_access_expression" => {
+                let Some((receiver, name)) = csharp_chain_member_hop_parts(current) else {
                     return Ok(None);
                 };
                 let name = node_text(name, source)?.trim();
@@ -993,10 +1021,7 @@ fn csharp_initializer_chain_spelling(
                     return Ok(None);
                 }
                 segments.push(name.to_string());
-                let Some(expression) = current.child_by_field_name("expression") else {
-                    return Ok(None);
-                };
-                current = expression;
+                current = receiver;
             }
             "invocation_expression" => {
                 let Some(function) = current.child_by_field_name("function") else {
@@ -1011,7 +1036,10 @@ fn csharp_initializer_chain_spelling(
                 // `MakeHelper().entry` records the call as the leading chain
                 // segment; the resolver dispatches it as a factory method on
                 // the enclosing type or a static-imported type.
-                if function.kind() != "member_access_expression" {
+                if !matches!(
+                    function.kind(),
+                    "member_access_expression" | "conditional_access_expression"
+                ) {
                     if function.kind() != "identifier" {
                         return Ok(None);
                     }
@@ -1026,7 +1054,7 @@ fn csharp_initializer_chain_spelling(
                     }
                     break;
                 }
-                let Some(name) = function.child_by_field_name("name") else {
+                let Some((receiver, name)) = csharp_chain_member_hop_parts(function) else {
                     return Ok(None);
                 };
                 let name = node_text(name, source)?.trim();
@@ -1038,10 +1066,7 @@ fn csharp_initializer_chain_spelling(
                 } else {
                     segments.push(format!("{name}({arity})"));
                 }
-                let Some(expression) = function.child_by_field_name("expression") else {
-                    return Ok(None);
-                };
-                current = expression;
+                current = receiver;
             }
             "identifier" => {
                 let base = node_text(current, source)?.trim();
@@ -1180,11 +1205,8 @@ fn csharp_factory_marker_from_initializer(
     };
     let spelling = match function.kind() {
         "identifier" => node_text(function, source)?.trim().to_string(),
-        "member_access_expression" => {
-            let Some(expression) = function.child_by_field_name("expression") else {
-                return Ok(None);
-            };
-            let Some(name) = function.child_by_field_name("name") else {
+        "member_access_expression" | "conditional_access_expression" => {
+            let Some((expression, name)) = csharp_chain_member_hop_parts(function) else {
                 return Ok(None);
             };
             let expression_text = node_text(expression, source)?.trim();
@@ -1196,6 +1218,11 @@ fn csharp_factory_marker_from_initializer(
         }
         _ => return Ok(None),
     };
+    // A null-conditional factory hop such as `group?.GetSingle()` or
+    // `new Group().GetMaybe()?.inner()` dispatches the same factory member as
+    // the plain dotted spelling, so the marker normalizes `?.` hops to `.`
+    // and the resolver expands the chain as if the access were unconditional.
+    let spelling = spelling.replace("?.", ".");
     if spelling.is_empty() {
         return Ok(None);
     }
