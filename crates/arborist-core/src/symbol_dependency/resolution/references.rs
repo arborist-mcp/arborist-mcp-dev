@@ -2689,21 +2689,57 @@ fn resolve_csharp_var_factory_method<'a>(
         if hops.iter().any(|hop| hop.is_empty()) {
             return Ok(None);
         }
-        let Some(type_name) = bindings.type_for(receiver_name) else {
-            return Ok(None);
+        // A receiver bound to a concrete declared type dispatches directly;
+        // a receiver bound to a factory or member-chain marker
+        // (`var group = makeGroup()` or `var group = holder`) resolves its
+        // receiver type through the same factory and chain rules before the
+        // hops walk; untyped receivers, unknown markers, and unresolvable
+        // marker bindings fail closed.
+        let raw_binding = bindings.raw_for(receiver_name).unwrap_or_default();
+        let initial_binding = if let Some(type_name) = bindings.type_for(receiver_name) {
+            resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding)
+        {
+            resolve_csharp_factory_receiver_binding(
+                source_symbol,
+                &factory_name,
+                factory_arity,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+            resolve_csharp_initializer_chain_binding(
+                source_symbol,
+                chain,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            None
         };
-        let Some(binding) = resolve_csharp_receiver_type_binding(
-            source_symbol,
-            &type_name,
-            raw_symbols,
-            semantic_path_index,
-            source_namespace_path,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-        else {
+        let Some(binding) = initial_binding else {
             return Ok(None);
         };
         let (binding, dispatch_source_symbol) = if hops.is_empty() {
