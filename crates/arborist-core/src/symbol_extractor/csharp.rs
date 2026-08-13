@@ -741,15 +741,31 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 /// expression, such as `items` in `foreach (var item in items)`: a bound
 /// array-typed identifier or `this.`-rooted member access yields the raw
 /// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
-/// `Helper`, `Helper[][]` -> `Helper[]`), and primitive, non-array, and
-/// unresolvable collections return `None` and fail closed. Mirrors the
-/// dependency resolver's foreach element-type inference so the extractor and
-/// resolver bindings stay aligned.
+/// `Helper`, `Helper[][]` -> `Helper[]`), a factory-returned array collection
+/// such as `makeItems()` binds a factory-element marker the resolver expands
+/// to the factory return array's element component type, and primitive,
+/// non-array, and unresolvable collections return `None` and fail closed.
+/// Mirrors the dependency resolver's foreach element-type inference so the
+/// extractor and resolver bindings stay aligned.
 fn csharp_foreach_collection_element_type(
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
+    if node.kind() == "invocation_expression" {
+        // A factory-returned array collection such as
+        // `foreach (var item in makeItems())` binds the loop variable to a
+        // factory-element marker so the resolver dispatches on the factory
+        // return array's element component type; non-array factory returns,
+        // primitives, and unresolvable factories fail closed.
+        let Some(marker) = csharp_factory_marker_from_initializer(node, source)? else {
+            return Ok(None);
+        };
+        let Some(spelling) = marker.strip_prefix("@factory:") else {
+            return Ok(None);
+        };
+        return Ok(Some(format!("@factory-element:{spelling}")));
+    }
     let spelling = match node.kind() {
         "identifier" => crate::language::node_text(node, source)?.trim().to_string(),
         "member_access_expression" => {

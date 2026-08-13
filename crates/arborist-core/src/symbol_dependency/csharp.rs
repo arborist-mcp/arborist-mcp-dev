@@ -1419,13 +1419,29 @@ fn csharp_array_component_spelling_is_primitive(component: &str) -> bool {
 /// expression, such as `items` in `foreach (var item in items)`: a bound
 /// array-typed identifier or `this.`-rooted member access yields the raw
 /// element component spelling (`Helper[]` -> `Helper`, `Helper[,]` ->
-/// `Helper`, `Helper[][]` -> `Helper[]`), and primitive, non-array, and
-/// unresolvable collections return `None` and fail closed.
+/// `Helper`, `Helper[][]` -> `Helper[]`), a factory-returned array collection
+/// such as `makeItems()` binds a factory-element marker the resolver expands
+/// to the factory return array's element component type, and primitive,
+/// non-array, and unresolvable collections return `None` and fail closed.
 fn csharp_foreach_collection_element_type(
     right: tree_sitter::Node<'_>,
     source: &str,
     bindings: &CSharpReceiverTypeBindings,
 ) -> Result<Option<String>> {
+    if right.kind() == "invocation_expression" {
+        // A factory-returned array collection such as
+        // `foreach (var item in makeItems())` binds the loop variable to a
+        // factory-element marker so the resolver dispatches on the factory
+        // return array's element component type; non-array factory returns,
+        // primitives, and unresolvable factories fail closed.
+        let Some(marker) = csharp_factory_marker_from_initializer(right, source)? else {
+            return Ok(None);
+        };
+        let Some(spelling) = marker.strip_prefix("@factory:") else {
+            return Ok(None);
+        };
+        return Ok(Some(format!("@factory-element:{spelling}")));
+    }
     let spelling = match right.kind() {
         "identifier" => node_text(right, source)?.trim().to_string(),
         "member_access_expression" => {

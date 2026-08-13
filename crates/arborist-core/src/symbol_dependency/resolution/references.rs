@@ -1916,6 +1916,25 @@ fn resolve_csharp_instance_receiver_call(
             )?
         {
             Some(binding)
+        } else if let Some((factory_name, factory_arity)) =
+            csharp_foreach_factory_element_spelling(raw_binding)
+            && let Some(element_depth) = csharp_array_access_depth(raw_receiver_name)
+            && let Some(binding) = csharp_factory_array_component_binding(
+                source_symbol,
+                &factory_name,
+                factory_arity,
+                element_depth + 1,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            Some(binding)
         } else {
             return Ok(CSharpInstanceReceiverResolution::Blocked);
         }
@@ -1929,6 +1948,23 @@ fn resolve_csharp_instance_receiver_call(
             source_symbol,
             &factory_name,
             factory_arity,
+            &bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if let Some((factory_name, factory_arity)) =
+        csharp_foreach_factory_element_spelling(raw_binding)
+    {
+        csharp_factory_array_component_binding(
+            source_symbol,
+            &factory_name,
+            factory_arity,
+            1,
             &bindings,
             raw_symbols,
             semantic_path_index,
@@ -2083,6 +2119,30 @@ fn resolve_csharp_instance_receiver_call(
 /// parens from a receiver chain. Non-marker bindings return `None`.
 fn csharp_var_factory_spelling(binding: &str) -> Option<(String, usize)> {
     let call = binding.strip_prefix("@factory:")?;
+    let open = call.rfind('(')?;
+    let (factory_name, arguments) = call.split_at(open);
+    if factory_name.is_empty() {
+        return None;
+    }
+    let arguments = arguments.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    Some((factory_name.to_string(), arity))
+}
+
+/// Parses a `var` foreach factory-element marker binding such as
+/// `@factory-element:makeItems(0)` or
+/// `@factory-element:this.makeItems(0)` into the factory call spelling and
+/// its call arity. The marker records that a `var` foreach variable inferred
+/// its element type from a factory-returned array collection, so the resolver
+/// dispatches on the factory return array's element component type, stripping
+/// one additional element-component layer for an element access on the loop
+/// variable. Malformed markers return `None` and fail closed.
+fn csharp_foreach_factory_element_spelling(binding: &str) -> Option<(String, usize)> {
+    let call = binding.strip_prefix("@factory-element:")?;
     let open = call.rfind('(')?;
     let (factory_name, arguments) = call.split_at(open);
     if factory_name.is_empty() {

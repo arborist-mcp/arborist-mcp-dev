@@ -56041,13 +56041,13 @@ class Caller {
         return 0;
     }
     int failures(Helper[] items, int[] counts, Helper[][] matrix) {
-        foreach (var item in makeItems()) { item.helper(7); }
+        foreach (var item in makeSingle()) { item.helper(7); }
         foreach (var c in counts) { c.helper(8); }
         foreach (var row in matrix) { row.helper(9); }
         foreach (var x in unknown) { x.helper(10); }
         return 0;
     }
-    Helper[] makeItems() => new Helper[2];
+    Helper makeSingle() => new Helper();
 }
 ",
     )
@@ -56057,8 +56057,8 @@ class Caller {
     // array-typed parameter or `this.`-rooted field collection, an explicitly
     // typed foreach variable binds its declared type (including a nested
     // jagged component), and a member chain on the loop variable dispatches on
-    // the element type; factory, primitive, unknown, and direct member calls
-    // on a nested jagged row all fail closed.
+    // the element type; non-array factory returns, primitive, unknown, and
+    // direct member calls on a nested jagged row all fail closed.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 5);
@@ -56186,6 +56186,195 @@ class Caller {
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
     for caller in ["Demo::Caller::fromParam", "Demo::Caller::fromField"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+#[test]
+fn traces_csharp_foreach_factory_returned_array_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public int helper(int value) => value;
+    public Group inner() => this;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    Helper[][] makeMatrix() => new Helper[2][];
+    Group[] makeGroups() => new Group[1];
+
+    int fromBare() {
+        foreach (var item in makeItems()) { item.helper(1); }
+        return 0;
+    }
+    int fromThis() {
+        foreach (var item in this.makeItems()) { item.helper(2); }
+        return 0;
+    }
+    int fromJagged() {
+        foreach (var row in makeMatrix()) { row[0].helper(3); }
+        return 0;
+    }
+    int fromHop() {
+        foreach (var g in makeGroups()) { g.inner().helper(4); }
+        return 0;
+    }
+    int failures() {
+        foreach (var item in makeSingle()) { item.helper(5); }
+        foreach (var n in makeCounts()) { n.helper(6); }
+        foreach (var item in makeItems(1)) { item.helper(7); }
+        foreach (var row in makeMatrix()) { row.helper(8); }
+        return 0;
+    }
+    Helper makeSingle() => new Helper();
+    int[] makeCounts() => new int[2];
+}
+",
+    )
+    .unwrap();
+
+    // A `var` foreach variable whose collection is a factory-returned array
+    // dispatches on the factory return array's element component type, with
+    // `this.`-qualified factory calls, element access on a factory-returned
+    // jagged loop variable, and member chains on the loop variable resolving
+    // through the same factory rules; non-array factory returns, primitive
+    // return arrays, arity mismatches, and direct member calls on a
+    // factory-returned jagged row all fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::fromBare",
+        "Demo::Caller::fromThis",
+        "Demo::Caller::fromJagged",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::fromBare",
+        "Demo::Caller::fromThis",
+        "Demo::Caller::fromJagged",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+
+    let group_helper_symbol = "Demo::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "Demo::Caller::fromHop");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let group_persisted =
+        trace_symbol_graph_from_index(&db_path, group_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(group_persisted.callers.len(), 1);
+    assert_eq!(
+        group_persisted.callers[0].symbol_id,
+        "Demo::Caller::fromHop"
+    );
+}
+
+#[test]
+fn traces_csharp_foreach_factory_returned_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[] makeItems() => new Helper[2];
+    int fromBare() {
+        foreach (var item in makeItems()) { item.helper(1); }
+        return 0;
+    }
+    int fromThis() {
+        foreach (var item in this.makeItems()) { item.helper(2); }
+        return 0;
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::fromBare", "Demo::Caller::fromThis"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::fromBare", "Demo::Caller::fromThis"] {
         assert!(
             persisted
                 .callers
