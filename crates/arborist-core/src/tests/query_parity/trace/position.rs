@@ -59197,3 +59197,179 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_bare_factory_chain_var_initializer_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+    public Helper[] GetInner() => new Helper[2];
+    public Group holder;
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int fromBareChain() {
+        var items = makeGroup().GetItems();
+        return items[0].helper(1);
+    }
+    int fromCondBareChain() {
+        var items = makeGroup()?.GetItems();
+        return items[0].helper(2);
+    }
+    int fromCondBareChainCondElem() {
+        var items = makeGroup()?.GetItems();
+        return items?[0].helper(3);
+    }
+    int fromBareInnerChain() {
+        var items = makeGroup().GetInner();
+        return items[0].helper(4);
+    }
+    int fromStaticRootCondChain() {
+        var items = Util.MakeGroup()?.GetItems();
+        return items[0].helper(5);
+    }
+    int fromCondFieldHopChain() {
+        var items = makeGroup()?.holder.GetItems();
+        return items[0].helper(6);
+    }
+    int failures() {
+        var missingFactory = doesNotExist()?.GetItems();
+        var missingHop = makeGroup()?.Missing();
+        return missingFactory[0].helper(1) + missingHop[0].helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a factory chain whose leading segment is
+    // a method call, such as `var items = makeGroup().GetItems()` or
+    // `var items = Util.MakeGroup()?.GetItems()`, infers its receiver type
+    // from the trailing factory call's return array after resolving the
+    // leading call as a factory on the enclosing type or a static type and
+    // walking any intermediate field or method-call hops, so an element
+    // access on the local dispatches on the array's element component type;
+    // null-conditional hops spell the same as their plain dotted forms, and
+    // unknown leading factories, unknown hops, and missing trailing factories
+    // fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromBareChain",
+        "Demo::Caller::fromCondBareChain",
+        "Demo::Caller::fromCondBareChainCondElem",
+        "Demo::Caller::fromBareInnerChain",
+        "Demo::Caller::fromStaticRootCondChain",
+        "Demo::Caller::fromCondFieldHopChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromBareChain",
+        "Demo::Caller::fromCondBareChain",
+        "Demo::Caller::fromCondBareChainCondElem",
+        "Demo::Caller::fromBareInnerChain",
+        "Demo::Caller::fromStaticRootCondChain",
+        "Demo::Caller::fromCondFieldHopChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_bare_factory_chain_var_initializer_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Caller {
+    private Group makeGroup() => new Group();
+    int run() {
+        var items = makeGroup()?.GetItems();
+        return items[0].helper(1);
+    }
+    int fail() {
+        var items = doesNotExist()?.GetItems();
+        return items[0].helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
