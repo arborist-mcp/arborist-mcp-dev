@@ -55838,3 +55838,163 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_factory_returned_jagged_array_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[][] makeMatrix() => new Helper[2][];
+    Helper[][][] makeCube() => new Helper[2][][];
+    Helper[] makeItems() => new Helper[2];
+    int run() {
+        return makeMatrix()[0][0].helper(1)
+            + makeCube()[0][0][0].helper(2)
+            + makeItems()[0].helper(3);
+    }
+    int varDirect() {
+        var matrix = makeMatrix();
+        return matrix[0][0].helper(4);
+    }
+    int singleAccessFailsClosed() {
+        return makeMatrix()[0].helper(5);
+    }
+    int doubleOnSingleFailsClosed() {
+        return makeItems()[0][0].helper(6);
+    }
+    int varSingleAccessFailsClosed() {
+        var matrix = makeMatrix();
+        return matrix[0].helper(7);
+    }
+    int unknownFactoryFailsClosed() {
+        return unknownFactory()[0].helper(8);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A bare factory-call root with a jagged element-access suffix such as
+    // `makeMatrix()[0][0].helper(...)` over `Helper[][]` or
+    // `makeCube()[0][0][0].helper(...)` over `Helper[][][]` resolves the
+    // factory through the same rules as a `var` initializer and dispatches on
+    // the return array's element component type, stripping one component
+    // layer per element access; a `var` local bound from a jagged-returning
+    // factory (`var matrix = makeMatrix(); matrix[0][0].helper(...)`) follows
+    // the same depth-aware rule. A single element access on a jagged factory
+    // return, a double element access on a single-level factory return, an
+    // unknown factory, and a single element access on a jagged factory-return
+    // `var` local all fail closed, so the two jagged factory element-access
+    // callers in `Caller` dispatch on `Demo::Helper::helper`.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::varDirect"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::doubleOnSingleFailsClosed",
+        "Demo::Caller::varSingleAccessFailsClosed",
+        "Demo::Caller::unknownFactoryFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected blocked caller {blocked}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::varDirect"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for blocked in [
+        "Demo::Caller::singleAccessFailsClosed",
+        "Demo::Caller::doubleOnSingleFailsClosed",
+        "Demo::Caller::varSingleAccessFailsClosed",
+        "Demo::Caller::unknownFactoryFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == blocked),
+            "unexpected persisted blocked caller {blocked}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_factory_returned_jagged_array_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    Helper[][] makeMatrix() => new Helper[2][];
+    int run() {
+        return makeMatrix()[0][0].helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}

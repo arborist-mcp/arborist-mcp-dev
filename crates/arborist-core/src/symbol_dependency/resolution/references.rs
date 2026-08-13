@@ -10,9 +10,9 @@ use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
     CSharpTypeAliasBinding, csharp_array_component_spelling_at_depth,
-    csharp_array_type_component_name, csharp_global_type_alias_name_is_ambiguous,
-    csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
-    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
+    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
+    csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -1899,11 +1899,12 @@ fn resolve_csharp_instance_receiver_call(
                 deadline,
             )?
         } else if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding)
+            && let Some(element_depth) = csharp_array_access_depth(raw_receiver_name)
             && let Some(binding) = csharp_factory_array_component_binding(
                 source_symbol,
                 &factory_name,
                 factory_arity,
-                1,
+                element_depth,
                 &bindings,
                 raw_symbols,
                 semantic_path_index,
@@ -3685,14 +3686,15 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
 }
 
 /// Resolves a bare factory-call root with an element-access suffix such as
-/// `makeItems()[0]` in `makeItems()[0].helper(...)`: the leading call
-/// resolves through the same factory rules as a `var` initializer (a unique
-/// same-type method, base-type method, static-imported method, or
-/// type-qualified static method with matching arity) whose declared return
-/// type is a single-level array, and the trailing member chain dispatches on
-/// the array's element component type in the factory's own file and
-/// enclosing scope. Unknown or arity-mismatched factories, primitive or
-/// multi-dimensional return arrays, multi-dimensional element access, and
+/// `makeItems()[0]` in `makeItems()[0].helper(...)` or `makeMatrix()[0][0]`
+/// in `makeMatrix()[0][0].helper(...)`: the leading call resolves through the
+/// same factory rules as a `var` initializer (a unique same-type method,
+/// base-type method, static-imported method, or type-qualified static method
+/// with matching arity) whose declared return type is an array, and the
+/// trailing member chain dispatches on the array's element component type in
+/// the factory's own file and enclosing scope, stripping one component layer
+/// per element-access depth. Unknown or arity-mismatched factories, primitive
+/// return arrays, element access deeper than the return array's layers, and
 /// unresolvable hops fail closed.
 #[allow(
     clippy::too_many_arguments,
@@ -3716,7 +3718,7 @@ fn resolve_csharp_bare_factory_array_member_chain(
     if root_spelling.is_empty() || member_chain.is_empty() {
         return Ok(None);
     }
-    let Some((function_name, function_arity)) =
+    let Some((function_name, function_arity, element_depth)) =
         csharp_array_factory_call_root_spelling(root_spelling)
     else {
         return Ok(None);
@@ -3740,7 +3742,8 @@ fn resolve_csharp_bare_factory_array_member_chain(
     let Some(return_type) = method.return_type.as_deref() else {
         return Ok(None);
     };
-    let Some(component_name) = csharp_array_type_component_name(return_type) else {
+    let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, element_depth)
+    else {
         return Ok(None);
     };
     let Some(component_binding) = resolve_csharp_receiver_type_binding(
@@ -4677,7 +4680,15 @@ fn csharp_array_access_depth(hop: &str) -> Option<usize> {
     if hop[..open].is_empty() {
         return None;
     }
-    let mut rest = &hop[open..];
+    csharp_element_access_suffix_depth(&hop[open..])
+}
+
+/// Counts the element-access layers in a bracket suffix such as `[0]` (one),
+/// `[0][0]` (two), or `[0, 0]` (one multi-dimensional group). The suffix must
+/// be one or more well-formed, non-nested bracket groups; malformed suffixes
+/// return `None` and fail closed.
+fn csharp_element_access_suffix_depth(suffix: &str) -> Option<usize> {
+    let mut rest = suffix;
     let mut depth = 0usize;
     while let Some(close) = rest.find(']') {
         if close == 0 || rest[1..close].contains(['[', ']']) {
@@ -4699,11 +4710,12 @@ fn csharp_array_access_depth(hop: &str) -> Option<usize> {
 }
 
 /// Parses a bare factory-call root with a trailing element-access suffix such
-/// as `makeItems()` in `makeItems()[0].helper(...)` into the factory name and
-/// its call arity. The root must be exactly one call followed by one bracket
-/// pair; multi-dimensional element access such as `makeItems()[0][0]`,
-/// malformed brackets, and dotted factory names fail closed.
-fn csharp_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)> {
+/// as `makeItems()` in `makeItems()[0].helper(...)` or `makeMatrix()` in
+/// `makeMatrix()[0][0].helper(...)` into the factory name, its call arity,
+/// and the element-access depth. The root must be exactly one call followed
+/// by one or more bracket groups; malformed brackets and dotted factory names
+/// fail closed.
+fn csharp_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize, usize)> {
     let open = hop.find('(')?;
     let (method_name, rest) = hop.split_at(open);
     if method_name.is_empty() || method_name.contains('.') {
@@ -4717,11 +4729,8 @@ fn csharp_array_factory_call_root_spelling(hop: &str) -> Option<(String, usize)>
     } else {
         arguments.parse::<usize>().ok()?
     };
-    let bracket = &rest[bracket_open..];
-    if !bracket.ends_with(']') || bracket[1..].contains('[') {
-        return None;
-    }
-    Some((method_name.to_string(), arity))
+    let depth = csharp_element_access_suffix_depth(&rest[bracket_open..])?;
+    Some((method_name.to_string(), arity, depth))
 }
 
 /// Resolves an arity-matched non-static method-call hop such as `inner()` or
@@ -16405,22 +16414,31 @@ mod tests {
         use super::csharp_array_factory_call_root_spelling;
         assert_eq!(
             csharp_array_factory_call_root_spelling("makeItems()[0]"),
-            Some(("makeItems".to_string(), 0))
+            Some(("makeItems".to_string(), 0, 1))
         );
         assert_eq!(
             csharp_array_factory_call_root_spelling("makeItems(1)[2]"),
-            Some(("makeItems".to_string(), 1))
+            Some(("makeItems".to_string(), 1, 1))
         );
         assert_eq!(
             csharp_array_factory_call_root_spelling("makeItems()[]"),
-            Some(("makeItems".to_string(), 0))
+            Some(("makeItems".to_string(), 0, 1))
         );
-        // Multi-dimensional element access, dotted roots, and malformed
-        // spellings fail closed.
+        // Jagged element access records the depth: two bracket groups strip
+        // two component layers, and a multi-dimensional group counts once.
         assert_eq!(
-            csharp_array_factory_call_root_spelling("makeItems()[0][0]"),
-            None
+            csharp_array_factory_call_root_spelling("makeMatrix()[0][0]"),
+            Some(("makeMatrix".to_string(), 0, 2))
         );
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeCube()[0][0][0]"),
+            Some(("makeCube".to_string(), 0, 3))
+        );
+        assert_eq!(
+            csharp_array_factory_call_root_spelling("makeGrid()[0, 0]"),
+            Some(("makeGrid".to_string(), 0, 1))
+        );
+        // Dotted roots and malformed spellings fail closed.
         assert_eq!(
             csharp_array_factory_call_root_spelling("Util.makeItems()[0]"),
             None
