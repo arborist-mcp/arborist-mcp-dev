@@ -53322,3 +53322,80 @@ fn traces_kotlin_property_chain_initializer_scope_function_scope_call_local_bind
         );
     }
 }
+
+#[test]
+fn traces_kotlin_cross_file_scope_function_scope_call_local_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Holder\n\nclass Util {\n    val h: Holder = Holder()\n    val nullableH: Holder? = Holder()\n    fun crossFileScopeCallLocal(): Int {\n        val group = h.let { val g1 = it.make(); g1 }\n        val first = group.items[0].item\n        return first.helper(1)\n    }\n    fun crossFileNestedScopeCallLocal(): Int {\n        val group = h.let { val g1 = nullableH?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(2)\n    }\n    fun crossFileRunLocal(): Int {\n        val first = h.run { val g1 = make().items[0].item; g1 }\n        return first.helper(3)\n    }\n    fun crossFileWithLocal(): Int {\n        val group = h.let { val g1 = with(nullableH) { make() }; g1.make() }\n        val first = group.items[0].item\n        return first.helper(4)\n    }\n    fun crossFileUnknownRootFailsClosed(): Int {\n        val group = h.let { val g1 = missingH?.let { it.make() }; g1 }\n        val first = group.items[0].item\n        return first.helper(5)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda-local chain whose receiver root is declared in
+    // an explicitly imported package (`com.lib.Holder`) dispatches the
+    // terminal member on the imported declaration through the same
+    // receiver-qualified expansion rules as a same-file chain: an `it`-rooted
+    // local (`val g1 = it.make(); g1`), a nested scope-call local
+    // (`val g1 = nullableH?.let { it.make() }; g1`), a `run` unqualified-body
+    // local (`val g1 = make().items[0].item; g1`), and a `with`-rooted local
+    // (`val g1 = with(nullableH) { make() }; g1.make()`). An unresolvable
+    // member root (`missingH?.let { it.make() }`) still fails closed at trace
+    // time, so the four cross-file scope-call-local callers in `Util` dispatch
+    // on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "com::example::Util::crossFileScopeCallLocal",
+        "com::example::Util::crossFileNestedScopeCallLocal",
+        "com::example::Util::crossFileRunLocal",
+        "com::example::Util::crossFileWithLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::crossFileUnknownRootFailsClosed"),
+        "unexpected caller crossFileUnknownRootFailsClosed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "com::example::Util::crossFileScopeCallLocal",
+        "com::example::Util::crossFileNestedScopeCallLocal",
+        "com::example::Util::crossFileRunLocal",
+        "com::example::Util::crossFileWithLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted.callers.iter().any(|candidate| candidate.symbol_id
+            == "com::example::Util::crossFileUnknownRootFailsClosed"),
+        "unexpected persisted caller crossFileUnknownRootFailsClosed"
+    );
+}
