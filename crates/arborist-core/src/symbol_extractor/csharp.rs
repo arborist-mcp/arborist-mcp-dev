@@ -862,9 +862,18 @@ fn csharp_initializer_element_access_from_declarator(
     if initializer.kind() != "element_access_expression" {
         return Ok(None);
     }
-    let Some(array) = initializer.child_by_field_name("expression") else {
+    let Some(mut array) = initializer.child_by_field_name("expression") else {
         return Ok(None);
     };
+    // A parenthesized base array such as `(Util.makeItems())` in
+    // `var first = (Util.makeItems())[0]` unwraps to the same base shape as
+    // the unparenthesized form before dispatch.
+    while array.kind() == "parenthesized_expression" {
+        let Some(inner) = csharp_parenthesized_inner_expression(array) else {
+            return Ok(None);
+        };
+        array = inner;
+    }
     let (base_spelling, call_arity) = match array.kind() {
         "identifier" | "member_access_expression" => {
             let base_name = crate::language::node_text(array, source)?.trim();

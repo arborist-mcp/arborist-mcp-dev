@@ -55293,3 +55293,161 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+#[test]
+fn traces_csharp_var_parenthesized_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[] makeItems() => new Helper[2];
+}
+class Caller {
+    Helper[] fieldItems = new Helper[2];
+    Helper[] makeLocalItems() => new Helper[2];
+    int fromFactory() {
+        var first = (Util.makeItems())[0];
+        return first.helper(1);
+    }
+    int fromNestedFactory() {
+        var first = ((Util.makeItems()))[0];
+        return first.helper(2);
+    }
+    int fromField() {
+        var first = (this.fieldItems)[0];
+        return first.helper(3);
+    }
+    int fromLocalFactory() {
+        var first = (this.makeLocalItems())[0];
+        return first.helper(5);
+    }
+    int fromBareIdentifierFailsClosed(Helper[] items) {
+        Helper[] local = new Helper[2];
+        var fromParam = (items)[1];
+        var fromLocal = (local)[0];
+        return fromParam.helper(4) + fromLocal.helper(6);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access whose base array is wrapped
+    // in parentheses, such as `var first = (Util.makeItems())[0]` or
+    // `var first = (this.fieldItems)[0]`, dispatches on the same element
+    // component type as the unparenthesized form, so qualified factory bases,
+    // nested parenthesized factory bases, `this.`-rooted factory bases, and
+    // field bases all resolve `first.helper(...)` to the imported
+    // `Demo::Helper` declaration. A bare parenthesized identifier base such as
+    // `(items)[1]` or `(local)[0]` is parsed by the C# grammar as a cast of a
+    // collection expression rather than an element access, so it still fails
+    // closed and contributes no callers.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromNestedFactory",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromLocalFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fromBareIdentifierFailsClosed"),
+        "unexpected bare-identifier caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromNestedFactory",
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromLocalFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fromBareIdentifierFailsClosed"),
+        "unexpected persisted bare-identifier caller"
+    );
+}
+
+#[test]
+fn traces_csharp_var_parenthesized_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[] makeItems() => new Helper[2];
+}
+class Caller {
+    int run() {
+        var first = (Util.makeItems())[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
