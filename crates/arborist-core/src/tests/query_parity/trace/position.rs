@@ -58084,3 +58084,123 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
 }
+
+#[test]
+fn traces_csharp_parenthesized_constructed_receiver_factory_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Holder {
+    public Helper[] GetItems() => new Helper[2];
+}
+class Group {
+    public Holder holder = new Holder();
+    public int Capacity { get; set; }
+    public Helper[] GetItems() => new Helper[2];
+    public Helper[] MakeItems(int count) => new Helper[count];
+    public Helper GetSingle() => new Helper();
+    public int[] GetCounts() => new int[2];
+}
+class Caller {
+    int fromCtorParens() {
+        var first = (new Group()).GetItems()[0];
+        return first.helper(1);
+    }
+    int fromCtorParensMember() {
+        var first = (new Group()).holder.GetItems()[0];
+        return first.helper(2);
+    }
+    int fromCtorParensArgs() {
+        var first = (new Group(1)).MakeItems(2)[0];
+        return first.helper(3);
+    }
+    int fromCtorParensObjectInit() {
+        var first = (new Group { Capacity = 2 }).GetItems()[0];
+        return first.helper(4);
+    }
+    int fromCtorParensPlain() {
+        var helper = (new Group()).GetSingle();
+        return helper.helper(5);
+    }
+    int failures() {
+        var a = ((new Group())).GetItems()[0];
+        var b = (new Group(1)).GetSingle()[0];
+        var c = (new Group(1)).GetCounts()[0];
+        var d = (new Group(1)).GetItems()[0][0];
+        var e = (new Group(1)).Missing()[0];
+        return 0;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a constructed-receiver factory call whose
+    // constructed root is parenthesized, such as `var first =
+    // (new Group()).GetItems()[0]`, `var first = (new Group()).holder
+    // .GetItems()[0]`, `var first = (new Group(1)).MakeItems(2)[0]`,
+    // `var first = (new Group { Capacity = 2 }).GetItems()[0]`, or
+    // `var helper = (new Group()).GetSingle()`, unwraps the parentheses to
+    // the same shape as the unparenthesized form before the factory
+    // dispatches through the constructed-receiver member-chain rules;
+    // nested parentheses, non-array or primitive factory returns, element
+    // access deeper than the return array, and unknown factory methods fail
+    // closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromCtorParens",
+        "Demo::Caller::fromCtorParensMember",
+        "Demo::Caller::fromCtorParensArgs",
+        "Demo::Caller::fromCtorParensObjectInit",
+        "Demo::Caller::fromCtorParensPlain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromCtorParens",
+        "Demo::Caller::fromCtorParensMember",
+        "Demo::Caller::fromCtorParensArgs",
+        "Demo::Caller::fromCtorParensObjectInit",
+        "Demo::Caller::fromCtorParensPlain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
