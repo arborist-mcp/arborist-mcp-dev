@@ -54679,3 +54679,121 @@ fn traces_kotlin_scope_function_lambda_branch_local_nested_scope_call_navigation
         );
     }
 }
+
+#[test]
+fn traces_kotlin_cross_file_scope_function_lambda_branch_local_nested_scope_call_navigation_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.kt");
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "package com.lib\n\nclass Item {\n    fun helper(value: Int): Int = value\n}\n\nclass Inner {\n    val item: Item = Item()\n}\n\nclass Group {\n    val items: Array<Inner> = arrayOf()\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Holder {\n    fun make(): Group = Group()\n    fun makeAlt(): Group = Group()\n}\n\nclass Factory {\n    val h: Holder = Holder()\n    val plainH: Holder = Holder()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport com.lib.Factory\nimport com.lib.Item\n\nclass Util {\n    val factory: Factory = Factory()\n    fun flag(): Boolean = true\n    fun crossNestedNavLetLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(1)\n    }\n    fun crossNestedNavRunInnerLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.run { make() }.items[0].item } }\n        return first.helper(2)\n    }\n    fun crossNestedNavWithInnerLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); with(g2) { make() }.items[0].item } }\n        return first.helper(3)\n    }\n    fun crossNestedNavApplyInnerLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.apply { this }.items[0].item } }\n        return first.helper(4)\n    }\n    fun crossNestedNavRunOuterLocal(): Int {\n        val first = factory.h.run { val g1 = if (flag()) make() else makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(5)\n    }\n    fun crossNestedNavMemberLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) factory.plainH.make() else factory.plainH.makeAlt(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(6)\n    }\n    fun crossNestedNavLocalLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); val g3 = g2.let { g3b -> g3b.make() }.items[0].item; g3 } }\n        return first.helper(7)\n    }\n    fun crossNestedNavArmLocal(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); if (flag()) g2.let { g3 -> g3.make() }.items[0].item else g2.items[0].item } }\n        return first.helper(8)\n    }\n    fun crossNestedNavTripleLocal(): Int {
+        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g2b -> val g3 = if (flag()) g2b.make() else g2b.makeAlt(); g3.let { g4 -> g4.make() }.items[0].item } } }
+        return first.helper(13)
+    }
+    fun crossNestedNavUnknownMethodFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); g2.let { g3 -> g3.make() }.missing().items[0].item } }\n        return first.helper(9)\n    }\n    fun crossNestedNavChainedLocalFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else g.makeAlt(); val g3 = g2; g3.let { g4 -> g4.make() }.items[0].item } }\n        return first.helper(10)\n    }\n    fun crossNestedNavNoElseFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(11)\n    }\n    fun crossNestedNavDivergentFailsClosed(): Int {\n        val first = factory.h.let { val g1 = if (flag()) it.make() else it.makeAlt(); g1.let { g -> val g2 = if (flag()) g.make() else Item(); g2.let { g3 -> g3.make() }.items[0].item } }\n        return first.helper(12)\n    }\n}",
+    )
+    .unwrap();
+
+    // A scope-function lambda branch-local nested scope-call / apply
+    // navigation whose outer initializer receiver is a member chain declared
+    // in an explicitly imported package (`factory.h` where `factory` is a
+    // `com.lib.Factory`) and whose nested branch local's arms root on a
+    // cross-file member chain (`factory.plainH.make()`) dispatches the
+    // terminal member on the imported `com.lib.Item` declaration through the
+    // same per-arm cross-product expansion rules as a same-file receiver: a
+    // `let`, `run`, or `with` inner call with a trailing member chain, an
+    // `apply` navigation, a branch local inside a `run` outer, an
+    // enclosing-member-rooted nested branch local that is itself a cross-file
+    // member chain, a chain stored as a local then consumed
+    // (`val g3 = ...; g3`), and a branch arm that uses the nested scope-call
+    // navigation, and a triple-nested branch local (`val g2 = ...` inside a
+    // `val g3 = ...` inside a `val g1 = ...`) that proves the per-arm expansion
+    // recurses across arbitrary nesting depth. A chain through an unknown
+    // terminal method
+    // (`g2.let { ... }.missing()...`), chained bare locals (`val g3 = g2`), a
+    // nested branch local without an `else` arm, and divergent nested branch
+    // types fail closed, so the nine cross-file nested scope-call-navigation
+    // callers in `Util` dispatch on `com::lib::Item::helper`.
+    let item_path = "com::lib::Item::helper";
+    let live = trace_symbol_graph(&dir, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, item_path);
+    assert_eq!(live.callers.len(), 9);
+    for caller in [
+        "com::example::Util::crossNestedNavLetLocal",
+        "com::example::Util::crossNestedNavRunInnerLocal",
+        "com::example::Util::crossNestedNavWithInnerLocal",
+        "com::example::Util::crossNestedNavApplyInnerLocal",
+        "com::example::Util::crossNestedNavRunOuterLocal",
+        "com::example::Util::crossNestedNavMemberLocal",
+        "com::example::Util::crossNestedNavLocalLocal",
+        "com::example::Util::crossNestedNavArmLocal",
+        "com::example::Util::crossNestedNavTripleLocal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::crossNestedNavUnknownMethodFailsClosed",
+        "com::example::Util::crossNestedNavChainedLocalFailsClosed",
+        "com::example::Util::crossNestedNavNoElseFailsClosed",
+        "com::example::Util::crossNestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, item_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 9);
+    for caller in [
+        "com::example::Util::crossNestedNavLetLocal",
+        "com::example::Util::crossNestedNavRunInnerLocal",
+        "com::example::Util::crossNestedNavWithInnerLocal",
+        "com::example::Util::crossNestedNavApplyInnerLocal",
+        "com::example::Util::crossNestedNavRunOuterLocal",
+        "com::example::Util::crossNestedNavMemberLocal",
+        "com::example::Util::crossNestedNavLocalLocal",
+        "com::example::Util::crossNestedNavArmLocal",
+        "com::example::Util::crossNestedNavTripleLocal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "com::example::Util::crossNestedNavUnknownMethodFailsClosed",
+        "com::example::Util::crossNestedNavChainedLocalFailsClosed",
+        "com::example::Util::crossNestedNavNoElseFailsClosed",
+        "com::example::Util::crossNestedNavDivergentFailsClosed",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
