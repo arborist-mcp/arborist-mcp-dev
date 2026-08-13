@@ -55127,3 +55127,169 @@ fn traces_kotlin_scope_function_lambda_branch_local_parenthesized_receiver_scope
         );
     }
 }
+#[test]
+fn traces_csharp_var_multidimensional_array_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[,] makeGrid() => new Helper[2, 2];
+    public static Helper[,,] makeCube() => new Helper[2, 2, 2];
+    public static Helper[][] makeJagged() => new Helper[2][];
+}
+class Caller {
+    Helper[,] fieldGrid = new Helper[2, 2];
+    Helper[,] makeLocalGrid() => new Helper[2, 2];
+    int fromField() {
+        var first = fieldGrid[0, 0];
+        return first.helper(1);
+    }
+    int fromFactory() {
+        var first = Util.makeGrid()[0, 0];
+        return first.helper(2);
+    }
+    int fromCube() {
+        var first = Util.makeCube()[0, 0, 0];
+        return first.helper(3);
+    }
+    int fromLocal() {
+        var first = this.makeLocalGrid()[0, 1];
+        return first.helper(4);
+    }
+    int fromBound(Helper[,] boundGrid) {
+        var first = boundGrid[1, 0];
+        return first.helper(5);
+    }
+    int jaggedFailsClosed() {
+        var first = Util.makeJagged()[0][0];
+        return first.helper(6);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a multi-dimensional array element access such
+    // as `var first = fieldGrid[0, 0]` or `var first = Util.makeGrid()[0, 0]`
+    // dispatches on the array's element component type: the element component
+    // type of `Helper[,]` (and `Helper[,,]`) is the same base type as a
+    // single-level array, so field bases, qualified and `this`-rooted factory
+    // bases, and bound-receiver bases all resolve `first.helper(...)` to the
+    // imported `Demo::Helper` declaration. A jagged element access
+    // (`var first = Util.makeJagged()[0][0]`) still fails closed because its
+    // element component type is a nested array, so the five
+    // multi-dimensional element-access callers in `Caller` dispatch on
+    // `Demo::Helper::helper`.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromCube",
+        "Demo::Caller::fromLocal",
+        "Demo::Caller::fromBound",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::jaggedFailsClosed"),
+        "unexpected jagged caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::fromField",
+        "Demo::Caller::fromFactory",
+        "Demo::Caller::fromCube",
+        "Demo::Caller::fromLocal",
+        "Demo::Caller::fromBound",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::jaggedFailsClosed"),
+        "unexpected persisted jagged caller"
+    );
+}
+
+#[test]
+fn traces_csharp_var_multidimensional_array_element_access_receiver_calls_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Util {
+    public static Helper[,] makeGrid() => new Helper[2, 2];
+}
+class Caller {
+    int run() {
+        var first = Util.makeGrid()[0, 0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}

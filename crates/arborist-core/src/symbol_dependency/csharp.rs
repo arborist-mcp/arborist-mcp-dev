@@ -1214,12 +1214,14 @@ fn insert_csharp_element_access_initializer(
         .insert(name.to_string(), (base_spelling, call_arity));
 }
 
-/// Extracts the element component type from a single-level array spelling
-/// such as `Helper[]`, `Helper []`, or `Box<Helper>[]`, keeping the raw
-/// component spelling so trace-time resolution can resolve it in the
-/// receiver's own scope. Multi-dimensional (`Helper[,]`), jagged
-/// (`Helper[][]`), primitive, `var`, `void`, `global::`-qualified, and
-/// malformed spellings return `None` and fail closed.
+/// Extracts the element component type from an array spelling such as
+/// `Helper[]`, `Helper []`, `Box<Helper>[]`, `Helper[,]`, or `Helper[,,]`,
+/// keeping the raw component spelling so trace-time resolution can resolve it
+/// in the receiver's own scope. A multi-dimensional array's element component
+/// type is the same base type as a single-level array, so `grid[0, 0]` over
+/// `Helper[,]` dispatches on `Helper`; jagged (`Helper[][]`), primitive,
+/// `var`, `void`, `global::`-qualified, and malformed spellings return `None`
+/// and fail closed.
 pub(in crate::symbol_dependency) fn csharp_array_type_component_name(text: &str) -> Option<String> {
     let name = text.trim();
     let open = name.find('[')?;
@@ -1227,7 +1229,16 @@ pub(in crate::symbol_dependency) fn csharp_array_type_component_name(text: &str)
         return None;
     }
     let bracket = name[open..].trim();
-    if bracket != "[]" {
+    // A single-level array is `[]`; a multi-dimensional array is `[,]`,
+    // `[,,]`, and so on, whose element component type is the same base type.
+    // Jagged (`[][]`) and otherwise malformed brackets still fail closed.
+    let is_single = bracket == "[]";
+    let is_multidimensional = bracket.starts_with("[,")
+        && bracket.ends_with(']')
+        && bracket[1..bracket.len() - 1]
+            .chars()
+            .all(|character| character == ',');
+    if !is_single && !is_multidimensional {
         return None;
     }
     let component = name[..open].trim();
