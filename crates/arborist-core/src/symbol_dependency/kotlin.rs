@@ -1674,12 +1674,14 @@ fn kotlin_scope_lambda_branch_arm_shapes(
 /// Binds a scope-function lambda result that is itself a scope-function call
 /// on a branch-local receiver, such as the `g1.let { g -> g.items[0].item }`
 /// of `h.let { val g1 = if (flag()) it.make() else it.makeAlt();
-/// g1.let { g -> g.items[0].item } }`, by binding the nested lambda once per
-/// branch arm with the arm's receiver spelling (a factory-callee arm keeps
-/// its call marker so the nested chain walks the hop as a call), so the outer
-/// initializer or branch arm binds through the local's branch spellings.
-/// `apply`/`also` outers, receivers that are not branch locals, malformed
-/// calls or lambdas, and arms that cannot bind fail closed.
+/// g1.let { g -> g.items[0].item } }`, or a receiver chain rooted on it such
+/// as the `g1.make()` of `g1.let { g -> g.make() }.let { g2 -> g2.items[0].item }`,
+/// by binding the nested lambda once per branch arm with the arm's receiver
+/// spelling (a factory-callee arm keeps its call marker so the nested chain
+/// walks the hop as a call), so the outer initializer or branch arm binds
+/// through the local's branch spellings. `apply`/`also` outers, receivers
+/// that do not root on a branch local, malformed calls or lambdas, and arms
+/// that cannot bind fail closed.
 fn kotlin_scope_branch_local_scope_call_shapes(
     call: Node<'_>,
     locals: &KotlinScopeLocals,
@@ -1707,21 +1709,29 @@ fn kotlin_scope_branch_local_scope_call_shapes(
     if !matches!(scope_name.as_str(), "let" | "run" | "with") {
         return Ok(None);
     }
-    // The nested receiver must name a branch local so the lambda binds once
-    // per arm; any other receiver falls through to the caller's rules.
-    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(&receiver_text) else {
+    // The nested receiver must root on a branch local so the lambda binds
+    // once per arm; the receiver may be exactly the local (`g1`) or a
+    // receiver chain rooted on it (`g1.make()` from
+    // `g1.let { g -> g.make() }`), so the chain suffix applies per arm and
+    // any other receiver falls through to the caller's rules.
+    let receiver_root = receiver_text
+        .split(['.', '[', '('])
+        .next()
+        .unwrap_or_default();
+    let Some(KotlinScopeLocalSpelling::Branches(branches)) = locals.get(receiver_root) else {
         return Ok(None);
     };
     if branches.is_empty() {
         return Ok(None);
     }
+    let receiver_suffix = &receiver_text[receiver_root.len()..];
     let Some((param_name, statements, result)) = kotlin_scope_lambda_body(lambda, source)? else {
         return Ok(None);
     };
     let mut shapes = Vec::new();
     let mut seen = BTreeSet::new();
     for branch in branches {
-        let receiver = branch.with_suffix("");
+        let receiver = branch.with_suffix(receiver_suffix);
         let Some(nested_locals) = kotlin_scope_lambda_locals(
             &statements,
             source,
