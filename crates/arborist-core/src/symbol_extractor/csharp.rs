@@ -184,6 +184,34 @@ fn collect_direct_same_type_calls_from_node(
     Ok(())
 }
 
+/// Returns the receiver and member-name nodes of a member-access or
+/// null-conditional member hop such as `group.items`, `group?.items`, or the
+/// `?.inner()` function of `group?.inner()`. Null-conditional hops dispatch
+/// the same instance member on the condition's type, so they spell the same
+/// as plain member access; tree-sitter-c-sharp models the bound member under
+/// a `member_binding_expression` child and the receiver under the `condition`
+/// field; the condition field carries `this` for a `this?.`-rooted hop, so
+/// those spell the same as a plain `this.` chain.
+fn csharp_member_hop_receiver_and_name(node: Node<'_>) -> Option<(Node<'_>, Node<'_>)> {
+    match node.kind() {
+        "member_access_expression" => {
+            let receiver = node.child_by_field_name("expression")?;
+            let name = node.child_by_field_name("name")?;
+            Some((receiver, name))
+        }
+        "conditional_access_expression" => {
+            let receiver = node.child_by_field_name("condition")?;
+            let mut cursor = node.walk();
+            let member_binding = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "member_binding_expression")?;
+            let name = member_binding.child_by_field_name("name")?;
+            Some((receiver, name))
+        }
+        _ => None,
+    }
+}
+
 /// Builds the spelling of a member chain whose leading receiver is a locally
 /// bound value, `this`, or `base`, such as `group.inner().helper` or
 /// `this.holder.inner().helper`. Field, property, and event hops keep their
@@ -210,8 +238,8 @@ fn csharp_instance_member_chain_spelling(
     let mut current = node;
     loop {
         match current.kind() {
-            "member_access_expression" => {
-                let Some(name) = current.child_by_field_name("name") else {
+            "member_access_expression" | "conditional_access_expression" => {
+                let Some((receiver, name)) = csharp_member_hop_receiver_and_name(current) else {
                     return Ok(None);
                 };
                 let name = crate::language::node_text(name, source)?.trim();
@@ -219,10 +247,7 @@ fn csharp_instance_member_chain_spelling(
                     return Ok(None);
                 }
                 segments.push(name.to_string());
-                let Some(expression) = current.child_by_field_name("expression") else {
-                    return Ok(None);
-                };
-                current = expression;
+                current = receiver;
             }
             "invocation_expression" => {
                 let Some(function) = current.child_by_field_name("function") else {
@@ -240,7 +265,10 @@ fn csharp_instance_member_chain_spelling(
                 // roots are only kept when static type-qualified roots are
                 // allowed; otherwise the caller falls through to the direct
                 // invocation handling.
-                if function.kind() != "member_access_expression" {
+                if !matches!(
+                    function.kind(),
+                    "member_access_expression" | "conditional_access_expression"
+                ) {
                     if !keep_static_type_roots || function.kind() != "identifier" {
                         return Ok(None);
                     }
@@ -255,7 +283,7 @@ fn csharp_instance_member_chain_spelling(
                     }
                     break;
                 }
-                let Some(name) = function.child_by_field_name("name") else {
+                let Some((receiver, name)) = csharp_member_hop_receiver_and_name(function) else {
                     return Ok(None);
                 };
                 let name = crate::language::node_text(name, source)?.trim();
@@ -267,10 +295,7 @@ fn csharp_instance_member_chain_spelling(
                 } else {
                     segments.push(format!("{name}({arity})"));
                 }
-                let Some(expression) = function.child_by_field_name("expression") else {
-                    return Ok(None);
-                };
-                current = expression;
+                current = receiver;
             }
             "identifier" => {
                 let base = crate::language::node_text(current, source)?.trim();
@@ -398,11 +423,11 @@ fn csharp_direct_invocation_name(
     source: &str,
     bindings: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
-    if node.kind() == "member_access_expression" {
-        let Some(receiver) = node.child_by_field_name("expression") else {
-            return Ok(None);
-        };
-        let Some(member) = node.child_by_field_name("name") else {
+    if matches!(
+        node.kind(),
+        "member_access_expression" | "conditional_access_expression"
+    ) {
+        let Some((receiver, member)) = csharp_member_hop_receiver_and_name(node) else {
             return Ok(None);
         };
         // An instance member chain whose leading receiver is a locally bound
@@ -416,6 +441,7 @@ fn csharp_direct_invocation_name(
                 | "member_access_expression"
                 | "parenthesized_expression"
                 | "element_access_expression"
+                | "conditional_access_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, false)?
         {
