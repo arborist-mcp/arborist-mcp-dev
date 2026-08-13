@@ -835,8 +835,12 @@ fn csharp_var_initializer_type_binding(
 /// arity zero and depth one; factory-call bases such as `makeItems()` or
 /// `Util.makeItems()` record the reference with a trailing `()` marker and
 /// the call's argument count, and a jagged base such as `matrix[0][0]`
-/// records depth two. Unsupported initializer shapes record nothing and fail
-/// closed. Mirrors the extractor's element-access binding rules.
+/// records depth two. Null-conditional element-access roots such as
+/// `var first = group?.items[0]`, `var first = group?.GetItems()[0]`, or
+/// `var first = (new Group()).GetItems()?[0]` record the same base spellings
+/// as their plain dotted forms so the local dispatches on the same array
+/// element component type. Unsupported initializer shapes record nothing and
+/// fail closed. Mirrors the extractor's element-access binding rules.
 fn csharp_initializer_element_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
@@ -853,25 +857,70 @@ fn csharp_initializer_element_access_from_declarator(
         }
         _ => initializer,
     };
-    if initializer.kind() != "element_access_expression" {
-        return Ok(None);
+    match initializer.kind() {
+        "element_access_expression" => csharp_element_access_base_binding(initializer, source),
+        "conditional_access_expression" => {
+            // A null-conditional element access such as `group?.items?[0]`,
+            // `group?.GetItems()?[0]`, or `(new Group()).GetItems()?[0]`
+            // models the `?[0]` hop as an element binding on the conditional
+            // access; the condition expression is the array being indexed, so
+            // its base binding is recorded at element-access depth one.
+            if !csharp_conditional_access_has_element_binding(initializer) {
+                return Ok(None);
+            }
+            let Some(condition) = initializer.child_by_field_name("condition") else {
+                return Ok(None);
+            };
+            csharp_element_access_array_binding(condition, source)
+        }
+        _ => Ok(None),
     }
-    csharp_element_access_base_binding(initializer, source)
+}
+
+/// Returns whether a conditional access carries an element binding such as
+/// the `?[0]` hop of `group?.items?[0]` or `(new Group()).GetItems()?[0]`,
+/// which indexes the condition expression as an array.
+fn csharp_conditional_access_has_element_binding(node: tree_sitter::Node<'_>) -> bool {
+    if node.kind() != "conditional_access_expression" {
+        return false;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| child.kind() == "element_binding_expression")
 }
 
 /// Resolves the base spelling, call arity, and element-access depth of an
 /// element-access initializer root such as `items[0]` (depth one),
-/// `matrix[0][0]` (depth two), `makeItems()[0]`, or `(this.fieldItems)[0]`.
-/// A nested element-access base recurses and increments the depth, and a
-/// parenthesized base array unwraps to the same shape as the unparenthesized
-/// form. Unsupported base shapes return `None` and fail closed.
+/// `matrix[0][0]` (depth two), `makeItems()[0]`, `(this.fieldItems)[0]`,
+/// `group?.items[0]`, or `group?.GetItems()[0]`. A nested element-access
+/// base recurses and increments the depth, and a parenthesized base array
+/// unwraps to the same shape as the unparenthesized form. Unsupported base
+/// shapes return `None` and fail closed.
 fn csharp_element_access_base_binding(
     element_access: tree_sitter::Node<'_>,
     source: &str,
 ) -> Result<Option<(String, usize, usize)>> {
-    let Some(mut array) = element_access.child_by_field_name("expression") else {
+    let Some(array) = element_access.child_by_field_name("expression") else {
         return Ok(None);
     };
+    csharp_element_access_array_binding(array, source)
+}
+
+/// Resolves the base spelling, call arity, and element-access depth of an
+/// array expression being indexed by an element access or a null-conditional
+/// element binding, such as `items`, `this.fieldItems`, `group?.items`,
+/// `makeItems()`, `group.GetItems()`, `group?.GetItems()`,
+/// `(new Group()).GetItems()`, or `matrix[0]` (depth two). A nested
+/// element-access base recurses and increments the depth, and a
+/// parenthesized base array unwraps to the same shape as the unparenthesized
+/// form. Null-conditional member hops (`?.`) spell the same as plain dotted
+/// hops so the resolver dispatches the same member or factory. Unsupported
+/// base shapes return `None` and fail closed.
+fn csharp_element_access_array_binding(
+    array: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<(String, usize, usize)>> {
+    let mut array = array;
     // A parenthesized base array such as `(Util.makeItems())` in
     // `var first = (Util.makeItems())[0]` unwraps to the same base shape as
     // the unparenthesized form before dispatch.
@@ -884,8 +933,11 @@ fn csharp_element_access_base_binding(
     if array.kind() == "element_access_expression" {
         // A jagged element access such as `matrix[0][0]` nests element-access
         // nodes; recurse into the inner access and count one more layer.
+        let Some(inner_array) = array.child_by_field_name("expression") else {
+            return Ok(None);
+        };
         let Some((base_spelling, call_arity, depth)) =
-            csharp_element_access_base_binding(array, source)?
+            csharp_element_access_array_binding(inner_array, source)?
         else {
             return Ok(None);
         };
@@ -893,7 +945,24 @@ fn csharp_element_access_base_binding(
     }
     let (base_spelling, call_arity) = match array.kind() {
         "identifier" | "member_access_expression" => {
-            let base_name = node_text(array, source)?.trim();
+            // A member-access base containing a null-conditional hop such as
+            // `group?.holder.items` spells the same chain as the plain dotted
+            // form so the resolver walks the same member hops.
+            let base_name = node_text(array, source)?.trim().replace("?.", ".");
+            if base_name.is_empty() {
+                return Ok(None);
+            }
+            (base_name.to_string(), 0)
+        }
+        "conditional_access_expression" => {
+            // A null-conditional member base such as `group?.items` spells the
+            // same chain as the plain dotted form so the resolver walks the
+            // same member hops; an element-binding conditional (`?[0]`) is the
+            // indexed array handled by the caller, not a base spelling.
+            if csharp_chain_member_hop_parts(array).is_none() {
+                return Ok(None);
+            }
+            let base_name = node_text(array, source)?.trim().replace("?.", ".");
             if base_name.is_empty() {
                 return Ok(None);
             }
@@ -905,7 +974,17 @@ fn csharp_element_access_base_binding(
             };
             let spelling = match function.kind() {
                 "identifier" | "member_access_expression" => {
-                    node_text(function, source)?.trim().to_string()
+                    node_text(function, source)?.trim().replace("?.", ".")
+                }
+                "conditional_access_expression" => {
+                    // A null-conditional factory hop such as
+                    // `group?.GetItems()` spells the same callee as the plain
+                    // dotted form so the resolver dispatches the factory on
+                    // the same receiver.
+                    if csharp_chain_member_hop_parts(function).is_none() {
+                        return Ok(None);
+                    }
+                    node_text(function, source)?.trim().replace("?.", ".")
                 }
                 _ => return Ok(None),
             };
