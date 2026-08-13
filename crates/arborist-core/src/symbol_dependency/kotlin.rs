@@ -954,8 +954,15 @@ fn kotlin_scope_function_callee(
         // receiver-qualified lambda-result spelling as the receiver chain so
         // the outer scope function binds through the inner call's result
         // type. Other receiver shapes keep their plain spelling.
-        let receiver = if children[0].kind() == "call_expression" {
-            match kotlin_scope_function_binding(children[0], source)? {
+        // A parenthesized receiver such as `(g1)` or `(h.let { it.make() })`
+        // unwraps to its inner expression before the receiver spelling is
+        // resolved, so scope-function calls on parenthesized receivers bind
+        // the same shapes as their unparenthesized forms.
+        let Some(receiver_node) = kotlin_parenthesized_initializer_expression(children[0]) else {
+            return Ok(None);
+        };
+        let receiver = if receiver_node.kind() == "call_expression" {
+            match kotlin_scope_function_binding(receiver_node, source)? {
                 Some((type_name, _, property_chain_base)) => {
                     if !type_name.is_empty() {
                         // The inner lambda result is a factory call such as
@@ -971,10 +978,10 @@ fn kotlin_scope_function_callee(
                 }
                 // A non-scope call receiver such as `Holder()` in
                 // `Holder().let { ... }` keeps its plain spelling.
-                None => node_text(children[0], source)?.trim().to_string(),
+                None => node_text(receiver_node, source)?.trim().to_string(),
             }
         } else {
-            node_text(children[0], source)?.trim().to_string()
+            node_text(receiver_node, source)?.trim().to_string()
         };
         if receiver.is_empty()
             || scope_name.is_empty()
@@ -1029,6 +1036,11 @@ fn kotlin_scope_function_with_receiver(
     // receiver-qualified lambda-result spelling, and keep the plain spelling
     // of other receiver shapes.
     let Some(argument) = children[0].named_children(&mut children[0].walk()).next() else {
+        return Ok(None);
+    };
+    // A parenthesized receiver such as `with((g1)) { ... }` unwraps to its
+    // inner expression so it binds the same shape as the unparenthesized form.
+    let Some(argument) = kotlin_parenthesized_initializer_expression(argument) else {
         return Ok(None);
     };
     let receiver = if argument.kind() == "call_expression" {
@@ -1892,12 +1904,16 @@ fn kotlin_scope_branch_local_scope_call_navigation_shapes(
     } else if result.kind() == "navigation_expression" {
         // Nested navigation and element-access expressions wrap the leading
         // call, so descend through the leftmost child until the
-        // scope-function call itself.
+        // scope-function call itself; a parenthesized scope-call result such
+        // as `(g1.let { g -> g.make() })` unwraps to the call inside.
         let mut cursor = result.walk();
         let Some(mut leading) = result.named_children(&mut cursor).next() else {
             return Ok(None);
         };
-        while matches!(leading.kind(), "navigation_expression" | "index_expression") {
+        while matches!(
+            leading.kind(),
+            "navigation_expression" | "index_expression" | "parenthesized_expression"
+        ) {
             let mut inner_cursor = leading.walk();
             let Some(child) = leading.named_children(&mut inner_cursor).next() else {
                 return Ok(None);
@@ -1940,11 +1956,18 @@ fn kotlin_scope_branch_local_scope_call_navigation_shapes(
     }
     let receiver_suffix = &receiver_text[receiver_root.len()..];
     let navigation_suffix = if result.kind() == "navigation_expression" {
-        source
+        let suffix = source
             .get(call.end_byte()..result.end_byte())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // A parenthesized scope-call result such as
+        // `(g1.let { g -> g.make() }).items[0].item` has a closing `)` between
+        // the call and the trailing chain; skip it (and surrounding
+        // whitespace) so the per-arm suffix starts after the parentheses.
+        suffix
+            .trim_start_matches(|character: char| character == ')' || character.is_whitespace())
+            .to_string()
     } else {
-        ""
+        String::new()
     };
     // A receiver-returning scope function (`apply`/`also`) returns the
     // receiver chain itself, so each arm's base is the branch local with its
@@ -1971,7 +1994,7 @@ fn kotlin_scope_branch_local_scope_call_navigation_shapes(
             shapes
                 .into_iter()
                 .filter_map(|shape| KotlinScopeLocalBranch::from_binding(&shape))
-                .map(|branch| branch.with_suffix(navigation_suffix))
+                .map(|branch| branch.with_suffix(&navigation_suffix))
                 .collect::<Vec<_>>()
         }
         _ => return Ok(None),
