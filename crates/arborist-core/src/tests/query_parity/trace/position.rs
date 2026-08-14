@@ -65767,3 +65767,274 @@ fn traces_csharp_generic_interface_extends_method_call_hop_receivers_from_dirty_
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_generic_receiver_nullable_multi_parameter_var_initializer_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => this;
+    }
+    class Derived<T> : Box<T> {
+    }
+    interface IBase<T> {
+        T[] items { get; }
+    }
+    interface IMulti<T, U> : IBase<T> {
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    class NoRun {
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+    class Caller {
+        int NullableGenericInterface() {
+            IGeneric<Helper>? g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int NullableGenericClass() {
+            Derived<Helper>? d = default;
+            var first = d?.items[0];
+            return first.Run(2);
+        }
+        int MultiParamInterface() {
+            IMulti<Helper, Other> g = default;
+            var first = g?.items[0];
+            return first.Run(3);
+        }
+        int VarInitField() {
+            var d = new Derived<Helper>();
+            var first = d?.items[0];
+            return first.Run(4);
+        }
+        int VarInitMethod() {
+            var d = new Derived<Helper>();
+            var first = d?.GetItem();
+            return first.Run(5);
+        }
+        int VarInitHop() {
+            var d = new Derived<Helper>();
+            var first = d?.GetBox()?.items[0];
+            return first.Run(6);
+        }
+        int failures() {
+            IMulti<int, Helper> g = default;
+            var first = g?.items[0];
+            IMulti<NoRun, Helper> n = default;
+            var other = n?.items[0];
+            return first.Run(7) + other.Run(8);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on a generic receiver also traces
+    // when the receiver spelling is nullable (`IGeneric<Helper>?`,
+    // `Derived<Helper>?` normalizing to the underlying generic type), when
+    // the generic interface carries an additional unused type parameter
+    // (`IMulti<T, U> : IBase<T>` resolving `items` through `T`), and when the
+    // receiver is a `var` local initialized from an object-creation
+    // expression (`var d = new Derived<Helper>()`), including generic factory
+    // and method-call hop returns (`GetItem()`, `GetBox()`), while a
+    // concrete argument whose element type has no matching member
+    // (`IMulti<int, Helper>`, `IMulti<NoRun, Helper>`) fails closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::NullableGenericInterface",
+        "Demo::Caller::NullableGenericClass",
+        "Demo::Caller::MultiParamInterface",
+        "Demo::Caller::VarInitField",
+        "Demo::Caller::VarInitMethod",
+        "Demo::Caller::VarInitHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::NullableGenericInterface",
+        "Demo::Caller::NullableGenericClass",
+        "Demo::Caller::MultiParamInterface",
+        "Demo::Caller::VarInitField",
+        "Demo::Caller::VarInitMethod",
+        "Demo::Caller::VarInitHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_generic_receiver_nullable_multi_parameter_var_initializer_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => this;
+    }
+    class Derived<T> : Box<T> {
+    }
+    interface IBase<T> {
+        T[] items { get; }
+    }
+    interface IMulti<T, U> : IBase<T> {
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    class NoRun {
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int NullableGenericInterface() {
+            IGeneric<Helper>? g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int VarInitMethod() {
+            var d = new Derived<Helper>();
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int MultiParamInterface() {
+            IMulti<Helper, Other> g = default;
+            var first = g?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            IMulti<int, Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the nullable, multi-parameter, and
+    // var-initializer generic receiver positives on top of the on-disk type
+    // file, while a concrete argument whose element type has no matching
+    // member fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::NullableGenericInterface",
+        "Demo::Caller::VarInitMethod",
+        "Demo::Caller::MultiParamInterface",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::NullableGenericInterface",
+        "Demo::Caller::VarInitMethod",
+        "Demo::Caller::MultiParamInterface",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
