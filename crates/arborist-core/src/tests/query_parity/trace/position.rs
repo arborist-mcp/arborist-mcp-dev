@@ -67417,3 +67417,349 @@ fn traces_csharp_cross_namespace_generic_nested_type_receivers_from_dirty_vfs_ov
         "unexpected persisted failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_nested_generic_base_type_receivers_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+            public Box<U> GetBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Local.cs"),
+        "namespace LocalNs {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+            public Box<U> GetBox() => default;
+        }
+    }
+    class Derived : Outer<Helper>.Inner<Helper> {
+    }
+    class QualifiedDerived : LocalNs.Outer<Helper>.Inner<Helper> {
+    }
+    class Caller {
+        int BaseField() {
+            Derived d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int BaseMethod() {
+            Derived d = default;
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int BaseHop() {
+            Derived d = default;
+            var first = d?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int QualifiedBaseField() {
+            QualifiedDerived d = default;
+            var first = d?.items[0];
+            return first.Run(4);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.cs"),
+        "using Lib;
+namespace ImportedNs {
+    class Derived : Outer<Helper>.Inner<Helper> {
+    }
+    class Caller {
+        int ImportedField() {
+            Derived d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int ImportedMethod() {
+            Derived d = default;
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int ImportedHop() {
+            Derived d = default;
+            var first = d?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A dotted nested generic base spelling such as
+    // `Derived : Outer<Helper>.Inner<Helper>` resolves the nested type whose
+    // first segment is a type name through the enclosing namespace
+    // (same-namespace `LocalNs::Outer::Inner`) or through the file's
+    // namespace imports (`using Lib;` reaching `Lib::Outer::Inner`), then
+    // composes the base's concrete type arguments so `U[] items`,
+    // `U GetItem()`, and `Box<U> GetBox()` declared on `Outer<T>.Inner<U>`
+    // resolve `items[0]`, `GetItem()`, and `GetBox()?.items[0]` to `Helper`.
+    // A namespace-qualified spelling (`LocalNs.Outer<Helper>.Inner<Helper>`)
+    // still resolves, and a non-generic `Derived` reached with a concrete
+    // argument (`Derived<int>`) fails closed.
+    let local_live =
+        trace_symbol_graph(&dir, "LocalNs::Helper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(local_live.callers.len(), 4);
+    for caller in [
+        "LocalNs::Caller::BaseField",
+        "LocalNs::Caller::BaseMethod",
+        "LocalNs::Caller::BaseHop",
+        "LocalNs::Caller::QualifiedBaseField",
+    ] {
+        assert!(
+            local_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !local_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "LocalNs::Caller::failures"),
+        "unexpected failures caller"
+    );
+    let imported_live =
+        trace_symbol_graph(&dir, "Lib::Helper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(imported_live.callers.len(), 3);
+    for caller in [
+        "ImportedNs::Caller::ImportedField",
+        "ImportedNs::Caller::ImportedMethod",
+        "ImportedNs::Caller::ImportedHop",
+    ] {
+        assert!(
+            imported_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !imported_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::failures"),
+        "unexpected imported failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let local_persisted =
+        trace_symbol_graph_from_index(&db_path, "LocalNs::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(local_persisted.callers.len(), 4);
+    for caller in [
+        "LocalNs::Caller::BaseField",
+        "LocalNs::Caller::BaseMethod",
+        "LocalNs::Caller::BaseHop",
+        "LocalNs::Caller::QualifiedBaseField",
+    ] {
+        assert!(
+            local_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !local_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "LocalNs::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+    let imported_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(imported_persisted.callers.len(), 3);
+    for caller in [
+        "ImportedNs::Caller::ImportedField",
+        "ImportedNs::Caller::ImportedMethod",
+        "ImportedNs::Caller::ImportedHop",
+    ] {
+        assert!(
+            imported_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+    assert!(
+        !imported_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::failures"),
+        "unexpected persisted imported failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_nested_generic_base_type_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+            public Box<U> GetBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    class Derived : Outer<Helper>.Inner<Helper> {
+    }
+    class Caller {
+        int ImportedField() {
+            Derived d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int ImportedMethod() {
+            Derived d = default;
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int ImportedHop() {
+            Derived d = default;
+            var first = d?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the importing cross-namespace dotted
+    // nested generic base-type conditional member element-access and
+    // method-call hop positives on top of the on-disk type file, while a
+    // non-generic derived type reached with a concrete argument
+    // (`Derived<int>`) fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedField",
+        "Demo::Caller::ImportedMethod",
+        "Demo::Caller::ImportedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedField",
+        "Demo::Caller::ImportedMethod",
+        "Demo::Caller::ImportedHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
