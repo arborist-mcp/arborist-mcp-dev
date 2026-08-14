@@ -64893,3 +64893,330 @@ fn traces_csharp_generic_member_type_conditional_member_element_access_receivers
         "unexpected persisted failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_generic_inheritance_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => this;
+    }
+    class Derived<T> : Box<T> {
+    }
+    class Mid<T> : Box<T> {
+    }
+    class Deep<T> : Mid<T> {
+    }
+    class Wrapped<T> : Box<Holder<T>> {
+    }
+    class Fixed : Box<Helper> {
+    }
+    interface IBase<T> {
+        T[] items { get; }
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IGenericDirect<T> {
+        T[] items { get; }
+    }
+    class Caller {
+        int InheritedField() {
+            Derived<Helper> d = new Derived<Helper>();
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int InheritedMethod() {
+            Derived<Helper> d = new Derived<Helper>();
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int InheritedMethodHop() {
+            Derived<Helper> d = new Derived<Helper>();
+            var first = d?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int TransformedField() {
+            Wrapped<Helper> w = new Wrapped<Helper>();
+            var holder = w?.items[0];
+            return holder.value.Run(4);
+        }
+        int MultiLevelField() {
+            Deep<Helper> d = new Deep<Helper>();
+            var first = d?.items[0];
+            return first.Run(6);
+        }
+        int MultiLevelMethod() {
+            Deep<Helper> d = new Deep<Helper>();
+            var first = d?.GetItem();
+            return first.Run(7);
+        }
+        int MultiLevelHop() {
+            Deep<Helper> d = new Deep<Helper>();
+            var first = d?.GetBox()?.items[0];
+            return first.Run(8);
+        }
+        int FixedField() {
+            Fixed f = new Fixed();
+            var first = f?.items[0];
+            return first.Run(9);
+        }
+        int FixedMethod() {
+            Fixed f = new Fixed();
+            var first = f?.GetItem();
+            return first.Run(10);
+        }
+        int FixedHop() {
+            Fixed f = new Fixed();
+            var first = f?.GetBox()?.items[0];
+            return first.Run(11);
+        }
+        int DirectVarMethod() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.GetItem();
+            return first.Run(12);
+        }
+        int InterfaceDirectField() {
+            IGenericDirect<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(16);
+        }
+        int failures() {
+            Derived<int> d = new Derived<int>();
+            var first = d?.items[0];
+            var second = d?.GetItem();
+            var third = d?.GetBox()?.items[0];
+            Wrapped<int> w = new Wrapped<int>();
+            var holder = w?.items[0];
+            var prim = holder.value;
+            Deep<int> deep = new Deep<int>();
+            var deepFirst = deep?.items[0];
+            IGeneric<Helper> g = default;
+            var interfaceFirst = g?.items[0];
+            Box<int> b = new Box<int>();
+            var direct = b?.GetItem();
+            return first.Run(12) + second.Run(13) + third.Run(14) + prim.Run(15)
+                + deepFirst.Run(17) + interfaceFirst.Run(18) + direct.Run(19);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on a constructed generic receiver
+    // composes the concrete type arguments through the unique class/record
+    // ancestor chain, so members declared on a generic base resolve with the
+    // derived receiver's arguments: `Derived<Helper> : Box<T>` resolves the
+    // inherited `T[] items` to `Helper[]`, `GetItem()` to `Helper`, and
+    // `GetBox()` (returning `Box<T>`) to `Box<Helper>`; multi-level chains
+    // (`Deep<T> : Mid<T> : Box<T>`), transformed base arguments
+    // (`Wrapped<T> : Box<Holder<T>>` resolving `items` to `Holder<Helper>`
+    // and `value` to `Helper`), non-generic receivers with a concrete generic
+    // base (`Fixed : Box<Helper>`), and `var` factory initializers on the
+    // bound receiver all trace, while a concrete argument whose element type
+    // has no matching member (`Derived<int>`, `Wrapped<int>`, `Deep<int>`,
+    // `Box<int>`), and generic interface-extends members (`IGeneric<T> :
+    // IBase<T>`) fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 12);
+    for caller in [
+        "Demo::Caller::InheritedField",
+        "Demo::Caller::InheritedMethod",
+        "Demo::Caller::InheritedMethodHop",
+        "Demo::Caller::TransformedField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::MultiLevelHop",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::FixedHop",
+        "Demo::Caller::DirectVarMethod",
+        "Demo::Caller::InterfaceDirectField",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 12);
+    for caller in [
+        "Demo::Caller::InheritedField",
+        "Demo::Caller::InheritedMethod",
+        "Demo::Caller::InheritedMethodHop",
+        "Demo::Caller::TransformedField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::MultiLevelHop",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::FixedHop",
+        "Demo::Caller::DirectVarMethod",
+        "Demo::Caller::InterfaceDirectField",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_generic_inheritance_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => this;
+    }
+    class Derived<T> : Box<T> {
+    }
+    class Wrapped<T> : Box<Holder<T>> {
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int InheritedField() {
+            Derived<Helper> d = new Derived<Helper>();
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int InheritedMethodHop() {
+            Derived<Helper> d = new Derived<Helper>();
+            var first = d?.GetBox()?.items[0];
+            return first.Run(2);
+        }
+        int TransformedField() {
+            Wrapped<Helper> w = new Wrapped<Helper>();
+            var holder = w?.items[0];
+            return holder.value.Run(3);
+        }
+        int failures() {
+            Derived<int> d = new Derived<int>();
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the generic-inheritance element-access
+    // positives on top of the on-disk type file, while a concrete argument
+    // whose element type has no matching member fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::InheritedField",
+        "Demo::Caller::InheritedMethodHop",
+        "Demo::Caller::TransformedField",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::InheritedField",
+        "Demo::Caller::InheritedMethodHop",
+        "Demo::Caller::TransformedField",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
