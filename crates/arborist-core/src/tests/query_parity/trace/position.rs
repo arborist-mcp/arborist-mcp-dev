@@ -64080,3 +64080,269 @@ fn traces_csharp_record_positional_property_conditional_member_element_access_re
         );
     }
 }
+
+#[test]
+fn traces_csharp_instance_receiver_static_member_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class ItemBase {
+        public Helper[] items = new Helper[2];
+    }
+    class Group : ItemBase {
+        public Group holder;
+        public static Helper[] staticItems = new Helper[2];
+        public static Group staticGroup = new Group();
+    }
+    class Base {
+        public Group holder = new Group();
+        public Group Group = new Group();
+    }
+    class Caller : Base {
+        int FromFieldNamedLikeType() {
+            var first = Group?.items[0];
+            return first.Run(1);
+        }
+        int FromInheritedTerminal() {
+            var first = holder?.items[0];
+            return first.Run(2);
+        }
+        int FromDeepChain() {
+            var first = holder?.holder?.holder?.items[0];
+            return first.Run(3);
+        }
+        int FromBoundReceiver(Group g) {
+            var first = g.items[0];
+            return first.Run(4);
+        }
+        int failures() {
+            var staticTerminal = holder?.staticItems[0];
+            return staticTerminal.Run(1);
+        }
+        int boundStaticTerminal(Group g) {
+            var staticTerminal = g.staticItems[0];
+            return staticTerminal.Run(1);
+        }
+        int boundStaticIntermediate(Group g) {
+            var staticTerminal = g.staticGroup.items[0];
+            return staticTerminal.Run(1);
+        }
+        int inheritedStaticIntermediate() {
+            var staticTerminal = holder?.staticGroup.items[0];
+            return staticTerminal.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on an instance receiver traces the
+    // terminal array field as an instance member even when the root is an
+    // inherited bare field, a field named like its type, a deep inherited
+    // chain, or a bound receiver parameter (`Group?.items[0]`,
+    // `holder?.items[0]`, `holder?.holder?.holder?.items[0]`, and
+    // `g.items[0]`), while a static terminal or intermediate member reached
+    // through an instance receiver (`holder?.staticItems[0]`,
+    // `g.staticItems[0]`, `g.staticGroup.items[0]`, and
+    // `holder?.staticGroup.items[0]`) is invalid C# (CS0176) and fails
+    // closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromFieldNamedLikeType",
+        "Demo::Caller::FromInheritedTerminal",
+        "Demo::Caller::FromDeepChain",
+        "Demo::Caller::FromBoundReceiver",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::boundStaticTerminal",
+        "Demo::Caller::boundStaticIntermediate",
+        "Demo::Caller::inheritedStaticIntermediate",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected static-member caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromFieldNamedLikeType",
+        "Demo::Caller::FromInheritedTerminal",
+        "Demo::Caller::FromDeepChain",
+        "Demo::Caller::FromBoundReceiver",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::boundStaticTerminal",
+        "Demo::Caller::boundStaticIntermediate",
+        "Demo::Caller::inheritedStaticIntermediate",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted static-member caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_instance_receiver_static_member_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class ItemBase {
+        public Helper[] items = new Helper[2];
+    }
+    class Group : ItemBase {
+        public Group holder;
+        public static Helper[] staticItems = new Helper[2];
+        public static Group staticGroup = new Group();
+    }
+    class Base {
+        public Group holder = new Group();
+        public Group Group = new Group();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller : Base {
+        int FromFieldNamedLikeType() {
+            var first = Group?.items[0];
+            return first.Run(1);
+        }
+        int FromInheritedTerminal() {
+            var first = holder?.items[0];
+            return first.Run(2);
+        }
+        int failures() {
+            var staticTerminal = holder?.staticItems[0];
+            return staticTerminal.Run(1);
+        }
+        int boundStaticIntermediate(Group g) {
+            var staticTerminal = g.staticGroup.items[0];
+            return staticTerminal.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the same instance-receiver conditional
+    // member element-access positives on top of an on-disk type file, while
+    // static members reached through instance receivers fail closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromFieldNamedLikeType",
+        "Demo::Caller::FromInheritedTerminal",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::boundStaticIntermediate",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected static-member caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromFieldNamedLikeType",
+        "Demo::Caller::FromInheritedTerminal",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::boundStaticIntermediate",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted static-member caller {caller}"
+        );
+    }
+}
