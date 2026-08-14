@@ -61326,3 +61326,154 @@ class Caller {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
 }
+
+#[test]
+fn traces_csharp_file_scoped_using_static_factory_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[1];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Factories.cs"),
+        "namespace Demo.Factories;
+class Util2 {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using static Demo.Factories.Util2;
+namespace Demo;
+class Caller {
+    int FromBareFactory() { var helper = MakeHelper(); return helper.Run(1); }
+    int FromBareFactoryArity() { var helper = MakeHelper(1); return helper.Run(1); }
+    int FromConditional() { var first = MakeGroup()?.items[0]; return first.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A file-scoped `using static` import of a nested-namespace type
+    // (`using static Demo.Factories.Util2;`) lets a bare factory call such as
+    // `var helper = MakeHelper()` and a conditional member element access such
+    // as `var first = MakeGroup()?.items[0]` resolve the leading call as a
+    // unique arity-matched static method on the imported type. The factory's
+    // declared return type resolves through the factory's enclosing namespaces
+    // (`Demo::Factories` then `Demo`), so the caller dispatches the trailing
+    // member on the canonical declared type independently of its own namespace.
+    let live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromBareFactory",
+            "Demo::Caller::FromBareFactoryArity",
+            "Demo::Caller::FromConditional",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromBareFactory",
+            "Demo::Caller::FromBareFactoryArity",
+            "Demo::Caller::FromConditional",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_file_scoped_using_static_factory_receiver_instance_calls_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let factories_path = dir.join("Factories.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[1];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &factories_path,
+        "namespace Demo.Factories;
+class Util2 {
+    public static Helper MakeHelper() => new Helper();
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "using static Demo.Factories.Util2;
+namespace Demo;
+class Caller {
+    int CallBare() { var helper = MakeHelper(); return helper.Run(1); }
+    int CallConditional() { var first = MakeGroup()?.items[0]; return first.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
