@@ -68759,3 +68759,410 @@ fn traces_csharp_nested_generic_base_type_outer_parameter_receivers_from_dirty_v
         "unexpected persisted failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_nested_generic_factory_returned_receiver_outer_parameter_members_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "using Lib;
+namespace Demo {
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB> MakeNested() => default;
+        public static Outer<HelperA>.Inner<HelperB> Holder;
+    }
+    class Caller {
+        int FactoryOuterField() {
+            var o = Factory.MakeNested();
+            var first = o?.outerItems[0];
+            return first.RunA(1);
+        }
+        int FactoryOuterMethod() {
+            var o = Factory.MakeNested();
+            var first = o?.GetOuterItem();
+            return first.RunA(2);
+        }
+        int FactoryOuterHop() {
+            var o = Factory.MakeNested();
+            var first = o?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int FactoryInnerField() {
+            var o = Factory.MakeNested();
+            var first = o?.innerItems[0];
+            return first.RunB(4);
+        }
+        int FactoryInnerMethod() {
+            var o = Factory.MakeNested();
+            var first = o?.GetInnerItem();
+            return first.RunB(5);
+        }
+        int FactoryInnerHop() {
+            var o = Factory.MakeNested();
+            var first = o?.GetInnerBox()?.items[0];
+            return first.RunB(6);
+        }
+        int StaticFieldOuter() {
+            var o = Factory.Holder;
+            var first = o?.outerItems[0];
+            return first.RunA(7);
+        }
+        int StaticFieldInner() {
+            var o = Factory.Holder;
+            var first = o?.innerItems[0];
+            return first.RunB(8);
+        }
+        int StaticFieldOuterMethod() {
+            var o = Factory.Holder;
+            var first = o?.GetOuterItem();
+            return first.RunA(9);
+        }
+        int StaticFieldInnerMethod() {
+            var o = Factory.Holder;
+            var first = o?.GetInnerItem();
+            return first.RunB(10);
+        }
+        int failures() {
+            Outer<int>.Inner<HelperB> o = default;
+            var first = o?.GetOuterItem();
+            return first.RunA(11);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` receiver bound from a factory call (`var o = Factory.MakeNested()`)
+    // or from a static field/property chain (`var o = Factory.Holder`) resolves
+    // the same nested generic constructed binding as a directly-typed or
+    // constructed receiver, so conditional member element-access, method-call,
+    // and element-access-on-method-return hops that reference the outer type
+    // parameter (`T[] outerItems`, `T GetOuterItem()`, and `Box<T>
+    // GetOuterBox()` on `Inner<U>`) resolve to `HelperA::RunA` while inner
+    // parameter members still resolve to `HelperB::RunB`. A receiver whose
+    // outer segment is a primitive concrete argument (`Outer<int>.Inner<HelperB>`)
+    // fails closed instead of tracing a caller.
+    let a_live = trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FactoryOuterField",
+        "Demo::Caller::FactoryOuterMethod",
+        "Demo::Caller::FactoryOuterHop",
+        "Demo::Caller::StaticFieldOuter",
+        "Demo::Caller::StaticFieldOuterMethod",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FactoryInnerField",
+        "Demo::Caller::FactoryInnerMethod",
+        "Demo::Caller::FactoryInnerHop",
+        "Demo::Caller::StaticFieldInner",
+        "Demo::Caller::StaticFieldInnerMethod",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for live in [&a_live, &b_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected failures caller"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FactoryOuterField",
+        "Demo::Caller::FactoryOuterMethod",
+        "Demo::Caller::FactoryOuterHop",
+        "Demo::Caller::StaticFieldOuter",
+        "Demo::Caller::StaticFieldOuterMethod",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FactoryInnerField",
+        "Demo::Caller::FactoryInnerMethod",
+        "Demo::Caller::FactoryInnerHop",
+        "Demo::Caller::StaticFieldInner",
+        "Demo::Caller::StaticFieldInnerMethod",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for persisted in [&a_persisted, &b_persisted] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected persisted failures caller"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_nested_generic_factory_returned_receiver_outer_parameter_members_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB> MakeNested() => default;
+        public static Outer<HelperA>.Inner<HelperB> Holder;
+    }
+    class Caller {
+        int FactoryOuterField() {
+            var o = Factory.MakeNested();
+            var first = o?.outerItems[0];
+            return first.RunA(1);
+        }
+        int FactoryOuterMethod() {
+            var o = Factory.MakeNested();
+            var first = o?.GetOuterItem();
+            return first.RunA(2);
+        }
+        int FactoryOuterHop() {
+            var o = Factory.MakeNested();
+            var first = o?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int FactoryInnerMethod() {
+            var o = Factory.MakeNested();
+            var first = o?.GetInnerItem();
+            return first.RunB(4);
+        }
+        int FactoryInnerHop() {
+            var o = Factory.MakeNested();
+            var first = o?.GetInnerBox()?.items[0];
+            return first.RunB(5);
+        }
+        int StaticFieldOuterMethod() {
+            var o = Factory.Holder;
+            var first = o?.GetOuterItem();
+            return first.RunA(6);
+        }
+        int failures() {
+            Outer<int>.Inner<HelperB> o = default;
+            var first = o?.GetOuterItem();
+            return first.RunA(7);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the factory-returned and
+    // static-field-initialized nested generic receiver conditional member
+    // element-access, method-call, and element-access-on-method-return
+    // positives with the enclosing outer type parameter (`T` -> `HelperA`)
+    // substituted on top of the on-disk type file, while a receiver whose
+    // outer segment is a primitive concrete argument (`Outer<int>`) fails
+    // closed.
+    let a_live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(a_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FactoryOuterField",
+        "Demo::Caller::FactoryOuterMethod",
+        "Demo::Caller::FactoryOuterHop",
+        "Demo::Caller::StaticFieldOuterMethod",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperB::RunB",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FactoryInnerMethod",
+        "Demo::Caller::FactoryInnerHop",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for live in [&a_live, &b_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected failures caller"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(a_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FactoryOuterField",
+        "Demo::Caller::FactoryOuterMethod",
+        "Demo::Caller::FactoryOuterHop",
+        "Demo::Caller::StaticFieldOuterMethod",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperB::RunB",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FactoryInnerMethod",
+        "Demo::Caller::FactoryInnerHop",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for persisted in [&a_persisted, &b_persisted] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected persisted failures caller"
+        );
+    }
+}
