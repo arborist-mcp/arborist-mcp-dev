@@ -66038,3 +66038,340 @@ fn traces_csharp_generic_receiver_nullable_multi_parameter_var_initializer_recei
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_cross_namespace_generic_interface_extends_method_call_hop_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    interface IBase<T> {
+        T[] items { get; }
+        T GetItem();
+        Box<T> GetBox();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "namespace Demo {
+    using Lib;
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IFixed : IBase<Helper> {
+    }
+    interface IQualified<T> : Lib.IBase<T> {
+    }
+    class Group : IGeneric<Helper> {
+    }
+    class Caller {
+        int ExtendsField() {
+            IGeneric<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int ExtendsMethod() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(2);
+        }
+        int ExtendsHop() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int DeepField() {
+            IDeep<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(4);
+        }
+        int DeepMethod() {
+            IDeep<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(5);
+        }
+        int FixedField() {
+            IFixed g = default;
+            var first = g?.items[0];
+            return first.Run(6);
+        }
+        int QualifiedField() {
+            IQualified<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(7);
+        }
+        int QualifiedMethod() {
+            IQualified<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(8);
+        }
+        int ClassReceiver() {
+            Group g = new Group();
+            var first = g?.items[0];
+            return first.Run(9);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A cross-namespace generic interface receiver reached only through the
+    // caller's `using` import substitutes the receiver's concrete type
+    // arguments through the interface-extends chain into conditional member
+    // element-access and method-call hop receivers, so `IGeneric<Helper> :
+    // IBase<T>` in another namespace resolves `items[0]` and `T GetItem()`
+    // to `Lib::Helper`, a method-call hop returning `Box<T>` (`GetBox()`)
+    // resolves `items[0]` to `Helper`, and multi-level (`IDeep<T> :
+    // IGeneric<T> : IBase<T>`), fixed non-generic (`IFixed : IBase<Helper>`),
+    // and fully-qualified (`IQualified<T> : Lib.IBase<T>`) parent spellings
+    // trace too. A class-typed receiver (`Group : IGeneric<Helper>`) fails
+    // closed because C# does not expose interface members through
+    // class-typed member lookup, and a concrete argument whose element type
+    // has no matching member (`IGeneric<int>`) fails closed.
+    let helper_symbol = "Lib::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::ExtendsHop",
+        "Demo::Caller::DeepField",
+        "Demo::Caller::DeepMethod",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::QualifiedField",
+        "Demo::Caller::QualifiedMethod",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ClassReceiver"),
+        "unexpected class receiver caller"
+    );
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::ExtendsHop",
+        "Demo::Caller::DeepField",
+        "Demo::Caller::DeepMethod",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::QualifiedField",
+        "Demo::Caller::QualifiedMethod",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ClassReceiver"),
+        "unexpected persisted class receiver caller"
+    );
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_cross_namespace_generic_interface_extends_method_call_hop_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    interface IBase<T> {
+        T[] items { get; }
+        T GetItem();
+        Box<T> GetBox();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IQualified<T> : Lib.IBase<T> {
+    }
+    class Group : IGeneric<Helper> {
+    }
+    class Caller {
+        int ExtendsMethod() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+        int ExtendsHop() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetBox()?.items[0];
+            return first.Run(2);
+        }
+        int DeepMethod() {
+            IDeep<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(3);
+        }
+        int QualifiedMethod() {
+            IQualified<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(4);
+        }
+        int ClassReceiver() {
+            Group g = new Group();
+            var first = g?.items[0];
+            return first.Run(5);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the cross-namespace generic
+    // interface-extends method-call hop positives on top of the on-disk type
+    // file, while a class-typed receiver that does not expose interface
+    // members and a concrete argument whose element type has no matching
+    // member fail closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::ExtendsHop",
+        "Demo::Caller::DeepMethod",
+        "Demo::Caller::QualifiedMethod",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ClassReceiver"),
+        "unexpected class receiver caller"
+    );
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::ExtendsHop",
+        "Demo::Caller::DeepMethod",
+        "Demo::Caller::QualifiedMethod",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ClassReceiver"),
+        "unexpected persisted class receiver caller"
+    );
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
