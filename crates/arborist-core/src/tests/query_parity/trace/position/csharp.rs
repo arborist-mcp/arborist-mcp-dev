@@ -29619,3 +29619,165 @@ fn traces_csharp_multi_level_nested_generic_receiver_outer_parameter_members_fro
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_factory_chain_and_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+    class Derived : Outer<HelperA>.Inner<HelperB> {
+    }
+    class Derived2 : Derived {
+    }
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB> MakeNested() => default;
+    }
+    class Caller {
+        int Derived2OuterMethod() {
+            Derived2 d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(1);
+        }
+        int Derived2InnerField() {
+            Derived2 d = default;
+            var first = d?.innerItems[0];
+            return first.RunB(2);
+        }
+        int Derived2OuterHop() {
+            Derived2 d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int ChainOuterMethod() {
+            var first = Factory.MakeNested().GetOuterItem();
+            return first.RunA(4);
+        }
+        int ChainInnerMethod() {
+            var first = Factory.MakeNested().GetInnerItem();
+            return first.RunB(5);
+        }
+        int ArrayOuterMethod() {
+            Outer<HelperA>.Inner<HelperB>[] items = default;
+            var first = items[0].GetOuterItem();
+            return first.RunA(6);
+        }
+        int ArrayInnerField() {
+            Outer<HelperA>.Inner<HelperB>[] items = default;
+            var first = items[0].innerItems[0];
+            return first.RunB(7);
+        }
+        int ArrayOuterHop() {
+            Outer<HelperA>.Inner<HelperB>[] items = default;
+            var first = items[0].GetOuterBox()?.items[0];
+            return first.RunA(8);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A two-level nested generic receiver reached through a multi-level
+    // derived base (`Derived2 : Derived : Outer<HelperA>.Inner<HelperB>`),
+    // through a one-hop factory chain (`Factory.MakeNested().GetOuterItem()`
+    // or `Factory.MakeNested().GetInnerItem()`), or through an array-element
+    // receiver on a bound array local (`items[0].GetOuterItem()`,
+    // `items[0].innerItems[0]`, or `items[0].GetOuterBox()?.items[0]`)
+    // substitutes each enclosing segment's concrete argument, so conditional
+    // member method-call and element-access members that reference the outer
+    // or inner segment's type parameter (`T GetOuterItem()` or `U
+    // GetInnerItem()` on `Inner<U>`) resolve to `HelperA::RunA` or
+    // `HelperB::RunB`.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ArrayOuterHop",
+        "Demo::Caller::ArrayOuterMethod",
+        "Demo::Caller::ChainOuterMethod",
+        "Demo::Caller::Derived2OuterHop",
+        "Demo::Caller::Derived2OuterMethod",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ArrayInnerField",
+        "Demo::Caller::ChainInnerMethod",
+        "Demo::Caller::Derived2InnerField",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ArrayOuterHop",
+        "Demo::Caller::ArrayOuterMethod",
+        "Demo::Caller::ChainOuterMethod",
+        "Demo::Caller::Derived2OuterHop",
+        "Demo::Caller::Derived2OuterMethod",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ArrayInnerField",
+        "Demo::Caller::ChainInnerMethod",
+        "Demo::Caller::Derived2InnerField",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
