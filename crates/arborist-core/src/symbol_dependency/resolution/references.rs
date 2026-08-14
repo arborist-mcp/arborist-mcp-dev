@@ -2516,6 +2516,59 @@ fn resolve_csharp_factory_chain_receiver_binding(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
+    // A `new`-prefixed constructed-receiver root such as
+    // `new Box<HelperA>()` in `var single = new Box<HelperA>().GetSingle()`
+    // or `new Group().GetMaybe()` in
+    // `var helper = new Group().GetMaybe()?.inner()` resolves the constructed
+    // type binding (keeping its concrete type-argument spellings) and walks
+    // any remaining member-chain hops through the same member-chain rules, so
+    // the trailing factory's declared return type substitutes the generic
+    // parameters. Malformed or unresolvable constructed roots fail closed.
+    if let Some(rest) = chain.strip_prefix("new ") {
+        let Some((type_name, trailing)) = csharp_constructed_receiver_chain_parts(rest) else {
+            return Ok(None);
+        };
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if trailing.is_empty() {
+            return Ok(Some(binding));
+        }
+        let hops = trailing.split('.').collect::<Vec<_>>();
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(None);
+        }
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
+    }
     // An element-access chain such as `items[0]` in
     // `var first = items[0].GetOuterItem()` or `Factory.MakeNestedArray()[0]`
     // in `var first = Factory.MakeNestedArray()[0].GetOuterItem()` dispatches
@@ -2778,6 +2831,66 @@ fn csharp_parenthesized_constructed_factory_spelling(factory_name: &str) -> Opti
         }
     }
     None
+}
+
+/// Splits a `new`-rooted constructed receiver chain such as
+/// `Box<HelperA>()`, `Group(1).holder`, or `Box<HelperA> { Capacity = 2 }.items`
+/// (the text after a `new ` prefix) into the normalized constructed type name
+/// (keeping concrete generic type-argument spellings) and the trailing
+/// member-chain hops, stripping the constructor argument list or
+/// object-initializer body. Malformed or unbalanced spellings return `None`
+/// and fail closed.
+fn csharp_constructed_receiver_chain_parts(constructed_spelling: &str) -> Option<(String, String)> {
+    let open_index = constructed_spelling.find(['(', '{'])?;
+    let type_name = constructed_spelling[..open_index].trim();
+    if type_name.is_empty() || type_name.contains(['[', ']', '?', ' ']) {
+        return None;
+    }
+    let open_character = constructed_spelling.as_bytes()[open_index] as char;
+    let close_character = if open_character == '(' { ')' } else { '}' };
+    let mut depth = 0usize;
+    let mut rest = None;
+    for (index, byte) in constructed_spelling.bytes().enumerate().skip(open_index) {
+        let character = byte as char;
+        if character == open_character {
+            depth += 1;
+        } else if character == close_character {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                rest = Some(&constructed_spelling[index + 1..]);
+                break;
+            }
+        }
+    }
+    let rest = rest?;
+    let trailing = rest.strip_prefix('.').unwrap_or_default();
+    let normalized = csharp_constructed_type_spelling_with_generics(type_name)?;
+    Some((normalized, trailing.to_string()))
+}
+
+/// Normalizes a constructed type spelling such as `Box<HelperA>`,
+/// `Outer<HelperA>.Inner<HelperA>`, or `Demo.Box<HelperA>` to the dotted
+/// semantic path with the trimmed concrete type-argument spellings
+/// re-attached to their segments, so generic parameters substitute during
+/// member-chain resolution. Malformed spellings and segment count mismatches
+/// return `None` and fail closed.
+fn csharp_constructed_type_spelling_with_generics(type_name: &str) -> Option<String> {
+    let semantic_type_path = crate::language::csharp_generic_type_semantic_path(type_name)?;
+    let arguments_per_segment =
+        crate::language::csharp_generic_type_arguments_per_segment(type_name)?;
+    let semantic_segments = semantic_type_path.split("::").collect::<Vec<_>>();
+    if semantic_segments.len() != arguments_per_segment.len() {
+        return None;
+    }
+    let mut normalized_segments = Vec::with_capacity(semantic_segments.len());
+    for (segment, arguments) in semantic_segments.iter().zip(arguments_per_segment.iter()) {
+        if arguments.is_empty() {
+            normalized_segments.push((*segment).to_string());
+        } else {
+            normalized_segments.push(format!("{}<{}>", segment, arguments.join(", ")));
+        }
+    }
+    Some(normalized_segments.join("."))
 }
 
 /// Normalizes a constructed-receiver factory spelling such as
