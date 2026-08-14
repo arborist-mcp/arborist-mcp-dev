@@ -2282,6 +2282,75 @@ fn csharp_foreach_chain_element_spelling(binding: &str) -> Option<&str> {
     binding.strip_prefix("@chain-element:")
 }
 
+/// Resolves the receiver type binding for a bound receiver name used as a
+/// factory receiver root: a directly-typed receiver resolves its declared
+/// type; a `var` receiver bound from a factory call (`var o = MakeNested()`)
+/// resolves the factory's declared return type; and a `var` receiver bound
+/// from a field/property-access chain (`var o = Factory.Holder`) resolves the
+/// chain terminal's declared type. Unknown, untyped, and unresolvable
+/// marker-bound receivers return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# bound factory receiver binding inputs explicit"
+)]
+fn resolve_csharp_bound_factory_receiver_binding(
+    source_symbol: &IndexedSymbol,
+    receiver_name: &str,
+    bindings: &CSharpReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    if let Some(type_name) = bindings.type_for(receiver_name) {
+        return resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    let raw_binding = bindings.raw_for(receiver_name).unwrap_or_default();
+    if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding) {
+        return resolve_csharp_factory_receiver_binding(
+            source_symbol,
+            &factory_name,
+            factory_arity,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+        return resolve_csharp_initializer_chain_binding(
+            source_symbol,
+            chain,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    Ok(None)
+}
+
 /// Resolves the receiver type binding for a `var` local initialized from a
 /// factory call such as `var helper = MakeHelper()` or
 /// `var helper = holder.MakeHelper()`. The factory call resolves as an
@@ -2330,21 +2399,24 @@ fn resolve_csharp_factory_receiver_binding(
     if return_type.is_empty() {
         return Ok(None);
     }
-    // A factory dispatched on a bound receiver's declared type substitutes
-    // the receiver's concrete generic arguments into the method's return
-    // type, so `var first = d?.GetItem()` on a `Derived<Helper> : Box<T>`
-    // receiver resolves the declared `T` return to `Helper`. Other factory
-    // shapes have no generic receiver mapping and keep the declared return
-    // type, failing closed downstream when it names a type parameter.
+    // A factory dispatched on a bound receiver substitutes the receiver's
+    // concrete generic arguments into the method's return type, so
+    // `var first = d?.GetItem()` on a `Derived<Helper> : Box<T>` receiver
+    // resolves the declared `T` return to `Helper`. The receiver may be
+    // directly typed, or a `var` local bound from a factory call
+    // (`var o = MakeNested()`) or a field/property-access chain
+    // (`var o = Factory.Holder`) that resolves to the same binding. Other
+    // factory shapes have no generic receiver mapping and keep the declared
+    // return type, failing closed downstream when it names a type parameter.
     let substituted_return_type = if let Some((receiver_name, method_name)) =
         factory_name.split_once('.')
         && !receiver_name.is_empty()
         && !method_name.is_empty()
         && !method_name.contains(['(', ')', '.'])
-        && let Some(receiver_type_name) = bindings.type_for(receiver_name)
-        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+        && let Some(receiver_binding) = resolve_csharp_bound_factory_receiver_binding(
             source_symbol,
-            &receiver_type_name,
+            receiver_name,
+            bindings,
             raw_symbols,
             semantic_path_index,
             source_namespace_path,
