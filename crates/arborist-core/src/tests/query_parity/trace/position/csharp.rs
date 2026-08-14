@@ -30477,3 +30477,140 @@ fn traces_csharp_nested_generic_receiver_outer_parameter_foreach_factory_array_e
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_chain_initializer_var_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+        }
+    }
+    class Holder {
+        public Box<Outer<HelperA>.Inner<HelperB>>[][] boxes = new Box<Outer<HelperA>.Inner<HelperB>>[2][];
+        public Outer<HelperA>.Inner<HelperB>[][] matrix = new Outer<HelperA>.Inner<HelperB>[2][];
+        public Outer<HelperA>.Inner<HelperB>[] singleItems = new Outer<HelperA>.Inner<HelperB>[2];
+    }
+    class Caller {
+        Holder holder = new Holder();
+        int ChainBoxOuter() {
+            var boxes = this.holder.boxes;
+            return boxes[0][0].items[0].GetOuterItem().RunA(1);
+        }
+        int ChainBoxInner() {
+            var boxes = this.holder.boxes;
+            return boxes[0][0].items[0].GetInnerItem().RunB(2);
+        }
+        int ChainMatrixOuter() {
+            var matrix = this.holder.matrix;
+            return matrix[0][0].GetOuterItem().RunA(3);
+        }
+        int ChainMatrixInner() {
+            var matrix = this.holder.matrix;
+            return matrix[0][0].GetInnerItem().RunB(4);
+        }
+        int ChainSingleOuter() {
+            var items = holder.singleItems;
+            return items[0].GetOuterItem().RunA(5);
+        }
+        int ChainSingleInner() {
+            var items = holder.singleItems;
+            return items[0].GetInnerItem().RunB(6);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a member-chain initializer (such as
+    // `var boxes = this.holder.boxes`, `var matrix = this.holder.matrix`, or
+    // `var items = holder.singleItems`) resolves the chain terminal's
+    // declared array type, so a jagged element access with a box-member walk
+    // (`boxes[0][0].items[0].GetOuterItem()`), a jagged element access
+    // (`matrix[0][0].GetOuterItem()`), and a single-level element access
+    // (`items[0].GetOuterItem()`) strip one component layer per element
+    // access and substitute the declared concrete arguments, tracing to
+    // `HelperA::RunA` or `HelperB::RunB`.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ChainBoxOuter",
+        "Demo::Caller::ChainMatrixOuter",
+        "Demo::Caller::ChainSingleOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ChainBoxInner",
+        "Demo::Caller::ChainMatrixInner",
+        "Demo::Caller::ChainSingleInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ChainBoxOuter",
+        "Demo::Caller::ChainMatrixOuter",
+        "Demo::Caller::ChainSingleOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ChainBoxInner",
+        "Demo::Caller::ChainMatrixInner",
+        "Demo::Caller::ChainSingleInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
