@@ -2849,7 +2849,25 @@ fn csharp_parenthesized_constructed_factory_spelling(factory_name: &str) -> Opti
 fn csharp_constructed_receiver_chain_parts(constructed_spelling: &str) -> Option<(String, String)> {
     let open_index = constructed_spelling.find(['(', '{'])?;
     let type_name = constructed_spelling[..open_index].trim();
-    if type_name.is_empty() || type_name.contains(['[', ']', '?', ' ']) {
+    if type_name.is_empty() || type_name.contains(['[', ']', '?']) {
+        return None;
+    }
+    // Whitespace is valid inside balanced generic argument lists (for example
+    // `Pair<HelperA, HelperB>`), so only reject spaces outside angle brackets;
+    // malformed spellings with stray spaces or unbalanced argument lists fail
+    // closed here and downstream.
+    let mut generic_depth = 0usize;
+    for character in type_name.chars() {
+        match character {
+            '<' => generic_depth += 1,
+            '>' => {
+                generic_depth = generic_depth.checked_sub(1)?;
+            }
+            ' ' if generic_depth == 0 => return None,
+            _ => {}
+        }
+    }
+    if generic_depth != 0 {
         return None;
     }
     let open_character = constructed_spelling.as_bytes()[open_index] as char;
