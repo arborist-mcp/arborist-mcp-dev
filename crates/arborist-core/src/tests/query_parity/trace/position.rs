@@ -61024,3 +61024,157 @@ class Caller {
         "unexpected persisted overlay failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_file_scoped_using_cross_namespace_factory_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Factories.cs"),
+        "namespace Demo.Factories;
+class Util2 {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using Demo.Factories;
+namespace Demo;
+class Caller {
+    int FromFileScopedUsing() { var helper = Util2.MakeHelper(); return helper.Run(1); }
+    int FromFileScopedUsingArity() { var helper = Util2.MakeHelper(1); return helper.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("NestedCaller.cs"),
+        "namespace Demo {
+    using Demo.Factories;
+    class NestedCaller {
+        int FromNestedNamespace() { var helper = Util2.MakeHelper(); return helper.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static factory on a nested-namespace
+    // type imported with a file-scoped `using` (`Util2.MakeHelper()` with
+    // `using Demo.Factories;`) pins the receiver to the factory's declared
+    // return type. The return type resolves through the factory's enclosing
+    // namespaces (`Demo::Factories` then `Demo`), so the caller dispatches the
+    // final member on the canonical declared type independently of its own
+    // namespace; the same factory reached through a block-scoped `using` in a
+    // nested namespace resolves identically.
+    let live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromFileScopedUsing",
+            "Demo::Caller::FromFileScopedUsingArity",
+            "Demo::NestedCaller::FromNestedNamespace",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromFileScopedUsing",
+            "Demo::Caller::FromFileScopedUsingArity",
+            "Demo::NestedCaller::FromNestedNamespace",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_file_scoped_using_cross_namespace_factory_receiver_instance_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let factories_path = dir.join("Factories.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &factories_path,
+        "namespace Demo.Factories;
+class Util2 {
+    public static Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "using Demo.Factories;
+namespace Demo;
+class Caller {
+    int Call() { var helper = Util2.MakeHelper(); return helper.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
