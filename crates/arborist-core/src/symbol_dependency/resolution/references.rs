@@ -4429,6 +4429,51 @@ fn csharp_top_level_dot_split(spelling: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Extends a `global::`-prefixed element-access receiver such as
+/// `global::Demo` to the longest dotted prefix that resolves as a unique
+/// type, so a root such as `global::Demo.Util.holder?.items[0]` or
+/// `global::Demo.Util.MakeGroup()?.items[0]` splits with the full
+/// global-qualified type path as the receiver and the remaining member chain
+/// after it. Namespace-only prefixes are skipped, so a deep namespace such as
+/// `global::Demo.Sub.Util.holder?.items[0]` still absorbs `Demo.Sub.Util`.
+/// Returns the extended receiver and the number of leading chain segments
+/// absorbed into it; non-`global::` receivers return unchanged.
+fn csharp_global_qualified_element_access_receiver(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> (String, usize) {
+    if !receiver.starts_with("global::") {
+        return (receiver.to_string(), 0);
+    }
+    let mut extended = receiver.to_string();
+    let mut absorbed = 0usize;
+    let mut best = extended.clone();
+    let mut best_absorbed = 0usize;
+    for segment in chain.split('.') {
+        if segment.is_empty() || segment.contains(['(', '[', ']', ')']) {
+            break;
+        }
+        extended.push('.');
+        extended.push_str(segment);
+        absorbed += 1;
+        if resolve_csharp_static_initializer_type_path(
+            source_symbol,
+            &extended,
+            raw_symbols,
+            semantic_path_index,
+        )
+        .is_some()
+        {
+            best = extended.clone();
+            best_absorbed = absorbed;
+        }
+    }
+    (best, best_absorbed)
+}
+
 /// Resolves the element component type binding of a qualified element-access
 /// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]`,
 /// `base.inheritedItems` in `var sixth = base.inheritedItems[0]`,
@@ -4525,6 +4570,18 @@ fn csharp_qualified_element_access_component_type_path(
             }
             (receiver.to_string(), chain.to_string(), false)
         };
+    let (receiver, absorbed_chain_segments) = csharp_global_qualified_element_access_receiver(
+        source_symbol,
+        &receiver,
+        &chain,
+        raw_symbols,
+        semantic_path_index,
+    );
+    let chain = chain
+        .split('.')
+        .skip(absorbed_chain_segments)
+        .collect::<Vec<_>>()
+        .join(".");
     let (receiver, chain) = (receiver.as_str(), chain.as_str());
     let mut hops = chain.split('.').map(str::to_string).collect::<Vec<_>>();
     if hops.iter().any(|hop| hop.is_empty()) {
