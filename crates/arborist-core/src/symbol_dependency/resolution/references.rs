@@ -4354,6 +4354,27 @@ fn resolve_csharp_bare_factory_array_member_chain(
     )
 }
 
+/// Splits a member-chain spelling at the first dot that is outside any
+/// balanced parenthesis group, such as `(Util.MakeGroup()).items` into
+/// `(Util.MakeGroup())` and `items`. A parenthesized receiver root containing
+/// dots would otherwise split at the first inner dot; spellings without a
+/// top-level dot, or with an unbalanced parenthesis group, return `None` and
+/// fail closed.
+fn csharp_top_level_dot_split(spelling: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    for (index, byte) in spelling.bytes().enumerate() {
+        match byte as char {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+            }
+            '.' if depth == 0 => return Some((&spelling[..index], &spelling[index + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Resolves the element component type binding of a qualified element-access
 /// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]`,
 /// `base.inheritedItems` in `var sixth = base.inheritedItems[0]`,
@@ -4417,11 +4438,36 @@ fn csharp_qualified_element_access_component_type_path(
             }
             (receiver.to_string(), chain.to_string(), true)
         } else {
-            let Some((receiver, chain)) = base_reference.split_once('.') else {
+            let Some((receiver, chain)) = csharp_top_level_dot_split(base_reference) else {
                 return Ok(None);
             };
             if receiver.is_empty() || chain.is_empty() {
                 return Ok(None);
+            }
+            if let Some(inner) = csharp_outer_parenthesized_inner(receiver) {
+                // A parenthesized receiver root such as `(new Group())` in
+                // `(new Group()).holder?.items[0]`, `(Util.MakeGroup())` in
+                // `(Util.MakeGroup())?.items[0]`, or `(group)` in
+                // `(group)?.items[0]` unwraps to the same dispatch shapes as
+                // its unparenthesized spelling.
+                let normalized_base = if chain.is_empty() {
+                    inner.to_string()
+                } else {
+                    format!("{inner}.{chain}")
+                };
+                return csharp_qualified_element_access_component_type_path(
+                    source_symbol,
+                    &normalized_base,
+                    depth,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                );
             }
             (receiver.to_string(), chain.to_string(), false)
         };
