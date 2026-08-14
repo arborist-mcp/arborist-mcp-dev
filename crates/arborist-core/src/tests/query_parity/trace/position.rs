@@ -66375,3 +66375,268 @@ fn traces_csharp_cross_namespace_generic_interface_extends_method_call_hop_recei
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_cross_namespace_generic_inheritance_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Base<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "namespace Demo {
+    using Lib;
+    class Mid<T> : Base<T> {
+    }
+    class Derived<T> : Mid<T> {
+    }
+    class Fixed : Base<Helper> {
+    }
+    class Qualified<T> : Lib.Base<T> {
+    }
+    class Transformed<T> : Base<Holder<T>> {
+    }
+    class Caller {
+        int Field() {
+            Derived<Helper> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+        int Method() {
+            Derived<Helper> d = default;
+            var first = d?.GetItem();
+            return first.Run(2);
+        }
+        int Hop() {
+            Derived<Helper> d = default;
+            var first = d?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int FixedMethod() {
+            Fixed d = default;
+            var first = d?.GetItem();
+            return first.Run(4);
+        }
+        int QualifiedMethod() {
+            Qualified<Helper> d = default;
+            var first = d?.GetItem();
+            return first.Run(5);
+        }
+        int TransformedHop() {
+            Transformed<Helper> d = default;
+            var holder = d?.GetItem();
+            return holder.value.Run(6);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A cross-namespace generic class receiver reached only through the
+    // caller's `using` import substitutes the receiver's concrete type
+    // arguments through the class/record ancestor chain into conditional
+    // member element-access and method-call hop receivers, so
+    // `Derived<Helper> : Mid<T> : Lib.Base<T>` in another namespace resolves
+    // `items[0]`, `T GetItem()`, and the `Box<T>` returned by `GetBox()`
+    // (`items[0]`) to `Lib::Helper` through the multi-level chain, while
+    // fixed non-generic (`Fixed : Base<Helper>`), fully-qualified
+    // (`Qualified<T> : Lib.Base<T>`), and transformed parent arguments
+    // (`Transformed<T> : Base<Holder<T>>` resolving `GetItem()` to
+    // `Holder<Helper>` and `value` to `Helper`) trace too, and a concrete
+    // argument whose element type has no matching member (`Derived<int>`)
+    // fails closed.
+    let helper_symbol = "Lib::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::Field",
+        "Demo::Caller::Method",
+        "Demo::Caller::Hop",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::QualifiedMethod",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::Field",
+        "Demo::Caller::Method",
+        "Demo::Caller::Hop",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::QualifiedMethod",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_cross_namespace_generic_inheritance_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Base<T> {
+        public T[] items = new T[2];
+        public T GetItem() => default;
+        public Box<T> GetBox() => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    class Mid<T> : Base<T> {
+    }
+    class Derived<T> : Mid<T> {
+    }
+    class Caller {
+        int Method() {
+            Derived<Helper> d = default;
+            var first = d?.GetItem();
+            return first.Run(1);
+        }
+        int Hop() {
+            Derived<Helper> d = default;
+            var first = d?.GetBox()?.items[0];
+            return first.Run(2);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the cross-namespace generic-inheritance
+    // method-call hop positives on top of the on-disk type file, while a
+    // concrete argument whose element type has no matching member fails
+    // closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::Method", "Demo::Caller::Hop"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::Method", "Demo::Caller::Hop"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
