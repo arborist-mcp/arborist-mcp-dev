@@ -4597,6 +4597,50 @@ fn csharp_qualified_element_access_component_type_path(
             return Ok(None);
         };
         (leading_binding, source_symbol, false)
+    } else if let Some((leading_hop_name, leading_hop_arity)) = hops
+        .first()
+        .and_then(|hop| csharp_method_call_hop_spelling(hop))
+        && let Some(leading_factory) = resolve_csharp_var_factory_method(
+            source_symbol,
+            &format!("{receiver}.{leading_hop_name}"),
+            leading_hop_arity,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(leading_return) = leading_factory.return_type.as_deref()
+        && !leading_return.is_empty()
+        && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
+            leading_factory,
+            leading_return,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(leading_factory, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A leading static type-qualified factory call such as
+        // `Util.MakeGroup()` in `Util.MakeGroup()?.items[0]` or
+        // `foreach (var item in Util.MakeGroup()?.items)` resolves the call
+        // as a static factory on the named type, canonicalizes its declared
+        // return type, consumes the leading call hop, and walks the remaining
+        // chain and terminal array member as an instance receiver; unknown or
+        // arity-mismatched static factories fail closed.
+        let Some(leading_binding) =
+            canonicalize_csharp_type_binding(leading_factory, &leading_binding, raw_symbols)
+        else {
+            return Ok(None);
+        };
+        hops.remove(0);
+        (leading_binding, source_symbol, false)
     } else {
         // An unbound receiver names a static type; the terminal array member
         // must be declared static on that type.
@@ -4699,7 +4743,7 @@ fn csharp_qualified_element_access_component_type_path(
         // type.
         let terminal_refs = [format!("{terminal}{}", "[0]".repeat(depth))];
         let terminal_refs = terminal_refs.iter().map(String::as_str).collect::<Vec<_>>();
-        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        let Some((binding, terminal_scope_symbol)) = resolve_csharp_member_chain_binding(
             scope_source_symbol,
             binding,
             &terminal_refs,
@@ -4710,6 +4754,14 @@ fn csharp_qualified_element_access_component_type_path(
             csharp_import_contexts_by_file,
             deadline,
         )?
+        else {
+            return Ok(None);
+        };
+        // The element component binding resolves in the declaring type's own
+        // file and enclosing scope; canonicalize it so callers in other
+        // namespaces dispatch on the canonical declared type.
+        let Some(binding) =
+            canonicalize_csharp_type_binding(terminal_scope_symbol, &binding, raw_symbols)
         else {
             return Ok(None);
         };
