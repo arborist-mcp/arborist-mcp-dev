@@ -7496,16 +7496,20 @@ fn csharp_base_type_path(
 
 /// Composes the concrete generic type arguments for `target_type_path` when
 /// it is reached from `source_type_path` through the unique class/record
-/// ancestor chain, substituting each walked type's declared type parameters
-/// with its current concrete arguments into the next base-list spelling. The
-/// source's own arguments seed the walk, so a `Derived<Helper>` receiver
-/// reaching base `Box<T>` yields `["Helper"]`, a non-generic `Fixed :
-/// Box<Helper>` receiver reaching `Box<T>` yields `["Helper"]` from the base
-/// spelling, and multi-level chains compose per level. `None` means the
-/// chain cannot be walked uniquely, the target is not reachable through
-/// class/record bases (including interface-extends chains), or a
-/// parameter/argument arity mismatch blocks the mapping, so callers fail
-/// closed.
+/// ancestor chain or the interface-extends chain, substituting each walked
+/// type's declared type parameters with its current concrete arguments into
+/// the next base-list or parent-interface spelling. The source's own
+/// arguments seed the walk, so a `Derived<Helper>` receiver reaching base
+/// `Box<T>` yields `["Helper"]`, a non-generic `Fixed : Box<Helper>` receiver
+/// reaching `Box<T>` yields `["Helper"]` from the base spelling, an
+/// `IGeneric<Helper> : IBase<T>` receiver reaching `IBase<T>` yields
+/// `["Helper"]`, and multi-level chains compose per level. When an interface
+/// reaches the target through several parent branches, every branch's
+/// composed arguments must agree or the mapping is ambiguous. `None` means
+/// the target is not reachable through a unique class/record or
+/// interface-extends walk, a parent or base chain cannot be resolved or
+/// walked uniquely, or a parameter/argument arity mismatch blocks the
+/// mapping, so callers fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# generic inheritance composition inputs explicit"
@@ -7521,28 +7525,145 @@ fn csharp_compose_generic_arguments_to_type(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<Vec<String>>> {
-    let mut current_type_path = source_type_path.to_string();
-    let mut current_type_args = source_type_args.to_vec();
     let mut visited_type_paths = BTreeSet::new();
-    loop {
-        if current_type_path == target_type_path {
-            return Ok(Some(current_type_args));
-        }
-        if !visited_type_paths.insert(current_type_path.clone()) {
-            return Ok(None);
-        }
-        let Some(type_indexes) = semantic_path_index.get(&current_type_path) else {
-            return Ok(None);
+    let mut composed_arguments = Vec::new();
+    csharp_collect_generic_argument_compositions(
+        source_type_path,
+        source_type_args,
+        target_type_path,
+        &mut visited_type_paths,
+        &mut composed_arguments,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    let Some(first) = composed_arguments.first() else {
+        return Ok(None);
+    };
+    if composed_arguments
+        .iter()
+        .any(|arguments| arguments != first)
+    {
+        return Ok(None);
+    }
+    Ok(Some(first.clone()))
+}
+
+/// Collects the composed generic argument vectors for every path that
+/// reaches `target_type_path` from `current_type_path`, walking class/record
+/// bases and interface parents recursively. A path that terminates without
+/// reaching the target, a cycle, or an unresolvable step contributes nothing;
+/// the caller requires every collected composition to agree.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# generic inheritance composition inputs explicit"
+)]
+fn csharp_collect_generic_argument_compositions(
+    current_type_path: &str,
+    current_type_args: &[String],
+    target_type_path: &str,
+    visited_type_paths: &mut BTreeSet<String>,
+    composed_arguments: &mut Vec<Vec<String>>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<()> {
+    if current_type_path == target_type_path {
+        composed_arguments.push(current_type_args.to_vec());
+        return Ok(());
+    }
+    if !visited_type_paths.insert(current_type_path.to_string()) {
+        return Ok(());
+    }
+    let Some(type_indexes) = semantic_path_index.get(current_type_path) else {
+        visited_type_paths.remove(current_type_path);
+        return Ok(());
+    };
+    let type_indexes = type_indexes
+        .iter()
+        .copied()
+        .filter(|index| {
+            csharp_is_base_constructible_type(&raw_symbols[*index])
+                || raw_symbols[*index].node_kind == "interface_declaration"
+        })
+        .collect::<Vec<_>>();
+    if type_indexes.len() != 1 {
+        visited_type_paths.remove(current_type_path);
+        return Ok(());
+    }
+    let current_type_symbol = &raw_symbols[type_indexes[0]];
+    let parameters = csharp_type_parameter_names_for_type(
+        &current_type_symbol.file_path,
+        current_type_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    .unwrap_or_default();
+    if parameters.len() != current_type_args.len() {
+        visited_type_paths.remove(current_type_path);
+        return Ok(());
+    }
+    if current_type_symbol.node_kind == "interface_declaration" {
+        let source_namespace_path =
+            csharp_source_namespace_path(current_type_symbol, raw_symbols).flatten();
+        let parent_bindings = match csharp_interface_parent_bindings_for_interface(
+            &current_type_symbol.file_path,
+            current_type_symbol.byte_range,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            CSharpInterfaceParents::None => {
+                visited_type_paths.remove(current_type_path);
+                return Ok(());
+            }
+            CSharpInterfaceParents::Blocked => {
+                visited_type_paths.remove(current_type_path);
+                return Ok(());
+            }
+            CSharpInterfaceParents::Parents(parent_bindings) => parent_bindings,
         };
-        let type_indexes = type_indexes
-            .iter()
-            .copied()
-            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
-            .collect::<Vec<_>>();
-        if type_indexes.len() != 1 {
-            return Ok(None);
+        for parent_binding in parent_bindings {
+            let Some(parent_interface_path) = csharp_interface_type_path(
+                current_type_symbol,
+                raw_symbols,
+                semantic_path_index,
+                &parent_binding,
+            ) else {
+                visited_type_paths.remove(current_type_path);
+                return Ok(());
+            };
+            let parent_args: Vec<String> = parent_binding
+                .raw_generic_argument_spellings
+                .iter()
+                .map(|spelling| {
+                    substitute_csharp_type_parameters(spelling, &parameters, current_type_args)
+                })
+                .collect();
+            csharp_collect_generic_argument_compositions(
+                &parent_interface_path,
+                &parent_args,
+                target_type_path,
+                visited_type_paths,
+                composed_arguments,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
         }
-        let current_type_symbol = &raw_symbols[type_indexes[0]];
+    } else {
         let Some(base_binding) = csharp_base_type_binding_for_type(
             current_type_symbol,
             raw_symbols,
@@ -7552,33 +7673,38 @@ fn csharp_compose_generic_arguments_to_type(
             deadline,
         )?
         else {
-            return Ok(None);
+            visited_type_paths.remove(current_type_path);
+            return Ok(());
         };
         let Some(base_type_path) =
             csharp_base_type_path(current_type_symbol, raw_symbols, &base_binding)
         else {
-            return Ok(None);
+            visited_type_paths.remove(current_type_path);
+            return Ok(());
         };
-        let parameters = csharp_type_parameter_names_for_type(
-            &current_type_symbol.file_path,
-            current_type_symbol.byte_range,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-        .unwrap_or_default();
-        if parameters.len() != current_type_args.len() {
-            return Ok(None);
-        }
-        current_type_args = base_binding
+        let base_args: Vec<String> = base_binding
             .raw_generic_argument_spellings
             .iter()
             .map(|spelling| {
-                substitute_csharp_type_parameters(spelling, &parameters, &current_type_args)
+                substitute_csharp_type_parameters(spelling, &parameters, current_type_args)
             })
             .collect();
-        current_type_path = base_type_path;
+        csharp_collect_generic_argument_compositions(
+            &base_type_path,
+            &base_args,
+            target_type_path,
+            visited_type_paths,
+            composed_arguments,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
     }
+    visited_type_paths.remove(current_type_path);
+    Ok(())
 }
 
 /// Resolves the receiver's declared type to a unique struct path using the
