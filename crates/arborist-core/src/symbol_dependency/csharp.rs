@@ -607,6 +607,35 @@ fn collect_csharp_type_member_bindings(
         }
         csharp_insert_receiver_binding(bindings, name, csharp_declared_type_name(node, source)?);
     }
+    if node.kind() == "parameter_list"
+        && node
+            .parent()
+            .is_some_and(|parent| parent.kind() == "record_declaration")
+    {
+        // A record primary-constructor parameter list such as
+        // `record Base(Group Holder)` declares each positional parameter as an
+        // init-only property of the record, so it binds the same member name
+        // and declared type as an explicit property declaration for inherited
+        // bare-root and member-chain resolution.
+        let mut cursor = node.walk();
+        for parameter in node
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() == "parameter")
+        {
+            let Some(name) = parameter.child_by_field_name("name") else {
+                continue;
+            };
+            let name = node_text(name, source)?.trim();
+            if name.is_empty() {
+                continue;
+            }
+            csharp_insert_receiver_binding(
+                bindings,
+                name,
+                csharp_declared_type_name(parameter, source)?,
+            );
+        }
+    }
     if node.kind() == "type_parameter"
         && let Some(name) = node.child_by_field_name("name")
     {
