@@ -22,8 +22,9 @@ pub(crate) use c::{
 pub(crate) use csharp::{
     csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
     csharp_file_static_type_imports, csharp_file_type_alias_imports, csharp_generic_type_arguments,
-    csharp_generic_type_semantic_path, csharp_global_namespace_imports,
-    csharp_global_static_type_imports, csharp_global_type_alias_imports,
+    csharp_generic_type_arguments_per_segment, csharp_generic_type_semantic_path,
+    csharp_global_namespace_imports, csharp_global_static_type_imports,
+    csharp_global_type_alias_imports,
 };
 pub(crate) use go::{go_local_package_dependency_paths, go_local_package_imports};
 pub(crate) use java::{

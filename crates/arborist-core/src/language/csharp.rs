@@ -564,6 +564,47 @@ pub(crate) fn csharp_generic_type_arguments(type_path: &str) -> Option<Vec<Strin
     None
 }
 
+/// Parses the top-level type-argument spellings of every dotted segment of a
+/// constructed generic spelling such as `Outer<Helper>.Inner<Helper>`
+/// (`[["Helper"], ["Helper"]]`), `Box<Helper>` (`[["Helper"]]`), or
+/// `NonGenericOuter.GenInner<Helper>` (`[[], ["Helper"]]`). Non-generic
+/// segments record empty lists. Malformed, empty, or trailing argument
+/// lists return `None` and fail closed.
+pub(crate) fn csharp_generic_type_arguments_per_segment(
+    type_path: &str,
+) -> Option<Vec<Vec<String>>> {
+    let mut segments = Vec::new();
+    let mut depth = 0usize;
+    let mut last_start = 0usize;
+    for (index, character) in type_path.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            '.' if depth == 0 => {
+                if index == last_start {
+                    return None;
+                }
+                segments.push(&type_path[last_start..index]);
+                last_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if last_start == type_path.len() {
+        return None;
+    }
+    segments.push(&type_path[last_start..]);
+    let mut arguments = Vec::with_capacity(segments.len());
+    for segment in segments {
+        arguments.push(if segment.contains('<') {
+            csharp_generic_type_arguments(segment)?
+        } else {
+            Vec::new()
+        });
+    }
+    Some(arguments)
+}
+
 /// Splits a qualified type spelling on `.` outside any generic argument list
 /// and returns the final segment, so `Outer<Helper>.Inner<Helper>` yields
 /// `Inner<Helper>` and `Box<Helper>` yields itself. Empty final segments and
@@ -681,6 +722,63 @@ mod tests {
         assert_eq!(super::csharp_generic_type_arguments("Base<>"), None);
         assert_eq!(super::csharp_generic_type_arguments("Base<int"), None);
         assert_eq!(super::csharp_generic_type_arguments("Base<int>[]"), None);
+    }
+
+    #[test]
+    fn collects_per_segment_generic_type_arguments() {
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Outer<Helper>.Inner<Helper>"),
+            Some(vec![vec!["Helper".to_string()], vec!["Helper".to_string()]])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Box<Helper>"),
+            Some(vec![vec!["Helper".to_string()]])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("NonGenericOuter.GenInner<Helper>"),
+            Some(vec![Vec::new(), vec!["Helper".to_string()]])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Outer<Helper>.Plain"),
+            Some(vec![vec!["Helper".to_string()], Vec::new()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Pair<A, B>.Nested<C>"),
+            Some(vec![
+                vec!["A".to_string(), "B".to_string()],
+                vec!["C".to_string()]
+            ])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment(
+                "global::Demo.Outer<int>.Base<string>"
+            ),
+            Some(vec![
+                Vec::new(),
+                vec!["int".to_string()],
+                vec!["string".to_string()]
+            ])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Base"),
+            Some(vec![Vec::new()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Base<int"),
+            None
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Base<>"),
+            None
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Base<int>[]"),
+            None
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments_per_segment("Outer.Inner"),
+            Some(vec![Vec::new(), Vec::new()])
+        );
     }
 
     #[test]

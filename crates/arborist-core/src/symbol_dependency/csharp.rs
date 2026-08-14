@@ -151,6 +151,13 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     /// Member-chain resolution substitutes a generic type's type parameters
     /// with these spellings when a hop's declared type references one.
     pub(crate) generic_arguments: Vec<String>,
+    /// Top-level type-argument spellings for each generic segment of the
+    /// spelling that precedes the final segment, outermost first; empty when
+    /// the spelling has no enclosing generic segments.
+    /// `Outer<Helper>.Inner<Helper>` records `[["Helper"]]` so member declared
+    /// types that reference the outer type parameter (`T[] outerItems` on
+    /// `Inner<U>`) substitute `T` with `Helper`.
+    pub(crate) enclosing_generic_arguments: Vec<Vec<String>>,
     /// Raw top-level type-argument spellings written in the base list, such
     /// as `["T"]` for `class Derived<T> : Box<T>`; empty for non-generic
     /// base spellings and for bindings constructed from usage spellings.
@@ -444,6 +451,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                     namespace_import_paths: Vec::new(),
                     generic_arguments: Vec::new(),
                     raw_generic_argument_spellings: base_type.generic_argument_spellings.clone(),
+                    enclosing_generic_arguments: Vec::new(),
                 },
             )
             .is_some()
@@ -1876,6 +1884,7 @@ pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interfa
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: parent.raw_generic_argument_spellings.clone(),
+                enclosing_generic_arguments: Vec::new(),
             },
             source_namespace_path,
         ) else {
@@ -1924,6 +1933,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_declared_type_binding_for_ref
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         },
         source_namespace_path,
     ))

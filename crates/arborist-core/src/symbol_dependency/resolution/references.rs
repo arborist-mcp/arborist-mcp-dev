@@ -2582,6 +2582,7 @@ fn resolve_csharp_var_factory_method<'a>(
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         };
         let (binding, dispatch_source_symbol) = if hops.is_empty() {
             (binding, type_symbol)
@@ -2720,6 +2721,7 @@ fn resolve_csharp_var_factory_method<'a>(
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: Vec::new(),
+                enclosing_generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3321,6 +3323,7 @@ fn resolve_csharp_factory_instance_method<'a>(
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         },
         method_name,
         raw_symbols,
@@ -3694,6 +3697,7 @@ fn resolve_csharp_initializer_chain_binding(
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: Vec::new(),
+                enclosing_generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3761,6 +3765,7 @@ fn resolve_csharp_initializer_chain_binding(
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: Vec::new(),
+                enclosing_generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -4292,6 +4297,7 @@ fn canonicalize_csharp_type_binding(
         namespace_import_paths: Vec::new(),
         generic_arguments: binding.generic_arguments.clone(),
         raw_generic_argument_spellings: Vec::new(),
+        enclosing_generic_arguments: binding.enclosing_generic_arguments.clone(),
     })
 }
 
@@ -4934,6 +4940,7 @@ fn csharp_qualified_element_access_component_type_path(
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: Vec::new(),
+                enclosing_generic_arguments: Vec::new(),
             },
             type_candidates[0],
             false,
@@ -4988,6 +4995,7 @@ fn csharp_qualified_element_access_component_type_path(
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
                 raw_generic_argument_spellings: Vec::new(),
+                enclosing_generic_arguments: Vec::new(),
             },
             base_symbol,
             false,
@@ -5988,6 +5996,23 @@ fn resolve_csharp_member_chain_binding<'a>(
                             );
                         }
                     }
+                    // A hop declared directly on the receiver's own nested
+                    // generic type may also reference an outer type parameter
+                    // such as `T` in `Outer<T>.Inner<U>`; substitute those
+                    // parameters with the receiver spelling's per-segment
+                    // concrete arguments, leaving unresolvable parameters
+                    // unchanged so they fail closed downstream.
+                    hop_type_name = substitute_csharp_enclosing_type_parameters(
+                        current_type_symbol,
+                        &binding,
+                        &type_symbol.semantic_path,
+                        &hop_type_name,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?;
                     break (current_type_symbol, hop_type_name);
                 }
                 if current_type_symbol.node_kind == "interface_declaration" {
@@ -6071,6 +6096,126 @@ fn resolve_csharp_member_chain_binding<'a>(
     Ok(Some((binding, scope_source_symbol)))
 }
 
+/// Returns the ordered type-parameter names of every enclosing type
+/// declaration of `declaring_type_symbol`, outermost first, so a nested
+/// generic type such as `Outer<T>.Inner<U>` reports `[["T"]]` for the outer
+/// `Outer<T>`. Namespace segments contribute nothing, and an enclosing chain
+/// that cannot be walked uniquely returns `None` so callers fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# enclosing type parameter walk inputs explicit"
+)]
+fn csharp_enclosing_type_parameter_names(
+    declaring_type_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<Vec<String>>>> {
+    let mut segments: Vec<&str> = declaring_type_symbol.semantic_path.split("::").collect();
+    segments.pop();
+    let mut enclosing_parameters = Vec::new();
+    let mut prefix = String::new();
+    for segment in segments {
+        if !prefix.is_empty() {
+            prefix.push_str("::");
+        }
+        prefix.push_str(segment);
+        let type_indexes = semantic_path_index
+            .get(&prefix)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.is_empty() {
+            // A namespace segment contributes no type parameters.
+            continue;
+        }
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(parameters) = csharp_type_parameter_names_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        enclosing_parameters.push(parameters);
+    }
+    Ok(Some(enclosing_parameters))
+}
+
+/// Substitutes the enclosing generic segments' type parameters (outer type
+/// parameters such as `T` in `Outer<T>.Inner<U>`) in `spelling` with the
+/// receiver binding's per-segment concrete argument spellings, when the
+/// declaring type is the binding's own type path. The declaring type's
+/// enclosing chain must walk uniquely and each segment's parameter/argument
+/// arity must match; otherwise the spelling is left unchanged so unresolvable
+/// type parameters fail closed downstream.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# outer type parameter substitution inputs explicit"
+)]
+fn substitute_csharp_enclosing_type_parameters(
+    declaring_type_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    binding_type_path: &str,
+    spelling: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<String> {
+    if binding_type_path != declaring_type_symbol.semantic_path
+        || binding.enclosing_generic_arguments.is_empty()
+    {
+        return Ok(spelling.to_string());
+    }
+    let Some(enclosing_parameters) = csharp_enclosing_type_parameter_names(
+        declaring_type_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(spelling.to_string());
+    };
+    // Namespace and non-generic segments carry no type parameters or
+    // concrete arguments; only the generic enclosing segments participate,
+    // aligned by position (e.g. `Demo.Outer<int>` contributes only
+    // `["int"]` for `Outer<T>`).
+    let enclosing_parameters = enclosing_parameters
+        .into_iter()
+        .filter(|parameters| !parameters.is_empty())
+        .collect::<Vec<_>>();
+    let enclosing_arguments = binding
+        .enclosing_generic_arguments
+        .iter()
+        .filter(|arguments| !arguments.is_empty())
+        .collect::<Vec<_>>();
+    if enclosing_parameters.len() != enclosing_arguments.len() {
+        return Ok(spelling.to_string());
+    }
+    let mut result = spelling.to_string();
+    for (parameters, arguments) in enclosing_parameters.iter().zip(enclosing_arguments.iter()) {
+        if parameters.len() != arguments.len() {
+            return Ok(spelling.to_string());
+        }
+        result = substitute_csharp_type_parameters(&result, parameters, arguments);
+    }
+    Ok(result)
+}
+
 /// Substitutes a method's declared return type with the concrete generic
 /// arguments composed for its declaring type, so `GetBox()` declared as
 /// returning `Box<T>` on `Box<T>` resolves to `Box<Helper>` both when the
@@ -6125,31 +6270,40 @@ fn substitute_csharp_method_return_type(
         deadline,
     )?
     .unwrap_or_default();
-    if parameters.is_empty() {
-        return Ok(return_type.to_string());
+    let mut substituted = return_type.to_string();
+    if !parameters.is_empty()
+        && let Some(declaring_type_args) = csharp_compose_generic_arguments_to_type(
+            binding_type_path,
+            &binding.generic_arguments,
+            scope_path,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && parameters.len() == declaring_type_args.len()
+    {
+        substituted =
+            substitute_csharp_type_parameters(&substituted, &parameters, &declaring_type_args);
     }
-    let Some(declaring_type_args) = csharp_compose_generic_arguments_to_type(
+    // A method declared directly on the receiver's own nested generic type
+    // may also return an outer type parameter such as `T` in
+    // `Outer<T>.Inner<U>`; substitute those parameters with the receiver
+    // spelling's per-segment concrete arguments, leaving unresolvable
+    // parameters unchanged so they fail closed downstream.
+    substitute_csharp_enclosing_type_parameters(
+        type_symbol,
+        binding,
         binding_type_path,
-        &binding.generic_arguments,
-        scope_path,
+        &substituted,
         raw_symbols,
         semantic_path_index,
-        csharp_global_import_context,
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
-    )?
-    else {
-        return Ok(return_type.to_string());
-    };
-    if parameters.len() != declaring_type_args.len() {
-        return Ok(return_type.to_string());
-    }
-    Ok(substitute_csharp_type_parameters(
-        return_type,
-        &parameters,
-        &declaring_type_args,
-    ))
+    )
 }
 
 /// Splits a factory-chain spelling such as `makeGroup().GetItems`,
@@ -6514,6 +6668,7 @@ fn resolve_csharp_this_member_chain_call(
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6620,6 +6775,7 @@ fn resolve_csharp_base_member_chain_call(
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6832,6 +6988,14 @@ fn resolve_csharp_receiver_type_binding(
     // generic type's parameters in member declared types.
     let generic_arguments =
         crate::language::csharp_generic_type_arguments(type_name).unwrap_or_default();
+    // A dotted nested spelling such as `Outer<Helper>.Inner<Helper>` also
+    // records the concrete type arguments of every enclosing segment
+    // (outermost first) so member declared types that reference an outer type
+    // parameter (`T[] outerItems` on `Inner<U>`) substitute `T`.
+    let enclosing_generic_arguments =
+        crate::language::csharp_generic_type_arguments_per_segment(type_name)
+            .map(|segments| segments[..segments.len().saturating_sub(1)].to_vec())
+            .unwrap_or_default();
     let binding = if !type_name.starts_with("global::")
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
@@ -6899,6 +7063,7 @@ fn resolve_csharp_receiver_type_binding(
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
         })
     } else {
         resolve_csharp_declared_type_binding_for_reference(
@@ -6915,6 +7080,7 @@ fn resolve_csharp_receiver_type_binding(
         return Ok(None);
     };
     binding.generic_arguments = generic_arguments;
+    binding.enclosing_generic_arguments = enclosing_generic_arguments;
     if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
         // A nullable value type such as `Point?` does not expose the
         // underlying struct's members directly; the receiver must be
