@@ -61818,3 +61818,260 @@ class Caller {
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+
+#[test]
+fn traces_csharp_alias_static_factory_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+    public static int Count() => 2;
+    public Helper[] items = new Helper[2];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Factories.cs"),
+        "namespace Demo.Factories;
+class Util2 {
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "global using GUtil = Demo.Util;
+using Demo.Factories;
+using Alias = Demo.Util;
+using FUtil = Demo.Factories.Util2;
+namespace Demo;
+class Caller {
+    int FromAliasStaticFactory() {
+        var first = Alias.MakeGroup()?.items[0];
+        return first.Run(1);
+    }
+    int FromAliasStaticFactoryNested() {
+        var first = Alias.MakeGroup()?.holder?.items[0];
+        return first.Run(2);
+    }
+    int FromGlobalAliasStaticFactory() {
+        var first = GUtil.MakeGroup()?.items[0];
+        return first.Run(3);
+    }
+    int FromImportedNamespaceAliasStaticFactory() {
+        var first = FUtil.MakeGroup()?.items[0];
+        return first.Run(4);
+    }
+    int failures() {
+        var unknown = Alias.missing?.items[0];
+        var instanceMember = Alias.items?.items[0];
+        var primitive = Alias.Count()?.items[0];
+        foreach (var item in Alias.MakeGroup()?.Missing) {
+            item.Run(1);
+        }
+        return unknown.Run(1) + instanceMember.Run(1) + primitive.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Ambiguous.cs"),
+        "using Alias = Demo.Util;
+using Alias = Demo.Factories.Util2;
+namespace Demo;
+class AmbiguousCaller {
+    int FromAmbiguousAlias() {
+        var first = Alias.MakeGroup()?.items[0];
+        return first.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalAmbiguousA.cs"),
+        "global using GAmb = Demo.Util;
+namespace Demo;
+class GlobalAmbiguousCaller {
+    int FromGlobalAmbiguousAlias() {
+        var first = GAmb.MakeGroup()?.items[0];
+        return first.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalAmbiguousB.cs"),
+        "global using GAmb = Demo.Util;
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a
+    // type-alias-qualified static factory call such as
+    // `Alias.MakeGroup()?.items[0]`, `Alias.MakeGroup()?.holder?.items[0]`,
+    // `GUtil.MakeGroup()?.items[0]`, or `FUtil.MakeGroup()?.items[0]`
+    // resolves the alias to its declared type (file-local, global, or
+    // pointing at a namespace-imported type), resolves the static factory
+    // method on that type, consumes the factory root, and walks the
+    // remaining chain and terminal array member as an instance receiver;
+    // unknown or instance-member roots, primitive-returning factories,
+    // missing or non-array terminals, and ambiguous local or global aliases
+    // fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromAliasStaticFactory",
+        "Demo::Caller::FromAliasStaticFactoryNested",
+        "Demo::Caller::FromGlobalAliasStaticFactory",
+        "Demo::Caller::FromImportedNamespaceAliasStaticFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::AmbiguousCaller::FromAmbiguousAlias"),
+        "unexpected ambiguous alias caller"
+    );
+    assert!(
+        !live.callers.iter().any(|candidate| {
+            candidate.symbol_id == "Demo::GlobalAmbiguousCaller::FromGlobalAmbiguousAlias"
+        }),
+        "unexpected global ambiguous alias caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromAliasStaticFactory",
+        "Demo::Caller::FromAliasStaticFactoryNested",
+        "Demo::Caller::FromGlobalAliasStaticFactory",
+        "Demo::Caller::FromImportedNamespaceAliasStaticFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::AmbiguousCaller::FromAmbiguousAlias"),
+        "unexpected persisted ambiguous alias caller"
+    );
+    assert!(
+        !persisted.callers.iter().any(|candidate| {
+            candidate.symbol_id == "Demo::GlobalAmbiguousCaller::FromGlobalAmbiguousAlias"
+        }),
+        "unexpected persisted global ambiguous alias caller"
+    );
+}
+
+#[test]
+fn traces_csharp_alias_static_factory_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "global using GUtil = Demo.Util;
+using Alias = Demo.Util;
+namespace Demo;
+class Caller {
+    int FromAliasStaticFactory() {
+        var first = Alias.MakeGroup()?.items[0];
+        return first.Run(1);
+    }
+    int FromGlobalAliasStaticFactory() {
+        var first = GUtil.MakeGroup()?.items[0];
+        return first.Run(2);
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
