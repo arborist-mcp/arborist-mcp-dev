@@ -24438,6 +24438,7 @@ fn traces_csharp_generic_member_type_conditional_member_element_access_receivers
         public Box<T> GetInner() => this;
     }
     class Outer<T> { public class Inner<U> { public T GetOuterItem() => default; public U GetInnerItem() => default; } }
+class Holder { public int Capacity { get; set; } public HelperA[] MakeItems() => default; }
 class Holder { }
 class Pair<T, U> {
         public T[] first = new T[2];
@@ -30826,6 +30827,7 @@ class Box<T> {
     public T[] GetItems() => default;
 }
 class Outer<T> { public class Inner<U> { public T GetOuterItem() => default; public U GetInnerItem() => default; } }
+class Holder { public int Capacity { get; set; } public HelperA[] MakeItems() => default; }
 class Caller {
     int VarFromNewElement() { var first = new Box<HelperA>().GetItems()[0]; return first.RunA(1); }
     int VarFromNewNestedElement() { var first = new Box<Outer<HelperA>.Inner<HelperB>>().GetItems()[0]; return first.GetOuterItem().RunA(2); }
@@ -30948,6 +30950,7 @@ class Box<T> {
     public T[] GetItems() => default;
 }
 class Outer<T> { public class Inner<U> { public T GetOuterItem() => default; public U GetInnerItem() => default; } }
+class Holder { public int Capacity { get; set; } public HelperA[] MakeItems() => default; }
 class Caller {
     int VarFromParenSingle() { var single = (new Box<HelperA>()).GetSingle(); return single.RunA(1); }
     int VarFromParenElement() { var first = (new Box<HelperA>()).GetItems()[0]; return first.RunA(2); }
@@ -31051,6 +31054,7 @@ class HelperA { public int RunA(int value) => value; }
 class HelperB { public int RunB(int value) => value; }
 class Holder { }
 class Outer<T> { public class Inner<U> { public T GetOuterItem() => default; public U GetInnerItem() => default; } }
+class Holder { public int Capacity { get; set; } public HelperA[] MakeItems() => default; }
 class Pair<T, U> {
     public T[] GetFirsts() => default;
     public U[] GetSeconds() => default;
@@ -31144,6 +31148,97 @@ class Caller {
         "Demo::Caller::VarFromSpacedSecond",
         "Demo::Caller::VarFromUnspacedSeconds",
         "Demo::Caller::VarFromSpacedNestedSeconds",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_object_initializer_constructed_receiver_factory_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Pair<T, U> {
+    public int Capacity { get; set; }
+    public T[] GetFirsts() => default;
+    public U[] GetSeconds() => default;
+    public T GetFirst() => default;
+    public U GetSecond() => default;
+}
+class Caller {
+    int VarFromInitializedFirsts() { var first = new Pair<HelperA, HelperB> { Capacity = 2 }.GetFirsts()[0]; return first.RunA(1); }
+    int VarFromInitializedSeconds() { var second = new Pair<HelperA, HelperB> { Capacity = 2 }.GetSeconds()[0]; return second.RunB(2); }
+    int VarFromInitializedSecond() { var second = new Pair<HelperA, HelperB> { Capacity = 2 }.GetSecond(); return second.RunB(3); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a constructed-receiver factory call or
+    // array element whose `new` expression carries an object-initializer body
+    // between the constructed type and the member chain, such as
+    // `new Pair<HelperA, HelperB> { Capacity = 2 }.GetSeconds()[0]` or
+    // `new Pair<HelperA, HelperB> { Capacity = 2 }.GetSecond()`, resolves the
+    // constructed receiver and substitutes each concrete type argument into
+    // the factory's declared return type (`T` to `HelperA`, `U` to `HelperB`)
+    // before tracing the final member call, matching the plain
+    // `new Pair<HelperA, HelperB>()` spelling.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 1);
+    assert_eq!(
+        a_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::VarFromInitializedFirsts"]
+    );
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromInitializedSeconds",
+        "Demo::Caller::VarFromInitializedSecond",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 1);
+    assert_eq!(
+        a_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::VarFromInitializedFirsts"]
+    );
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromInitializedSeconds",
+        "Demo::Caller::VarFromInitializedSecond",
     ] {
         assert!(
             b_persisted
