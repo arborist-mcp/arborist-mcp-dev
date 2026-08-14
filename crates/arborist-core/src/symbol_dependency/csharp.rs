@@ -164,6 +164,12 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
 pub(in crate::symbol_dependency) struct CSharpInterfaceParentBinding {
     pub(crate) semantic_type_path: String,
     pub(crate) is_global_qualified: bool,
+    /// Raw top-level type-argument spellings written in the interface's base
+    /// list, such as `["T"]` for `interface IGeneric<T> : IBase<T>`; empty
+    /// for non-generic parent spellings. Interface member-hop resolution
+    /// substitutes the interface receiver's concrete arguments for these
+    /// spellings to compose the parent interface's arguments.
+    pub(crate) raw_generic_argument_spellings: Vec<String>,
 }
 
 /// Outcome of resolving an interface declaration's parent list. `None` means
@@ -455,6 +461,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             .push(CSharpInterfaceParentBinding {
                 semantic_type_path: interface_parent.semantic_type_path,
                 is_global_qualified: interface_parent.is_global_qualified,
+                raw_generic_argument_spellings: interface_parent.generic_argument_spellings.clone(),
             });
     }
     let mut static_type_import_bindings = Vec::new();
@@ -1868,7 +1875,7 @@ pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interfa
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
-                raw_generic_argument_spellings: Vec::new(),
+                raw_generic_argument_spellings: parent.raw_generic_argument_spellings.clone(),
             },
             source_namespace_path,
         ) else {

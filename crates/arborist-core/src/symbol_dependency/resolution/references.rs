@@ -5992,6 +5992,7 @@ fn resolve_csharp_member_chain_binding<'a>(
                     match resolve_csharp_interface_member_hop(
                         current_type_symbol,
                         hop,
+                        &binding.generic_arguments,
                         raw_symbols,
                         semantic_path_index,
                         csharp_global_import_context,
@@ -7069,8 +7070,14 @@ enum CSharpInterfaceMemberHopResolution<'a> {
 /// falling through. Exactly one branch must provide a uniquely resolvable
 /// hop, every other branch must prove it has no declaration, and a
 /// declaration reached identically through multiple branches still resolves
-/// once. Competing, ambiguous, cyclic, and unresolvable hops fail closed as
-/// `Blocked`.
+/// once. A generic interface receiver's concrete type arguments are
+/// substituted through the extends chain, so `T[] items` declared on
+/// `IBase<T>` resolves to `Helper[]` for an `IGeneric<Helper> : IBase<T>`
+/// receiver and for non-generic parents spelled with concrete arguments
+/// (`IFixed : IBase<Helper>`), while primitive element types, unknown or
+/// arity-mismatched arguments, and receivers without concrete arguments fail
+/// closed. Competing, ambiguous, cyclic, and unresolvable hops fail closed
+/// as `Blocked`.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# interface member-hop resolution inputs explicit"
@@ -7078,6 +7085,7 @@ enum CSharpInterfaceMemberHopResolution<'a> {
 fn resolve_csharp_interface_member_hop<'a>(
     interface_symbol: &'a IndexedSymbol,
     hop: &str,
+    current_type_args: &[String],
     raw_symbols: &'a [IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
@@ -7113,6 +7121,14 @@ fn resolve_csharp_interface_member_hop<'a>(
             return Ok(CSharpInterfaceMemberHopResolution::Blocked);
         }
     };
+    let parameters = csharp_type_parameter_names_for_type(
+        &interface_symbol.file_path,
+        interface_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    .unwrap_or_default();
     if member_bindings.contains(member_name) {
         let resolution = match member_bindings.type_for(member_name) {
             Some(declared_type) => {
@@ -7125,10 +7141,30 @@ fn resolve_csharp_interface_member_hop<'a>(
                     Some(declared_type)
                 };
                 match hop_type_name {
-                    Some(hop_type_name) => CSharpInterfaceMemberHopResolution::Resolved(
-                        interface_symbol,
-                        hop_type_name,
-                    ),
+                    // A generic declaring interface substitutes its type
+                    // parameters with the concrete arguments composed for it
+                    // through the extends chain; a binding without concrete
+                    // arguments leaves the declared type unchanged and defers
+                    // generic-member substitution to downstream fail-closed
+                    // checks.
+                    Some(hop_type_name) => {
+                        let hop_type_name = if !parameters.is_empty()
+                            && !current_type_args.is_empty()
+                            && parameters.len() == current_type_args.len()
+                        {
+                            substitute_csharp_type_parameters(
+                                &hop_type_name,
+                                &parameters,
+                                current_type_args,
+                            )
+                        } else {
+                            hop_type_name
+                        };
+                        CSharpInterfaceMemberHopResolution::Resolved(
+                            interface_symbol,
+                            hop_type_name,
+                        )
+                    }
                     None => CSharpInterfaceMemberHopResolution::Blocked,
                 }
             }
@@ -7159,6 +7195,10 @@ fn resolve_csharp_interface_member_hop<'a>(
         }
         CSharpInterfaceParents::Parents(parent_bindings) => parent_bindings,
     };
+    if !parameters.is_empty() && parameters.len() != current_type_args.len() {
+        visited_interface_paths.remove(&interface_symbol.semantic_path);
+        return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+    }
     let mut resolved_hop = None;
     for parent_binding in parent_bindings {
         let Some(parent_interface_path) = csharp_interface_type_path(
@@ -7181,9 +7221,27 @@ fn resolve_csharp_interface_member_hop<'a>(
             visited_interface_paths.remove(&interface_symbol.semantic_path);
             return Ok(CSharpInterfaceMemberHopResolution::Blocked);
         };
+        // Compose the parent interface's concrete arguments: a generic
+        // interface substitutes its type parameters with the receiver's
+        // concrete arguments into the parent's raw spellings (`IGeneric<T> :
+        // IBase<T>` with `["Helper"]` yields `["Helper"]`), while a
+        // non-generic interface carries the parent's concrete spellings
+        // directly (`IFixed : IBase<Helper>` yields `["Helper"]`).
+        let parent_args = if parameters.is_empty() {
+            parent_binding.raw_generic_argument_spellings.clone()
+        } else {
+            parent_binding
+                .raw_generic_argument_spellings
+                .iter()
+                .map(|spelling| {
+                    substitute_csharp_type_parameters(spelling, &parameters, current_type_args)
+                })
+                .collect()
+        };
         match resolve_csharp_interface_member_hop(
             &raw_symbols[*parent_index],
             hop,
+            &parent_args,
             raw_symbols,
             semantic_path_index,
             csharp_global_import_context,

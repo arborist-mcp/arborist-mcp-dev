@@ -88,6 +88,12 @@ pub(crate) struct CSharpFileInterfaceParent {
     pub(crate) declaration_range: (usize, usize),
     pub(crate) semantic_type_path: String,
     pub(crate) is_global_qualified: bool,
+    /// Raw top-level type-argument spellings from the parent-interface
+    /// spelling, such as `["T"]` for `interface IGeneric<T> : IBase<T>`;
+    /// empty for non-generic parent spellings. Generic-inheritance
+    /// resolution substitutes an interface receiver's concrete arguments for
+    /// these spellings to compose the parent interface's arguments.
+    pub(crate) generic_argument_spellings: Vec<String>,
 }
 
 /// Collects the direct parent interfaces of every interface declaration in a
@@ -124,6 +130,10 @@ pub(crate) fn csharp_file_interface_parents(
                             declaration_range: (node.start_byte(), node.end_byte()),
                             semantic_type_path,
                             is_global_qualified,
+                            generic_argument_spellings: csharp_generic_type_arguments(
+                                base_type_text,
+                            )
+                            .unwrap_or_default(),
                         });
                     }
                 }
