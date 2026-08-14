@@ -62075,3 +62075,204 @@ class Caller {
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+
+#[test]
+fn traces_csharp_global_qualified_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+}
+class Util {
+    public static Group holder = new Group();
+    public static Group MakeGroup() => new Group();
+    public static int Count() => 2;
+    public Helper[] items = new Helper[2];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SubTypes.cs"),
+        "namespace Demo.Sub;
+class Util2 {
+    public static Group holder = new Group();
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int FromGlobalStaticField() {
+        var first = global::Demo.Util.holder?.items[0];
+        return first.Run(1);
+    }
+    int FromGlobalStaticFieldNested() {
+        var first = global::Demo.Util.holder?.holder?.items[0];
+        return first.Run(2);
+    }
+    int FromGlobalStaticFactory() {
+        var first = global::Demo.Util.MakeGroup()?.items[0];
+        return first.Run(3);
+    }
+    int FromGlobalDeepNamespaceStaticField() {
+        var first = global::Demo.Sub.Util2.holder?.items[0];
+        return first.Run(4);
+    }
+    int FromGlobalDeepNamespaceStaticFactory() {
+        var first = global::Demo.Sub.Util2.MakeGroup()?.items[0];
+        return first.Run(5);
+    }
+    int failures() {
+        var unknown = global::Demo.Util.missing?.items[0];
+        var instanceMember = global::Demo.Util.items?.items[0];
+        var primitive = global::Demo.Util.Count()?.items[0];
+        foreach (var item in global::Demo.Util.MakeGroup()?.Missing) {
+            item.Run(1);
+        }
+        return unknown.Run(1) + instanceMember.Run(1) + primitive.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a
+    // `global::`-qualified static field, property, or factory call such as
+    // `global::Demo.Util.holder?.items[0]`,
+    // `global::Demo.Util.holder?.holder?.items[0]`,
+    // `global::Demo.Util.MakeGroup()?.items[0]`, or
+    // `global::Demo.Sub.Util2.MakeGroup()?.items[0]` resolves the full
+    // global-qualified type path (including deep namespaces), consumes the
+    // static root, and walks the remaining chain and terminal array member as
+    // an instance receiver, while unknown static members, instance members
+    // reached through a type name, primitive-returning factories, and missing
+    // or non-array terminals fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromGlobalStaticField",
+        "Demo::Caller::FromGlobalStaticFieldNested",
+        "Demo::Caller::FromGlobalStaticFactory",
+        "Demo::Caller::FromGlobalDeepNamespaceStaticField",
+        "Demo::Caller::FromGlobalDeepNamespaceStaticFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromGlobalStaticField",
+        "Demo::Caller::FromGlobalStaticFieldNested",
+        "Demo::Caller::FromGlobalStaticFactory",
+        "Demo::Caller::FromGlobalDeepNamespaceStaticField",
+        "Demo::Caller::FromGlobalDeepNamespaceStaticFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_global_qualified_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+}
+class Util {
+    public static Group holder = new Group();
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int FromGlobalStaticField() {
+        var first = global::Demo.Util.holder?.items[0];
+        return first.Run(1);
+    }
+    int FromGlobalStaticFactory() {
+        var first = global::Demo.Util.MakeGroup()?.items[0];
+        return first.Run(2);
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
