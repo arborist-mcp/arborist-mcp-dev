@@ -5832,6 +5832,13 @@ fn resolve_csharp_member_chain_binding<'a>(
                     return Ok(None);
                 };
                 if member_bindings.contains(member_name) {
+                    // A member chain always walks an instance receiver; a
+                    // static member reached through an instance reference is
+                    // invalid C# (CS0176) and fails closed, so only instance
+                    // members continue the chain.
+                    if member_bindings.is_static_member(member_name) {
+                        return Ok(None);
+                    }
                     // An element-access hop requires an array-typed member;
                     // the element component type pins the next hop, stripping
                     // one component layer per element access in the hop, while
