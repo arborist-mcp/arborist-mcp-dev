@@ -65002,7 +65002,7 @@ fn traces_csharp_generic_inheritance_conditional_member_element_access_receivers
             var prim = holder.value;
             Deep<int> deep = new Deep<int>();
             var deepFirst = deep?.items[0];
-            IGeneric<Helper> g = default;
+            IGeneric<int> g = default;
             var interfaceFirst = g?.items[0];
             Box<int> b = new Box<int>();
             var direct = b?.GetItem();
@@ -65027,8 +65027,8 @@ fn traces_csharp_generic_inheritance_conditional_member_element_access_receivers
     // base (`Fixed : Box<Helper>`), and `var` factory initializers on the
     // bound receiver all trace, while a concrete argument whose element type
     // has no matching member (`Derived<int>`, `Wrapped<int>`, `Deep<int>`,
-    // `Box<int>`), and generic interface-extends members (`IGeneric<T> :
-    // IBase<T>`) fail closed.
+    // `Box<int>`), and generic interface-extends members whose element type
+    // has no matching member (`IGeneric<int>`) fail closed.
     let helper_symbol = "Demo::Helper::Run";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 12);
@@ -65203,6 +65203,272 @@ fn traces_csharp_generic_inheritance_conditional_member_element_access_receivers
         "Demo::Caller::InheritedField",
         "Demo::Caller::InheritedMethodHop",
         "Demo::Caller::TransformedField",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+#[test]
+fn traces_csharp_generic_interface_extends_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    interface IBase<T> {
+        T[] items { get; }
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IFixed : IBase<Helper> {
+    }
+    interface IWrapped<T> : IBase<Holder<T>> {
+    }
+    interface IOther<T> {
+        T[] items { get; }
+    }
+    interface IDup<T> : IBase<T>, IOther<T> {
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+    class Caller {
+        int ExtendsField() {
+            IGeneric<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int FixedField() {
+            IFixed g = default;
+            var first = g?.items[0];
+            return first.Run(2);
+        }
+        int MultiLevelField() {
+            IDeep<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(3);
+        }
+        int TransformedHop() {
+            IWrapped<Helper> g = default;
+            var holder = g?.items[0];
+            return holder.value.Run(4);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            IGeneric<Other> o = default;
+            var other = o?.items[0];
+            IDup<Helper> d = default;
+            var dup = d?.items[0];
+            return first.Run(5) + other.Run(6) + dup.Run(7);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on a constructed generic interface
+    // receiver composes the concrete type arguments through the unique
+    // interface-extends chain, so `T[] items` declared on `IBase<T>` resolves
+    // to `Helper[]` for `IGeneric<Helper> : IBase<T>`, through a multi-level
+    // chain (`IDeep<T> : IGeneric<T> : IBase<T>`), through a non-generic
+    // parent spelled with concrete arguments (`IFixed : IBase<Helper>`), and
+    // through a transformed parent argument (`IWrapped<T> : IBase<Holder<T>>`
+    // resolving `items` to `Holder<Helper>[]` and `value` to `Helper`), while
+    // a concrete argument whose element type has no matching member
+    // (`IGeneric<int>`, `IGeneric<Other>`), and competing declarations across
+    // parent branches (`IDup<T> : IBase<T>, IOther<T>`) fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::FixedField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_generic_interface_extends_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    interface IBase<T> {
+        T[] items { get; }
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IFixed : IBase<Helper> {
+    }
+    interface IWrapped<T> : IBase<Holder<T>> {
+    }
+    interface IOther<T> {
+        T[] items { get; }
+    }
+    interface IDup<T> : IBase<T>, IOther<T> {
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int ExtendsField() {
+            IGeneric<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int MultiLevelField() {
+            IDeep<Helper> g = default;
+            var first = g?.items[0];
+            return first.Run(2);
+        }
+        int TransformedHop() {
+            IWrapped<Helper> g = default;
+            var holder = g?.items[0];
+            return holder.value.Run(3);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the generic interface-extends
+    // element-access positives on top of the on-disk type file, while a
+    // concrete argument whose element type has no matching member fails
+    // closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ExtendsField",
+        "Demo::Caller::MultiLevelField",
+        "Demo::Caller::TransformedHop",
     ] {
         assert!(
             persisted
