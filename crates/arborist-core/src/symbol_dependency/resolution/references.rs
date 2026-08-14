@@ -2352,10 +2352,17 @@ fn resolve_csharp_factory_receiver_binding(
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
-        )? {
+        )?
+        && let Some(receiver_type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &receiver_binding,
+            csharp_is_type_declaration,
+        ) {
         substitute_csharp_method_return_type(
             method,
             &receiver_binding,
+            &receiver_type_path,
             return_type,
             raw_symbols,
             semantic_path_index,
@@ -5850,6 +5857,7 @@ fn resolve_csharp_member_chain_binding<'a>(
             let return_type = substitute_csharp_method_return_type(
                 method_symbol,
                 &binding,
+                &type_symbol.semantic_path,
                 return_type,
                 raw_symbols,
                 semantic_path_index,
@@ -6067,11 +6075,15 @@ fn resolve_csharp_member_chain_binding<'a>(
 /// arguments composed for its declaring type, so `GetBox()` declared as
 /// returning `Box<T>` on `Box<T>` resolves to `Box<Helper>` both when the
 /// receiver is `Box<Helper>` directly and when it reaches the method through
-/// a generic class/record base such as `Derived<Helper> : Box<T>`. A
-/// non-generic declaring type, a missing or ambiguous declaring type, a base
-/// or interface chain that cannot be walked uniquely, or a
-/// parameter/argument arity mismatch leaves the return type unchanged and
-/// fails closed downstream.
+/// a generic class/record base such as `Derived<Helper> : Box<T>`. The
+/// caller threads the receiver's already-resolved dispatchable type path
+/// (resolved in the caller's scope), so a receiver whose simple name does not
+/// resolve from the method's own namespace, such as a cross-namespace
+/// `IGeneric<Helper>` interface reachable only through the caller's `using`,
+/// still composes through its extends chain. A non-generic declaring type, a
+/// missing or ambiguous declaring type, a base or interface chain that cannot
+/// be walked uniquely, or a parameter/argument arity mismatch leaves the
+/// return type unchanged and fails closed downstream.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# generic method return type substitution inputs explicit"
@@ -6079,6 +6091,7 @@ fn resolve_csharp_member_chain_binding<'a>(
 fn substitute_csharp_method_return_type(
     method: &IndexedSymbol,
     binding: &CSharpBaseTypeBinding,
+    binding_type_path: &str,
     return_type: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -6090,11 +6103,9 @@ fn substitute_csharp_method_return_type(
     let Some(scope_path) = method.scope_path.as_deref() else {
         return Ok(return_type.to_string());
     };
-    let Some(binding_type_path) =
-        csharp_dispatchable_type_path(method, raw_symbols, binding, csharp_is_type_declaration)
-    else {
+    if binding_type_path.is_empty() {
         return Ok(return_type.to_string());
-    };
+    }
     let type_indexes = semantic_path_index
         .get(scope_path)
         .into_iter()
@@ -6118,7 +6129,7 @@ fn substitute_csharp_method_return_type(
         return Ok(return_type.to_string());
     }
     let Some(declaring_type_args) = csharp_compose_generic_arguments_to_type(
-        &binding_type_path,
+        binding_type_path,
         &binding.generic_arguments,
         scope_path,
         raw_symbols,
@@ -6343,6 +6354,7 @@ fn resolve_csharp_method_call_hop_binding<'a>(
     let return_type = substitute_csharp_method_return_type(
         method,
         binding,
+        &dispatch_source_symbol.semantic_path,
         return_type,
         raw_symbols,
         semantic_path_index,
