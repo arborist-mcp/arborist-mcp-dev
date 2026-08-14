@@ -30080,3 +30080,146 @@ fn traces_csharp_nested_generic_receiver_outer_parameter_jagged_factory_array_re
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_var_held_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+        }
+    }
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB>[][] MakeNestedMatrix() => default;
+        public static Box<Outer<HelperA>.Inner<HelperB>>[][] MakeBoxMatrix() => default;
+    }
+    class Caller {
+        int RowVarOuter() {
+            var row = Factory.MakeNestedMatrix()[0];
+            var first = row[0].GetOuterItem();
+            return first.RunA(1);
+        }
+        int RowVarInner() {
+            var row = Factory.MakeNestedMatrix()[0];
+            var first = row[0].GetInnerItem();
+            return first.RunB(2);
+        }
+        int JaggedBoxVarOuter() {
+            var boxes = Factory.MakeBoxMatrix();
+            var first = boxes[0][0].items[0].GetOuterItem();
+            return first.RunA(3);
+        }
+        int JaggedBoxVarInner() {
+            var boxes = Factory.MakeBoxMatrix();
+            var first = boxes[0][0].items[0].GetInnerItem();
+            return first.RunB(4);
+        }
+        int JaggedBoxDirectOuter() {
+            var first = Factory.MakeBoxMatrix()[0][0].items[0].GetOuterItem();
+            return first.RunA(5);
+        }
+        int JaggedBoxDirectInner() {
+            var first = Factory.MakeBoxMatrix()[0][0].items[0].GetInnerItem();
+            return first.RunB(6);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A two-level nested generic receiver reached through an element-access
+    // `var` holding an intermediate row of a jagged factory-returned array
+    // (`var row = Factory.MakeNestedMatrix()[0]`; `row[0].GetOuterItem()` or
+    // `row[0].GetInnerItem()`), or through a jagged factory-returned box
+    // array held in a `var` local (`var boxes = Factory.MakeBoxMatrix()`;
+    // `boxes[0][0].items[0].GetOuterItem()`), substitutes each enclosing
+    // segment's concrete argument, so method-call members that reference the
+    // outer or inner segment's type parameter (`T GetOuterItem()` or
+    // `U GetInnerItem()` on `Inner<U>`) resolve to `HelperA::RunA` or
+    // `HelperB::RunB`; the direct jagged box-array form
+    // (`Factory.MakeBoxMatrix()[0][0].items[0]`) traces the same members.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::RowVarOuter",
+        "Demo::Caller::JaggedBoxVarOuter",
+        "Demo::Caller::JaggedBoxDirectOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::RowVarInner",
+        "Demo::Caller::JaggedBoxVarInner",
+        "Demo::Caller::JaggedBoxDirectInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::RowVarOuter",
+        "Demo::Caller::JaggedBoxVarOuter",
+        "Demo::Caller::JaggedBoxDirectOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::RowVarInner",
+        "Demo::Caller::JaggedBoxVarInner",
+        "Demo::Caller::JaggedBoxDirectInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
