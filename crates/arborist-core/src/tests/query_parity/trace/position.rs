@@ -64346,3 +64346,269 @@ fn traces_csharp_instance_receiver_static_member_conditional_member_element_acce
         );
     }
 }
+
+#[test]
+fn traces_csharp_interface_inherited_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    interface IBase {
+        Helper[] items { get; }
+    }
+    interface IMid : IBase {
+    }
+    interface IGroup : IMid {
+    }
+    interface ILeft {
+        Helper[] leftItems { get; }
+    }
+    interface IRight {
+        Helper[] rightItems { get; }
+    }
+    interface IAmbiguous : ILeft, IRight {
+        Helper[] clash { get; }
+    }
+    interface IClashA {
+        Helper[] clash { get; }
+    }
+    interface IClashB {
+        Helper[] clash { get; }
+    }
+    interface IAmbiguous2 : IClashA, IClashB {
+    }
+    interface IJagged {
+        Helper[][] matrix { get; }
+    }
+    interface INonArray {
+        Helper item { get; }
+    }
+    class Group : IGroup {
+        public Helper[] items = new Helper[2];
+    }
+    class Caller {
+        int MultiLevel(IGroup g) {
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int Jagged(IJagged g) {
+            var first = g?.matrix[0][0];
+            return first.Run(2);
+        }
+        int DirectShadowing(IAmbiguous g) {
+            var first = g?.clash[0];
+            return first.Run(3);
+        }
+        int FromClassReceiver(Group g) {
+            var first = g?.items[0];
+            return first.Run(4);
+        }
+        int FromBareRoot() {
+            Group g = new Group();
+            var first = g?.items[0];
+            return first.Run(5);
+        }
+        int failures(IAmbiguous2 g2) {
+            var inheritedAmbiguous = g2?.clash[0];
+            return inheritedAmbiguous.Run(1);
+        }
+        int nonArray(INonArray g) {
+            var first = g?.item[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on an interface-typed receiver
+    // resolves the terminal array member through the interface-extends chain
+    // (`IGroup` inheriting `items` from `IBase` through `IMid`), including
+    // jagged array layers (`g?.matrix[0][0]`), a directly declared member that
+    // shadows same-named parent members, and class-typed or constructed
+    // receivers, while a member inherited from two conflicting parent
+    // interfaces with different declaring types and a non-array member fail
+    // closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::MultiLevel",
+        "Demo::Caller::Jagged",
+        "Demo::Caller::DirectShadowing",
+        "Demo::Caller::FromClassReceiver",
+        "Demo::Caller::FromBareRoot",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in ["Demo::Caller::failures", "Demo::Caller::nonArray"] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::MultiLevel",
+        "Demo::Caller::Jagged",
+        "Demo::Caller::DirectShadowing",
+        "Demo::Caller::FromClassReceiver",
+        "Demo::Caller::FromBareRoot",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in ["Demo::Caller::failures", "Demo::Caller::nonArray"] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_interface_inherited_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    interface IBase {
+        Helper[] items { get; }
+    }
+    interface IMid : IBase {
+    }
+    interface IGroup : IMid {
+    }
+    interface IClashA {
+        Helper[] clash { get; }
+    }
+    interface IClashB {
+        Helper[] clash { get; }
+    }
+    interface IAmbiguous2 : IClashA, IClashB {
+    }
+    class Group : IGroup {
+        public Helper[] items = new Helper[2];
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int MultiLevel(IGroup g) {
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+        int FromClassReceiver(Group g) {
+            var first = g?.items[0];
+            return first.Run(2);
+        }
+        int failures(IAmbiguous2 g2) {
+            var inheritedAmbiguous = g2?.clash[0];
+            return inheritedAmbiguous.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the interface-extends element-access
+    // positives on top of an on-disk type file, while conflicting parent
+    // interface members fail closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::MultiLevel",
+        "Demo::Caller::FromClassReceiver",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::MultiLevel",
+        "Demo::Caller::FromClassReceiver",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
