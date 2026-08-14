@@ -515,17 +515,20 @@ fn strip_csharp_generic_type_arguments(type_path: &str) -> Option<String> {
     generic_argument_contents.is_empty().then_some(normalized)
 }
 
-/// Parses the top-level type-argument spellings of a constructed generic
-/// type such as `Box<Helper>` (`["Helper"]`), `Box<Dictionary<string, int>>`
-/// (`["Dictionary<string, int>"]`), or `Pair<A, B>` (`["A", "B"]`).
-/// Non-generic spellings, empty argument lists, and malformed or trailing
-/// lists return `None` and fail closed.
+/// Parses the top-level type-argument spellings of the last type segment of
+/// a constructed generic spelling such as `Box<Helper>` (`["Helper"]`),
+/// `Box<Dictionary<string, int>>` (`["Dictionary<string, int>"]`),
+/// `Pair<A, B>` (`["A", "B"]`), or the nested `Outer<Helper>.Inner<Helper>`
+/// (`["Helper"]`, the inner type's own arguments aligned with its own
+/// type-parameter list). Non-generic spellings, empty argument lists, and
+/// malformed or trailing lists return `None` and fail closed.
 pub(crate) fn csharp_generic_type_arguments(type_path: &str) -> Option<Vec<String>> {
-    let open = type_path.find('<')?;
+    let last_segment = csharp_last_type_segment(type_path)?;
+    let open = last_segment.find('<')?;
     let mut arguments = Vec::new();
     let mut depth = 0usize;
     let mut current = String::new();
-    for (index, character) in type_path[open + 1..].char_indices() {
+    for (index, character) in last_segment[open + 1..].char_indices() {
         match character {
             '<' => {
                 depth += 1;
@@ -538,7 +541,7 @@ pub(crate) fn csharp_generic_type_arguments(type_path: &str) -> Option<Vec<Strin
                         return None;
                     }
                     arguments.push(argument.to_string());
-                    let remainder = &type_path[open + 1 + index + character.len_utf8()..];
+                    let remainder = &last_segment[open + 1 + index + character.len_utf8()..];
                     if !remainder.is_empty() {
                         return None;
                     }
@@ -559,6 +562,33 @@ pub(crate) fn csharp_generic_type_arguments(type_path: &str) -> Option<Vec<Strin
         }
     }
     None
+}
+
+/// Splits a qualified type spelling on `.` outside any generic argument list
+/// and returns the final segment, so `Outer<Helper>.Inner<Helper>` yields
+/// `Inner<Helper>` and `Box<Helper>` yields itself. Empty final segments and
+/// unbalanced argument lists return `None` and fail closed.
+fn csharp_last_type_segment(type_path: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut last_start = 0usize;
+    for (index, character) in type_path.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            '.' if depth == 0 => {
+                if index == last_start {
+                    return None;
+                }
+                last_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    let last_segment = &type_path[last_start..];
+    if last_segment.is_empty() {
+        return None;
+    }
+    Some(last_segment)
 }
 
 fn csharp_qualified_type_semantic_path(type_path: &str) -> Option<String> {
@@ -611,6 +641,46 @@ mod tests {
             super::csharp_generic_type_semantic_path("Base<int>Suffix"),
             None
         );
+    }
+
+    #[test]
+    fn collects_last_segment_generic_type_arguments() {
+        assert_eq!(
+            super::csharp_generic_type_arguments("Box<Helper>"),
+            Some(vec!["Helper".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("Outer<Helper>.Inner<Helper>"),
+            Some(vec!["Helper".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("Outer<Helper>.Inner<int>"),
+            Some(vec!["int".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("NonGenericOuter.GenInner<Helper>"),
+            Some(vec!["Helper".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("global::Demo.Outer<int>.Base<string>"),
+            Some(vec!["string".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("Box<Dictionary<string, int>>"),
+            Some(vec!["Dictionary<string, int>".to_string()])
+        );
+        assert_eq!(
+            super::csharp_generic_type_arguments("Pair<A, B>"),
+            Some(vec!["A".to_string(), "B".to_string()])
+        );
+        assert_eq!(super::csharp_generic_type_arguments("Base"), None);
+        assert_eq!(
+            super::csharp_generic_type_arguments("Outer<Helper>.Inner"),
+            None
+        );
+        assert_eq!(super::csharp_generic_type_arguments("Base<>"), None);
+        assert_eq!(super::csharp_generic_type_arguments("Base<int"), None);
+        assert_eq!(super::csharp_generic_type_arguments("Base<int>[]"), None);
     }
 
     #[test]
