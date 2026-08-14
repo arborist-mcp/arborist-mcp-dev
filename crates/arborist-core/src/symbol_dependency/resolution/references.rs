@@ -4345,6 +4345,59 @@ fn resolve_csharp_initializer_chain_binding(
             Ok(None)
         };
     }
+    // A receiver that is an element access on a bound local or field, such
+    // as `boxes[0][0]` in `boxes[0][0].items[0].GetOuterItem()` where
+    // `boxes` holds a factory-returned jagged array, resolves the base
+    // array's element component type (a bound array local, a `var` local
+    // initialized from a factory-returned array, or an element-access var)
+    // stripping one component layer per element-access depth, then walks the
+    // remaining hops through the same member-chain rules. An unbound or
+    // non-array base falls through to the static type-qualified root and
+    // static-imported member paths below.
+    if receiver_name.ends_with(']')
+        && let Some(open) = receiver_name.find('[')
+        && open > 0
+        && !receiver_name[..open].is_empty()
+        && bindings.contains(&receiver_name[..open])
+        && let Some(depth) = csharp_array_access_depth(receiver_name)
+    {
+        let base = &receiver_name[..open];
+        let Some(binding) = csharp_array_element_component_binding(
+            source_symbol,
+            base,
+            depth,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
+    }
     // A bound receiver pins its declared type before the hops walk through
     // the unique class/record ancestor chain.
     if bindings.contains(receiver_name) {
@@ -6023,6 +6076,85 @@ fn csharp_array_element_component_binding(
         )?
     {
         return Ok(Some(binding));
+    }
+    // A base that is itself a `var` local bound from an element-access
+    // initializer, such as `row` in `var row = Factory.MakeNestedMatrix()[0]`
+    // followed by `row[0].GetInnerItem()`, resolves the initializer's base
+    // array at its recorded depth and strips one component layer per
+    // additional element-access depth. A factory-call base resolves through
+    // the same factory-array rules, a dotted member-chain base walks the
+    // terminal array member, and a bare base resolves through its declared
+    // array type or factory marker before the additional layers are stripped;
+    // unresolvable bases and depths beyond the base array's layers fail
+    // closed.
+    if let Some((base_reference, base_arity, base_depth)) = bindings.element_access_base_for(base) {
+        let combined_depth = base_depth + depth;
+        if let Some(factory_call) = base_reference.strip_suffix("()") {
+            return csharp_factory_array_component_binding(
+                source_symbol,
+                factory_call,
+                base_arity,
+                combined_depth,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if base_reference.contains('.') {
+            return csharp_qualified_element_access_component_type_path(
+                source_symbol,
+                &base_reference,
+                combined_depth,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if let Some(declared_type) = bindings.type_for(&base_reference)
+            && let Some(component_type) =
+                csharp_array_component_spelling_at_depth(&declared_type, combined_depth)
+        {
+            return resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if let Some(raw_binding) = bindings.raw_for(&base_reference)
+            && let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding)
+        {
+            return csharp_factory_array_component_binding(
+                source_symbol,
+                &factory_name,
+                factory_arity,
+                combined_depth,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        return Ok(None);
     }
     // A bound `var` local initialized from a factory call whose declared
     // return type is an array, such as `var items = Factory.MakeNestedArray()`
