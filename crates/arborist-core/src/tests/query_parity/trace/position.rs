@@ -64612,3 +64612,284 @@ fn traces_csharp_interface_inherited_conditional_member_element_access_receivers
         "unexpected persisted failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_generic_member_type_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public T item;
+        public Box<T> self;
+        public Box<T> GetInner() => this;
+    }
+    class Pair<T, U> {
+        public T[] first = new T[2];
+        public U[] second = new U[2];
+    }
+    interface IGeneric<T> {
+        T[] genericItems { get; }
+    }
+    class Group : IGeneric<Helper> {
+        public Helper[] genericItems = new Helper[2];
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+    class Caller {
+        int GenericClassField() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.items[0];
+            return first.Run(1);
+        }
+        int GenericClassConstructed() {
+            var b = new Box<Helper>();
+            var first = b?.items[0];
+            return first.Run(2);
+        }
+        int GenericInterfaceField(IGeneric<Helper> g) {
+            var first = g?.genericItems[0];
+            return first.Run(3);
+        }
+        int GenericVarChain() {
+            var b = new Box<Helper>();
+            var second = b.item;
+            return second.Run(4);
+        }
+        int DeepSelfChain() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.self?.self?.items[0];
+            return first.Run(5);
+        }
+        int MethodHop() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.GetInner()?.items[0];
+            return first.Run(6);
+        }
+        int PairFirst() {
+            Pair<Helper, Other> p = new Pair<Helper, Other>();
+            var first = p?.first[0];
+            return first.Run(7);
+        }
+        int failures() {
+            Box<int> b = new Box<int>();
+            var first = b?.items[0];
+            return first.Run(1);
+        }
+        int wrongElement() {
+            Box<Other> b = new Box<Other>();
+            var first = b?.items[0];
+            return first.Run(1);
+        }
+        int wrongPairSecond() {
+            Pair<Helper, Other> p = new Pair<Helper, Other>();
+            var first = p?.second[0];
+            return first.Run(8);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional member element access on a constructed generic receiver
+    // substitutes the receiver's concrete type arguments for the generic
+    // type's parameters in the terminal member's declared type, so
+    // `Box<Helper>` resolves `T[] items` to `Helper[]` for bound fields,
+    // constructed receivers, `var` initializer chains, deep `self` chains,
+    // method-call hops (`GetInner()` returning `Box<T>`), multi-parameter
+    // generics (`Pair<Helper, Other>.first`), and interface-typed receivers
+    // (`IGeneric<Helper>.genericItems`), while a concrete argument whose
+    // element type has no matching member (`Box<int>`, `Box<Other>`, and
+    // `Pair<Helper, Other>.second` over `Other`) fails closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::GenericClassField",
+        "Demo::Caller::GenericClassConstructed",
+        "Demo::Caller::GenericInterfaceField",
+        "Demo::Caller::GenericVarChain",
+        "Demo::Caller::DeepSelfChain",
+        "Demo::Caller::MethodHop",
+        "Demo::Caller::PairFirst",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::wrongElement",
+        "Demo::Caller::wrongPairSecond",
+    ] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 7);
+    for caller in [
+        "Demo::Caller::GenericClassField",
+        "Demo::Caller::GenericClassConstructed",
+        "Demo::Caller::GenericInterfaceField",
+        "Demo::Caller::GenericVarChain",
+        "Demo::Caller::DeepSelfChain",
+        "Demo::Caller::MethodHop",
+        "Demo::Caller::PairFirst",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::failures",
+        "Demo::Caller::wrongElement",
+        "Demo::Caller::wrongPairSecond",
+    ] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_generic_member_type_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+        public Box<T> self;
+    }
+    interface IGeneric<T> {
+        T[] genericItems { get; }
+    }
+    class Group : IGeneric<Helper> {
+        public Helper[] genericItems = new Helper[2];
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int GenericClassField() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.items[0];
+            return first.Run(1);
+        }
+        int DeepSelfChain() {
+            Box<Helper> b = new Box<Helper>();
+            var first = b?.self?.items[0];
+            return first.Run(2);
+        }
+        int failures() {
+            Box<int> b = new Box<int>();
+            var first = b?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the generic member-type element-access
+    // positives on top of an on-disk type file, while a concrete argument
+    // whose element type has no matching member fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::GenericClassField",
+        "Demo::Caller::DeepSelfChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::GenericClassField",
+        "Demo::Caller::DeepSelfChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
