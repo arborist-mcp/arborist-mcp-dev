@@ -66899,3 +66899,261 @@ fn traces_csharp_cross_namespace_generic_imported_caller_receivers_from_dirty_vf
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_generic_nested_type_receivers_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+            public Box<U> GetBox() => default;
+        }
+        public class Plain {
+            public Helper value;
+        }
+    }
+    class NonGenericOuter {
+        public class GenInner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+        }
+    }
+    class Caller {
+        int BothGeneric() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.items[0];
+            return first.Run(1);
+        }
+        int BothGenericMethod() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.GetItem();
+            return first.Run(2);
+        }
+        int BothGenericHop() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int OuterGenericInnerPlain() {
+            Outer<Helper>.Plain o = default;
+            var first = o.value;
+            return first.Run(4);
+        }
+        int OuterPlainInnerGeneric() {
+            NonGenericOuter.GenInner<Helper> o = default;
+            var first = o?.items[0];
+            return first.Run(5);
+        }
+        int OuterPlainInnerGenericMethod() {
+            NonGenericOuter.GenInner<Helper> o = default;
+            var first = o?.GetItem();
+            return first.Run(6);
+        }
+        int failures() {
+            Outer<Helper>.Inner<int> o = default;
+            var first = o?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A constructed generic nested-type receiver spelling such as
+    // `Outer<Helper>.Inner<Helper>` parses the inner type's own type
+    // arguments and substitutes them through the nested type's member
+    // declared types, so `U[] items`, `U GetItem()`, and `Box<U> GetBox()`
+    // declared on `Outer<T>.Inner<U>` resolve `items[0]`, `GetItem()`, and
+    // `GetBox()?.items[0]` to `Helper` for both-generic, outer-generic
+    // (`Outer<Helper>.Plain` with a `Helper value` member), and
+    // inner-generic (`NonGenericOuter.GenInner<Helper>`) spellings, while a
+    // concrete argument whose element type has no matching member
+    // (`Outer<Helper>.Inner<int>`) fails closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::BothGeneric",
+        "Demo::Caller::BothGenericMethod",
+        "Demo::Caller::BothGenericHop",
+        "Demo::Caller::OuterGenericInnerPlain",
+        "Demo::Caller::OuterPlainInnerGeneric",
+        "Demo::Caller::OuterPlainInnerGenericMethod",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::BothGeneric",
+        "Demo::Caller::BothGenericMethod",
+        "Demo::Caller::BothGenericHop",
+        "Demo::Caller::OuterGenericInnerPlain",
+        "Demo::Caller::OuterPlainInnerGeneric",
+        "Demo::Caller::OuterPlainInnerGenericMethod",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_generic_nested_type_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public U[] items = new U[2];
+            public U GetItem() => default;
+            public Box<U> GetBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int BothGeneric() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.items[0];
+            return first.Run(1);
+        }
+        int BothGenericMethod() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.GetItem();
+            return first.Run(2);
+        }
+        int BothGenericHop() {
+            Outer<Helper>.Inner<Helper> o = default;
+            var first = o?.GetBox()?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            Outer<Helper>.Inner<int> o = default;
+            var first = o?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the generic nested-type conditional
+    // member element-access and method-call hop positives on top of the
+    // on-disk type file, while a concrete argument whose element type has no
+    // matching member fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::BothGeneric",
+        "Demo::Caller::BothGenericMethod",
+        "Demo::Caller::BothGenericHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::BothGeneric",
+        "Demo::Caller::BothGenericMethod",
+        "Demo::Caller::BothGenericHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
