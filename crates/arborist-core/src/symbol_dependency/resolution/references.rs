@@ -2695,6 +2695,12 @@ fn resolve_csharp_factory_receiver_binding(
     if return_type.is_empty() {
         return Ok(None);
     }
+    // A fully-parenthesized constructed-receiver factory root such as
+    // `(new Box<HelperA>()).GetSingle()` unwraps to the same `new`-prefixed
+    // shape so the receiver substitution below applies like its
+    // unparenthesized spelling.
+    let factory_spelling = csharp_parenthesized_constructed_factory_spelling(factory_name)
+        .unwrap_or_else(|| factory_name.to_string());
     // A factory dispatched on a bound receiver substitutes the receiver's
     // concrete generic arguments into the method's return type, so
     // `var first = d?.GetItem()` on a `Derived<Helper> : Box<T>` receiver
@@ -2705,7 +2711,7 @@ fn resolve_csharp_factory_receiver_binding(
     // factory shapes have no generic receiver mapping and keep the declared
     // return type, failing closed downstream when it names a type parameter.
     let substituted_return_type = if let Some((receiver_name, method_name)) =
-        factory_name.split_once('.')
+        factory_spelling.split_once('.')
         && !receiver_name.is_empty()
         && !method_name.is_empty()
         && !method_name.contains(['(', ')', '.'])
@@ -2739,7 +2745,7 @@ fn resolve_csharp_factory_receiver_binding(
             csharp_import_contexts_by_file,
             deadline,
         )?
-    } else if let Some((chain, trailing_method)) = factory_name.rsplit_once('.')
+    } else if let Some((chain, trailing_method)) = factory_spelling.rsplit_once('.')
         && !chain.is_empty()
         && !trailing_method.is_empty()
         && !trailing_method.contains(['(', ')', '.'])
@@ -6517,6 +6523,12 @@ fn csharp_factory_array_component_binding(
     let Some(return_type) = method.return_type.as_deref() else {
         return Ok(None);
     };
+    // A fully-parenthesized constructed-receiver factory root such as
+    // `(new Box<HelperA>()).GetItems()` unwraps to the same `new`-prefixed
+    // shape so the receiver substitution below applies like its
+    // unparenthesized spelling.
+    let factory_spelling = csharp_parenthesized_constructed_factory_spelling(factory_reference)
+        .unwrap_or_else(|| factory_reference.to_string());
     // A factory dispatched on a `new`-constructed receiver or a receiver
     // chain substitutes the receiver's concrete generic arguments into the
     // method's return type, so
@@ -6525,7 +6537,7 @@ fn csharp_factory_array_component_binding(
     // Other factory shapes keep the declared return type, failing closed
     // downstream when it names a type parameter.
     let substituted_return_type = if let Some((chain, trailing_method)) =
-        factory_reference.rsplit_once('.')
+        factory_spelling.rsplit_once('.')
         && !chain.is_empty()
         && !trailing_method.is_empty()
         && !trailing_method.contains(['(', ')', '.'])
