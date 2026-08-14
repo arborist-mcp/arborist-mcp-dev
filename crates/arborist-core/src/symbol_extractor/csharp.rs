@@ -586,8 +586,11 @@ fn csharp_direct_invocation_name(
 
 /// Records the constructed type spelling of an `object_creation_expression`
 /// such as `new Helper()` or `new Outer.Inner()`, ignoring object-initializer
-/// bodies and generic type arguments. Anonymous creations, `global::`-qualified
-/// spellings, and malformed type text produce no fact and fail closed.
+/// bodies and retaining generic type arguments (`new Box<HelperA>()` spells
+/// `Box<HelperA>()`) so constructed-receiver member-chain resolution can
+/// substitute the generic type's parameters in member declared types.
+/// Anonymous creations, `global::`-qualified spellings, and malformed type
+/// text produce no fact and fail closed.
 fn csharp_constructor_type_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let text = crate::language::node_text(node, source)?.trim();
     let Some(type_name) = text.strip_prefix("new") else {
@@ -608,7 +611,27 @@ fn csharp_constructor_type_spelling(node: Node<'_>, source: &str) -> Result<Opti
     else {
         return Ok(None);
     };
-    Ok(Some(format!("{}()", semantic_type_path.replace("::", "."))))
+    // Re-attach the trimmed concrete type-argument spellings to their type
+    // segments so constructed generic receivers keep their arguments for
+    // return-type substitution; segment count mismatches fail closed.
+    let Some(arguments_per_segment) =
+        crate::language::csharp_generic_type_arguments_per_segment(type_name)
+    else {
+        return Ok(None);
+    };
+    let semantic_segments = semantic_type_path.split("::").collect::<Vec<_>>();
+    if semantic_segments.len() != arguments_per_segment.len() {
+        return Ok(None);
+    }
+    let mut normalized_segments = Vec::with_capacity(semantic_segments.len());
+    for (segment, arguments) in semantic_segments.iter().zip(arguments_per_segment.iter()) {
+        if arguments.is_empty() {
+            normalized_segments.push((*segment).to_string());
+        } else {
+            normalized_segments.push(format!("{}<{}>", segment, arguments.join(", ")));
+        }
+    }
+    Ok(Some(format!("{}()", normalized_segments.join("."))))
 }
 
 /// Strips a trailing object-initializer body (`{ ... }`) and constructor
@@ -1685,7 +1708,7 @@ class SimpleCaller {
         );
         assert_eq!(
             references("Counter::NewGenericReceiver"),
-            ["Counter().Helper".to_string()].into()
+            ["Counter<int>().Helper".to_string()].into()
         );
         assert_eq!(
             references("Counter::NewStaticReceiver"),

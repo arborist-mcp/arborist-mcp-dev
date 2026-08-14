@@ -8116,6 +8116,38 @@ enum CSharpConstructorReceiverResolution {
     Blocked,
 }
 
+/// Splits a constructed-receiver spelling on `.` outside any generic
+/// argument list, so
+/// `Box<Outer<HelperA>.Inner<HelperA>>().GetSingle().GetOuterItem().RunA`
+/// splits as `Box<Outer<HelperA>.Inner<HelperA>>()` / `GetSingle()` /
+/// `GetOuterItem()` / `RunA` instead of splitting the dots inside the type
+/// arguments. Unbalanced argument lists and empty segments return `None` and
+/// fail closed.
+fn csharp_constructor_receiver_segments(reference_name: &str) -> Option<Vec<&str>> {
+    let mut segments = Vec::new();
+    let mut depth = 0usize;
+    let mut last_start = 0usize;
+    for (index, character) in reference_name.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            '.' if depth == 0 => {
+                if index == last_start {
+                    return None;
+                }
+                segments.push(&reference_name[last_start..index]);
+                last_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if last_start == reference_name.len() {
+        return None;
+    }
+    segments.push(&reference_name[last_start..]);
+    Some(segments)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# constructor receiver resolution inputs explicit"
@@ -8132,7 +8164,13 @@ fn resolve_csharp_constructor_receiver_call(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CSharpConstructorReceiverResolution> {
-    let segments = reference_name.split('.').collect::<Vec<_>>();
+    // Split on `.` outside any generic argument list so a constructed
+    // spelling such as `Box<Outer<HelperA>.Inner<HelperA>>().GetSingle().RunA`
+    // keeps the nested type arguments in the marker segment instead of
+    // splitting the dots inside them.
+    let Some(segments) = csharp_constructor_receiver_segments(reference_name) else {
+        return Ok(CSharpConstructorReceiverResolution::Blocked);
+    };
     let Some((marker_index, marker_base)) = segments
         .iter()
         .enumerate()
@@ -8142,9 +8180,18 @@ fn resolve_csharp_constructor_receiver_call(
     };
     let mut type_segments = segments[..marker_index].to_vec();
     type_segments.push(marker_base);
+    // The constructed type marker segment may carry a concrete generic
+    // argument list such as `Box<HelperA>` or
+    // `Box<Outer<HelperA>.Inner<HelperA>>`; every type segment must
+    // otherwise normalize to a safe semantic type path with no brackets,
+    // parentheses, nullability, or whitespace so the receiver resolves to a
+    // declared type binding that can substitute the generic parameters in
+    // member declared types. Malformed spellings fail closed.
     if type_segments.is_empty()
         || type_segments.iter().any(|segment| {
-            segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
+            segment.is_empty()
+                || segment.contains(['[', ']', '(', ')', '?', ' '])
+                || crate::language::csharp_generic_type_semantic_path(segment).is_none()
         })
     {
         return Ok(CSharpConstructorReceiverResolution::Blocked);
