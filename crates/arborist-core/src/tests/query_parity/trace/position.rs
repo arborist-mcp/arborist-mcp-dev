@@ -62909,3 +62909,204 @@ fn traces_csharp_alias_dotted_type_conditional_member_element_access_receivers_f
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+#[test]
+fn traces_csharp_static_imported_field_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Root {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class Util {
+        public static Group utilHolder = new Group();
+    }
+    namespace Sub {
+        class Util2 {
+            public static Group holder = new Group();
+            public static Group MakeGroup() => new Group();
+            public static int Value => 2;
+            public Helper[] items = new Helper[2];
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using static Root.Sub.Util2;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using static Root.Util;
+    class Caller {
+        int FromFileStaticImportedSimpleStaticField() {
+            var first = utilHolder?.items[0];
+            return first.Run(1);
+        }
+        int FromGlobalStaticImportedDottedStaticField() {
+            var first = holder?.items[0];
+            return first.Run(2);
+        }
+        int FromGlobalStaticImportedDottedStaticFieldNested() {
+            var first = holder?.holder?.items[0];
+            return first.Run(3);
+        }
+        int FromGlobalStaticImportedDottedStaticFactory() {
+            var first = MakeGroup()?.items[0];
+            return first.Run(4);
+        }
+        int failures() {
+            var unknown = missing?.items[0];
+            var primitive = Value?.items[0];
+            var instanceMember = items?.items[0];
+            foreach (var item in MakeGroup()?.Missing) {
+                item.Run(1);
+            }
+            return unknown.Run(1) + primitive.Run(1) + instanceMember.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a
+    // bare static-imported field or property such as `holder?.items[0]` or
+    // `holder?.holder?.items[0]` with `using static Root.Util;` or the global
+    // `global using static Root.Sub.Util2;` (including the dotted
+    // static-import type spelling) pins the receiver to the imported member's
+    // declared type and walks the remaining chain and terminal array member
+    // as an instance receiver, while unknown members, primitive-typed static
+    // members, instance members reached through a static import, and missing
+    // or non-array terminals fail closed.
+    let helper_symbol = "Root::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Other::Caller::FromFileStaticImportedSimpleStaticField",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticField",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticFieldNested",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Other::Caller::FromFileStaticImportedSimpleStaticField",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticField",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticFieldNested",
+        "Other::Caller::FromGlobalStaticImportedDottedStaticFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_static_imported_field_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Root {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    namespace Sub {
+        class Util2 {
+            public static Group holder = new Group();
+            public static Group MakeGroup() => new Group();
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using static Root.Sub.Util2;
+    class Caller {
+        int FromStaticImportedDottedStaticField() {
+            var first = holder?.items[0];
+            return first.Run(1);
+        }
+        int FromStaticImportedDottedStaticFactory() {
+            var first = MakeGroup()?.items[0];
+            return first.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Root::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Root::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
