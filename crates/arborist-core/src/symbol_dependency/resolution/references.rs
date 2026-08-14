@@ -7872,6 +7872,12 @@ fn csharp_unshadowed_qualified_dispatchable_type_path(
     is_target_type: fn(&IndexedSymbol) -> bool,
 ) -> Option<String> {
     let base_type_path = binding.semantic_type_path.as_str();
+    // A dotted spelling such as `Demo.Base` can be read as a namespace-
+    // qualified path, or as a nested-type path whose first segment is itself
+    // a type name (`Outer.Inner`). A type declaration at the same relative
+    // path inside an enclosing namespace makes the nested-type reading apply;
+    // when both readings match the spelling is ambiguous and fails closed.
+    let mut nested_type_shadow = false;
     if let Some(mut namespace_path) = csharp_source_namespace_path(source_symbol, raw_symbols)? {
         loop {
             let relative_type_path = format!("{namespace_path}::{base_type_path}");
@@ -7879,7 +7885,8 @@ fn csharp_unshadowed_qualified_dispatchable_type_path(
                 candidate.semantic_path == relative_type_path
                     && csharp_is_type_declaration(candidate)
             }) {
-                return None;
+                nested_type_shadow = true;
+                break;
             }
             let Some((parent_namespace_path, _)) = namespace_path.rsplit_once("::") else {
                 break;
@@ -7887,7 +7894,57 @@ fn csharp_unshadowed_qualified_dispatchable_type_path(
             namespace_path = parent_namespace_path;
         }
     }
-    csharp_unique_dispatchable_type_path(raw_symbols, base_type_path, is_target_type)
+    let qualified_target =
+        csharp_unique_dispatchable_type_path(raw_symbols, base_type_path, is_target_type);
+    if !nested_type_shadow {
+        if let Some(qualified_target) = qualified_target {
+            return Some(qualified_target);
+        }
+    } else if qualified_target.is_some() {
+        return None;
+    }
+
+    // The first segment is a type name; resolve the nested type through the
+    // enclosing namespaces (innermost first), then the global scope, then the
+    // file's namespace imports, matching the receiver-type rules for dotted
+    // nested spellings.
+    let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols).flatten();
+    while let Some(current_namespace) = namespace_path {
+        let relative_type_path = format!("{current_namespace}::{base_type_path}");
+        let candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == relative_type_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [candidate] if is_target_type(candidate) => return Some(relative_type_path),
+            [] => {}
+            _ => return None,
+        }
+        namespace_path = current_namespace
+            .rsplit_once("::")
+            .map(|(parent_namespace_path, _)| parent_namespace_path);
+    }
+    let mut imported_type_paths = BTreeSet::new();
+    for namespace_path in binding.namespace_import_paths.iter() {
+        let candidate_path = format!("{namespace_path}::{base_type_path}");
+        let candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == candidate_path && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => {}
+            [candidate] if is_target_type(candidate) => {
+                imported_type_paths.insert(candidate_path);
+            }
+            _ => return None,
+        }
+    }
+    (imported_type_paths.len() == 1).then(|| imported_type_paths.into_iter().next().unwrap())
 }
 
 fn csharp_unique_dispatchable_type_path(

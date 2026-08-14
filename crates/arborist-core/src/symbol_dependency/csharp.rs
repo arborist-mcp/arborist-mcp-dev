@@ -2058,6 +2058,27 @@ fn resolve_csharp_base_type_binding_parts(
         {
             return None;
         }
+        // A dotted nested spelling such as `Outer.Inner` resolves its first
+        // segment through the same file-scope namespace imports as simple
+        // names, so `using Lib;` lets a `Outer<Helper>.Inner<Helper>` base
+        // reach `Lib::Outer::Inner` instead of failing closed.
+        binding.namespace_import_paths = csharp_import_scope_paths(source_namespace_path)
+            .into_iter()
+            .flat_map(|scope_path| {
+                context
+                    .namespace_import_bindings
+                    .iter()
+                    .filter(move |candidate| candidate.scope_path == scope_path)
+                    .map(|candidate| candidate.semantic_namespace_path.clone())
+            })
+            .collect();
+        if let Some(global_import_context) = global_import_context {
+            binding
+                .namespace_import_paths
+                .extend(csharp_global_base_namespace_import_paths(
+                    global_import_context,
+                ));
+        }
     } else if !binding.is_global_qualified {
         let local_name = binding.semantic_type_path.clone();
         let scope_paths = csharp_import_scope_paths(source_namespace_path);
