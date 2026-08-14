@@ -29781,3 +29781,159 @@ fn traces_csharp_nested_generic_receiver_outer_parameter_factory_chain_and_array
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_factory_array_and_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB> MakeNested() => default;
+        public static Outer<HelperA>.Inner<HelperB>[] MakeNestedArray() => default;
+        public static Box<Outer<HelperA>.Inner<HelperB>>[] MakeBoxArray() => default;
+    }
+    class Caller {
+        int ArrayFactoryOuter() {
+            var first = Factory.MakeNestedArray()[0].GetOuterItem();
+            return first.RunA(1);
+        }
+        int ArrayFactoryInner() {
+            var first = Factory.MakeNestedArray()[0].innerItems[0];
+            return first.RunB(2);
+        }
+        int ArrayFactoryHopOuter() {
+            var first = Factory.MakeNestedArray()[0].GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int VarArrayOuter() {
+            var items = Factory.MakeNestedArray();
+            var first = items[0].GetOuterItem();
+            return first.RunA(4);
+        }
+        int VarArrayInner() {
+            var items = Factory.MakeNestedArray();
+            var first = items[0].innerItems[0];
+            return first.RunB(5);
+        }
+        int BoxArrayFactoryOuter() {
+            var first = Factory.MakeBoxArray()[0].items[0].GetOuterItem();
+            return first.RunA(6);
+        }
+        int ElementVarOuter() {
+            var first = Factory.MakeNestedArray()[0];
+            var second = first.GetOuterItem();
+            return second.RunA(7);
+        }
+        int ElementVarInner() {
+            var first = Factory.MakeNestedArray()[0];
+            var second = first.innerItems[0];
+            return second.RunB(8);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A two-level nested generic receiver reached through a factory-returned
+    // array (`Factory.MakeNestedArray()[0]`), a factory-returned box array
+    // (`Factory.MakeBoxArray()[0].items[0]`), an element-access `var`
+    // (`var first = Factory.MakeNestedArray()[0]`), or a factory-returned
+    // array held in a `var` local (`var items = Factory.MakeNestedArray()`;
+    // `items[0]`) substitutes each enclosing segment's concrete argument, so
+    // method-call and element-access members that reference the outer or
+    // inner segment's type parameter (`T GetOuterItem()` or `U innerItems` on
+    // `Inner<U>`) resolve to `HelperA::RunA` or `HelperB::RunB`.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ArrayFactoryHopOuter",
+        "Demo::Caller::ArrayFactoryOuter",
+        "Demo::Caller::BoxArrayFactoryOuter",
+        "Demo::Caller::ElementVarOuter",
+        "Demo::Caller::VarArrayOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ArrayFactoryInner",
+        "Demo::Caller::ElementVarInner",
+        "Demo::Caller::VarArrayInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ArrayFactoryHopOuter",
+        "Demo::Caller::ArrayFactoryOuter",
+        "Demo::Caller::BoxArrayFactoryOuter",
+        "Demo::Caller::ElementVarOuter",
+        "Demo::Caller::VarArrayOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ArrayFactoryInner",
+        "Demo::Caller::ElementVarInner",
+        "Demo::Caller::VarArrayInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
