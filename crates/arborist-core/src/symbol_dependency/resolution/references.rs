@@ -4394,12 +4394,38 @@ fn csharp_qualified_element_access_component_type_path(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
-    let Some((receiver, chain)) = base_reference.split_once('.') else {
-        return Ok(None);
-    };
-    if receiver.is_empty() || chain.is_empty() {
-        return Ok(None);
-    }
+    // A constructed-receiver root such as `new Group()` in
+    // `new Group().holder?.items[0]` normalizes to the same dotted
+    // `Type().<chain>` shape as the `@init:` chain spellings (stripping the
+    // constructor argument list or object-initializer body and normalizing
+    // generic type arguments), and is tracked as constructed so dispatch
+    // never falls through to the bare factory-call interpretation.
+    let (receiver, chain, constructed_root) =
+        if let Some(rest) = base_reference.strip_prefix("new ") {
+            let Some(constructed) = csharp_constructed_factory_call_spelling(rest) else {
+                return Ok(None);
+            };
+            let Some(marker) = constructed.find("()") else {
+                return Ok(None);
+            };
+            let receiver = &constructed[..marker + 2];
+            let Some(chain) = constructed[marker + 2..].strip_prefix('.') else {
+                return Ok(None);
+            };
+            if receiver.is_empty() || chain.is_empty() {
+                return Ok(None);
+            }
+            (receiver.to_string(), chain.to_string(), true)
+        } else {
+            let Some((receiver, chain)) = base_reference.split_once('.') else {
+                return Ok(None);
+            };
+            if receiver.is_empty() || chain.is_empty() {
+                return Ok(None);
+            }
+            (receiver.to_string(), chain.to_string(), false)
+        };
+    let (receiver, chain) = (receiver.as_str(), chain.as_str());
     let mut hops = chain.split('.').map(str::to_string).collect::<Vec<_>>();
     if hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
@@ -4548,6 +4574,31 @@ fn csharp_qualified_element_access_component_type_path(
         let Some(binding) = binding else {
             return Ok(None);
         };
+        (binding, source_symbol, false)
+    } else if constructed_root
+        && let Some(type_name) = receiver.strip_suffix("()")
+        && !type_name.is_empty()
+        && !type_name.split('.').any(|segment| {
+            segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
+        })
+        && let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A constructed-receiver root such as `new Group()` in
+        // `new Group().holder?.items[0]` or
+        // `foreach (var item in new Group().holder?.items)` resolves the
+        // constructed type, then walks any intermediate field hops and the
+        // terminal array member as an instance receiver; unknown constructed
+        // types fail closed.
         (binding, source_symbol, false)
     } else if let Some(mut leading_call) =
         csharp_outer_parenthesized_inner(receiver).or(Some(receiver))
