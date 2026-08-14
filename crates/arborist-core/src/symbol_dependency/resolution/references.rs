@@ -2749,7 +2749,10 @@ fn resolve_csharp_factory_receiver_binding(
         && !chain.is_empty()
         && !trailing_method.is_empty()
         && !trailing_method.contains(['(', ')', '.'])
-        && (chain.contains('.') || chain.ends_with(')') || chain.ends_with(']'))
+        && (chain.contains('.')
+            || chain.ends_with(')')
+            || chain.ends_with(']')
+            || chain.ends_with('}'))
         && let Some(receiver_binding) = resolve_csharp_factory_chain_receiver_binding(
             source_symbol,
             chain,
@@ -6559,7 +6562,10 @@ fn csharp_factory_array_component_binding(
         && !chain.is_empty()
         && !trailing_method.is_empty()
         && !trailing_method.contains(['(', ')', '.'])
-        && (chain.contains('.') || chain.ends_with(')') || chain.ends_with(']'))
+        && (chain.contains('.')
+            || chain.ends_with(')')
+            || chain.ends_with(']')
+            || chain.ends_with('}'))
         && let Some(receiver_binding) = resolve_csharp_factory_chain_receiver_binding(
             source_symbol,
             chain,
