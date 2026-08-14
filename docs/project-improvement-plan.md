@@ -252,6 +252,11 @@ completed item can land in its own commit unless two changes are inseparable.
   and `neighborhood` modules while preserving search parity coverage.
 - [x] Split `tests/query_parity/trace` into `graph`, `position`, and
   `neighborhood` modules while preserving trace parity coverage.
+
+- [x] Split the oversized `query_parity/trace/position` test file into
+  per-language modules (`csharp`, `kotlin`, `java`, `go`, `rust`,
+  `javascript`, `python`) so incremental compilation and targeted trace
+  filtering stay fast while preserving all position trace parity coverage.
 - [x] Split `tests/c_symbol_graph/namespaces` into `scope`, `aliases`, and
   `headers` modules while preserving namespace resolution coverage.
 - [x] Split `tests/c_symbol_graph/overloads` into `member`, `using`, and
