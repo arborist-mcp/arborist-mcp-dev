@@ -63110,3 +63110,186 @@ fn traces_csharp_static_imported_field_conditional_member_element_access_receive
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+
+#[test]
+fn traces_csharp_bare_base_field_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class Base {
+        public Group holder = new Group();
+        public int Count = 2;
+    }
+    class Base2 : Base {
+    }
+    class Util {
+        public static Group utilHolder = new Group();
+    }
+    class Caller : Base {
+        int FromBareBaseField() {
+            var first = holder?.items[0];
+            return first.Run(1);
+        }
+        int FromBareBaseFieldNested() {
+            var first = holder?.holder?.items[0];
+            return first.Run(2);
+        }
+        int FromStaticTypeQualifiedField() {
+            var first = Util.utilHolder?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            var unknown = missing?.items[0];
+            var primitive = Count?.items[0];
+            foreach (var item in holder?.Missing) {
+                item.Run(1);
+            }
+            return unknown.Run(1) + primitive.Run(1);
+        }
+    }
+    class DeepCaller : Base2 {
+        int FromDeepBaseField() {
+            var first = holder?.items[0];
+            return first.Run(4);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a bare
+    // inherited field or property such as `holder?.items[0]` or
+    // `holder?.holder?.items[0]` from a type that inherits the member through
+    // one or more base classes pins the receiver to the base member's declared
+    // type and walks the remaining chain and terminal array member as an
+    // instance receiver, while unknown members, primitive-typed base members,
+    // unresolved base chains, and missing or non-array terminals fail closed;
+    // a same-namespace static type-qualified field root continues to dispatch
+    // through the static-type rules.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromBareBaseField",
+        "Demo::Caller::FromBareBaseFieldNested",
+        "Demo::Caller::FromStaticTypeQualifiedField",
+        "Demo::DeepCaller::FromDeepBaseField",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FromBareBaseField",
+        "Demo::Caller::FromBareBaseFieldNested",
+        "Demo::Caller::FromStaticTypeQualifiedField",
+        "Demo::DeepCaller::FromDeepBaseField",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_bare_base_field_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class Base {
+        public Group holder = new Group();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    class Caller : Demo.Base {
+        int FromBareBaseField() {
+            var first = holder?.items[0];
+            return first.Run(1);
+        }
+        int FromBareBaseFieldNested() {
+            var first = holder?.holder?.items[0];
+            return first.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
