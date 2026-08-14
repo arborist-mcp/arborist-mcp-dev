@@ -6748,17 +6748,35 @@ fn csharp_dispatchable_type_path(
         );
     }
 
-    let type_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
-        .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
-        .unwrap_or_else(|| binding.semantic_type_path.clone());
-    let local_type_candidates = raw_symbols
-        .iter()
-        .filter(|candidate| {
-            candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
-        })
-        .count();
-    if local_type_candidates != 0 {
-        return csharp_unique_dispatchable_type_path(raw_symbols, &type_path, is_target_type);
+    // Simple names resolve through the source namespace, then its enclosing
+    // namespaces, then the global scope, matching C# enclosing-namespace
+    // lookup; the innermost scope with candidates must be unambiguous or
+    // resolution fails closed.
+    let source_namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
+    let mut type_paths = Vec::new();
+    let mut namespace_path = source_namespace_path;
+    while let Some(current_namespace) = namespace_path {
+        type_paths.push(format!(
+            "{current_namespace}::{}",
+            binding.semantic_type_path
+        ));
+        namespace_path = current_namespace
+            .rsplit_once("::")
+            .map(|(parent_path, _)| parent_path);
+    }
+    if source_namespace_path.is_none() {
+        type_paths.push(binding.semantic_type_path.clone());
+    }
+    for type_path in type_paths {
+        let local_type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        if local_type_candidates != 0 {
+            return csharp_unique_dispatchable_type_path(raw_symbols, &type_path, is_target_type);
+        }
     }
 
     let mut imported_type_paths = BTreeSet::new();
