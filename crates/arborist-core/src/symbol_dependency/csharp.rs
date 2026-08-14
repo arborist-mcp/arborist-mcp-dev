@@ -158,6 +158,15 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     /// types that reference the outer type parameter (`T[] outerItems` on
     /// `Inner<U>`) substitute `T` with `Helper`.
     pub(crate) enclosing_generic_arguments: Vec<Vec<String>>,
+    /// Raw top-level type-argument spellings of every dotted segment that
+    /// precedes the final segment of a nested generic base spelling,
+    /// outermost first, such as `[["HelperA"]]` for
+    /// `class Derived : Outer<HelperA>.Inner<HelperB>`; empty when the base
+    /// spelling has no enclosing generic segments and for bindings
+    /// constructed from usage spellings. Generic-inheritance walks
+    /// substitute the current type's parameters with its concrete arguments
+    /// into these spellings to compose the enclosing base type's arguments.
+    pub(crate) raw_enclosing_generic_argument_spellings: Vec<Vec<String>>,
     /// Raw top-level type-argument spellings written in the base list, such
     /// as `["T"]` for `class Derived<T> : Box<T>`; empty for non-generic
     /// base spellings and for bindings constructed from usage spellings.
@@ -450,6 +459,9 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                     alias_name: None,
                     namespace_import_paths: Vec::new(),
                     generic_arguments: Vec::new(),
+                    raw_enclosing_generic_argument_spellings: base_type
+                        .enclosing_generic_argument_spellings
+                        .clone(),
                     raw_generic_argument_spellings: base_type.generic_argument_spellings.clone(),
                     enclosing_generic_arguments: Vec::new(),
                 },
@@ -1883,6 +1895,7 @@ pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interfa
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_enclosing_generic_argument_spellings: Vec::new(),
                 raw_generic_argument_spellings: parent.raw_generic_argument_spellings.clone(),
                 enclosing_generic_arguments: Vec::new(),
             },
@@ -1932,6 +1945,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_declared_type_binding_for_ref
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_enclosing_generic_argument_spellings: Vec::new(),
             raw_generic_argument_spellings: Vec::new(),
             enclosing_generic_arguments: Vec::new(),
         },

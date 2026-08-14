@@ -33,6 +33,14 @@ pub(crate) struct CSharpFileBaseType {
     /// constructed receiver's concrete arguments for these spellings to
     /// compose the base type's arguments.
     pub(crate) generic_argument_spellings: Vec<String>,
+    /// Raw top-level type-argument spellings of every dotted segment that
+    /// precedes the final segment of a nested generic base spelling,
+    /// outermost first, such as `[["HelperA"]]` for
+    /// `class Derived : Outer<HelperA>.Inner<HelperB>`; empty when the base
+    /// spelling has no enclosing generic segments. Generic-inheritance
+    /// resolution substitutes a constructed receiver's concrete arguments
+    /// for these spellings to compose the enclosing base type's arguments.
+    pub(crate) enclosing_generic_argument_spellings: Vec<Vec<String>>,
 }
 
 pub(crate) fn csharp_file_base_types(
@@ -65,6 +73,12 @@ pub(crate) fn csharp_file_base_types(
                                 base_type_text,
                             )
                             .unwrap_or_default(),
+                            enclosing_generic_argument_spellings:
+                                csharp_generic_type_arguments_per_segment(base_type_text)
+                                    .map(|segments| {
+                                        segments[..segments.len().saturating_sub(1)].to_vec()
+                                    })
+                                    .unwrap_or_default(),
                         });
                     }
                 }
