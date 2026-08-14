@@ -6517,7 +6517,55 @@ fn csharp_factory_array_component_binding(
     let Some(return_type) = method.return_type.as_deref() else {
         return Ok(None);
     };
-    let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, depth) else {
+    // A factory dispatched on a `new`-constructed receiver or a receiver
+    // chain substitutes the receiver's concrete generic arguments into the
+    // method's return type, so
+    // `var first = new Box<HelperA>().GetItems()[0]` resolves the declared
+    // `T[]` return to `HelperA[]` and the element component to `HelperA`.
+    // Other factory shapes keep the declared return type, failing closed
+    // downstream when it names a type parameter.
+    let substituted_return_type = if let Some((chain, trailing_method)) =
+        factory_reference.rsplit_once('.')
+        && !chain.is_empty()
+        && !trailing_method.is_empty()
+        && !trailing_method.contains(['(', ')', '.'])
+        && (chain.contains('.') || chain.ends_with(')') || chain.ends_with(']'))
+        && let Some(receiver_binding) = resolve_csharp_factory_chain_receiver_binding(
+            source_symbol,
+            chain,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(receiver_type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &receiver_binding,
+            csharp_is_type_declaration,
+        ) {
+        substitute_csharp_method_return_type(
+            method,
+            &receiver_binding,
+            &receiver_type_path,
+            return_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        return_type.to_string()
+    };
+    let Some(component_name) =
+        csharp_array_component_spelling_at_depth(&substituted_return_type, depth)
+    else {
         return Ok(None);
     };
     let Some(component_binding) = resolve_csharp_receiver_type_binding(
