@@ -62276,3 +62276,210 @@ class Caller {
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+#[test]
+fn traces_csharp_nested_namespace_dotted_type_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class Util {
+        public static Group holder = new Group();
+        public static Group MakeGroup() => new Group();
+        public static int Count() => 2;
+        public Helper[] items = new Helper[2];
+    }
+    namespace Sub {
+        class Util2 {
+            public static Group holder = new Group();
+            public static Group MakeGroup() => new Group();
+            public static int Count() => 2;
+            public Helper[] items = new Helper[2];
+        }
+        namespace Deep {
+            class Util3 {
+                public static Group holder = new Group();
+                public static Group MakeGroup() => new Group();
+            }
+        }
+    }
+    class Caller {
+        int FromNestedNamespaceStaticField() {
+            var first = Sub.Util2.holder?.items[0];
+            return first.Run(1);
+        }
+        int FromNestedNamespaceStaticFieldNested() {
+            var first = Sub.Util2.holder?.holder?.items[0];
+            return first.Run(2);
+        }
+        int FromNestedNamespaceStaticFactory() {
+            var first = Sub.Util2.MakeGroup()?.items[0];
+            return first.Run(3);
+        }
+        int FromDeeperNestedNamespaceStaticField() {
+            var first = Sub.Deep.Util3.holder?.items[0];
+            return first.Run(4);
+        }
+        int FromDeeperNestedNamespaceStaticFactory() {
+            var first = Sub.Deep.Util3.MakeGroup()?.items[0];
+            return first.Run(5);
+        }
+        int failures() {
+            var unknown = Sub.Util2.missing?.items[0];
+            var instanceMember = Sub.Util2.items?.items[0];
+            var primitive = Sub.Util2.Count()?.items[0];
+            foreach (var item in Sub.Util2.MakeGroup()?.Missing) {
+                item.Run(1);
+            }
+            return unknown.Run(1) + instanceMember.Run(1) + primitive.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a
+    // namespace-relative dotted type such as `Sub.Util2.holder?.items[0]`,
+    // `Sub.Util2.holder?.holder?.items[0]`,
+    // `Sub.Util2.MakeGroup()?.items[0]`, or the deeper
+    // `Sub.Deep.Util3.holder?.items[0]` resolves the full dotted type path
+    // through the caller's namespace ancestors (with `Sub` a namespace, not a
+    // type), consumes the static root, and walks the remaining chain and
+    // terminal array member as an instance receiver, while unknown static
+    // members, instance members reached through a type name,
+    // primitive-returning factories, and missing or non-array terminals fail
+    // closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromNestedNamespaceStaticField",
+        "Demo::Caller::FromNestedNamespaceStaticFieldNested",
+        "Demo::Caller::FromNestedNamespaceStaticFactory",
+        "Demo::Caller::FromDeeperNestedNamespaceStaticField",
+        "Demo::Caller::FromDeeperNestedNamespaceStaticFactory",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromNestedNamespaceStaticField",
+        "Demo::Caller::FromNestedNamespaceStaticFieldNested",
+        "Demo::Caller::FromNestedNamespaceStaticFactory",
+        "Demo::Caller::FromDeeperNestedNamespaceStaticField",
+        "Demo::Caller::FromDeeperNestedNamespaceStaticFactory",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_nested_namespace_dotted_type_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class Util {
+        public static Group holder = new Group();
+        public static Group MakeGroup() => new Group();
+    }
+    namespace Sub {
+        class Util2 {
+            public static Group holder = new Group();
+            public static Group MakeGroup() => new Group();
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int FromNestedNamespaceStaticField() {
+            var first = Sub.Util2.holder?.items[0];
+            return first.Run(1);
+        }
+        int FromNestedNamespaceStaticFactory() {
+            var first = Sub.Util2.MakeGroup()?.items[0];
+            return first.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
