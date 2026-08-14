@@ -68259,3 +68259,503 @@ fn traces_csharp_nested_generic_outer_parameter_receivers_from_dirty_vfs_overrid
         "unexpected persisted failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_nested_generic_base_type_outer_parameter_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Local.cs"),
+        "namespace LocalNs {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+    class Derived : Outer<HelperA>.Inner<HelperB> {
+    }
+    class QualifiedDerived : LocalNs.Outer<HelperA>.Inner<HelperB> {
+    }
+    class GenericDerived<X> : Outer<X>.Inner<X> {
+    }
+    class Caller {
+        int BaseOuterField() {
+            Derived d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+        int BaseOuterMethod() {
+            Derived d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(2);
+        }
+        int BaseOuterHop() {
+            Derived d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int BaseInnerField() {
+            Derived d = default;
+            var first = d?.innerItems[0];
+            return first.RunB(4);
+        }
+        int BaseInnerMethod() {
+            Derived d = default;
+            var first = d?.GetInnerItem();
+            return first.RunB(5);
+        }
+        int QualifiedOuterField() {
+            QualifiedDerived d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(6);
+        }
+        int QualifiedOuterMethod() {
+            QualifiedDerived d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(7);
+        }
+        int QualifiedOuterHop() {
+            QualifiedDerived d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(8);
+        }
+        int GenericOuterField() {
+            GenericDerived<HelperA> d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(9);
+        }
+        int GenericOuterMethod() {
+            GenericDerived<HelperA> d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(10);
+        }
+        int GenericOuterHop() {
+            GenericDerived<HelperA> d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(11);
+        }
+        int GenericInnerField() {
+            GenericDerived<HelperA> d = default;
+            var first = d?.innerItems[0];
+            return first.RunA(12);
+        }
+        int GenericInnerMethod() {
+            GenericDerived<HelperA> d = default;
+            var first = d?.GetInnerItem();
+            return first.RunA(13);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imported.cs"),
+        "using Lib;
+namespace ImportedNs {
+    class Derived : Outer<HelperA>.Inner<HelperB> {
+    }
+    class Caller {
+        int ImportedOuterField() {
+            Derived d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+        int ImportedOuterMethod() {
+            Derived d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(2);
+        }
+        int ImportedOuterHop() {
+            Derived d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int ImportedInnerField() {
+            Derived d = default;
+            var first = d?.innerItems[0];
+            return first.RunB(4);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A dotted nested generic base spelling such as
+    // `Derived : Outer<HelperA>.Inner<HelperB>` composes the enclosing outer
+    // segment's concrete argument through the unique class/record ancestor
+    // chain, so inherited conditional member element-access and method-call
+    // hop members that reference the outer type parameter (`T[] outerItems`,
+    // `T GetOuterItem()`, and `Box<T> GetOuterBox()` on `Inner<U>`) resolve
+    // to `HelperA::RunA` while inner-parameter members still resolve to
+    // `HelperB::RunB`. A namespace-qualified base spelling
+    // (`LocalNs.Outer<HelperA>.Inner<HelperB>`) and a generic deriving type
+    // (`GenericDerived<X> : Outer<X>.Inner<X>` reached as
+    // `GenericDerived<HelperA>`) compose the same way for both the outer and
+    // inner segments, a cross-namespace import (`using Lib;`) resolves the
+    // same way, and a non-generic derived type reached with a concrete
+    // argument (`Derived<int>`) fails closed.
+    let local_a_live =
+        trace_symbol_graph(&dir, "LocalNs::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(local_a_live.callers.len(), 11);
+    for caller in [
+        "LocalNs::Caller::BaseOuterField",
+        "LocalNs::Caller::BaseOuterMethod",
+        "LocalNs::Caller::BaseOuterHop",
+        "LocalNs::Caller::QualifiedOuterField",
+        "LocalNs::Caller::QualifiedOuterMethod",
+        "LocalNs::Caller::QualifiedOuterHop",
+        "LocalNs::Caller::GenericOuterField",
+        "LocalNs::Caller::GenericOuterMethod",
+        "LocalNs::Caller::GenericOuterHop",
+        "LocalNs::Caller::GenericInnerField",
+        "LocalNs::Caller::GenericInnerMethod",
+    ] {
+        assert!(
+            local_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let local_b_live =
+        trace_symbol_graph(&dir, "LocalNs::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(local_b_live.callers.len(), 2);
+    for caller in [
+        "LocalNs::Caller::BaseInnerField",
+        "LocalNs::Caller::BaseInnerMethod",
+    ] {
+        assert!(
+            local_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for live in [&local_a_live, &local_b_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "LocalNs::Caller::failures"),
+            "unexpected failures caller"
+        );
+    }
+    let imported_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(imported_a_live.callers.len(), 3);
+    for caller in [
+        "ImportedNs::Caller::ImportedOuterField",
+        "ImportedNs::Caller::ImportedOuterMethod",
+        "ImportedNs::Caller::ImportedOuterHop",
+    ] {
+        assert!(
+            imported_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let imported_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(imported_b_live.callers.len(), 1);
+    assert!(
+        imported_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::ImportedInnerField"),
+        "missing caller ImportedInnerField"
+    );
+    for live in [&imported_a_live, &imported_b_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::failures"),
+            "unexpected imported failures caller"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let local_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "LocalNs::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(local_a_persisted.callers.len(), 11);
+    for caller in [
+        "LocalNs::Caller::BaseOuterField",
+        "LocalNs::Caller::BaseOuterMethod",
+        "LocalNs::Caller::BaseOuterHop",
+        "LocalNs::Caller::QualifiedOuterField",
+        "LocalNs::Caller::QualifiedOuterMethod",
+        "LocalNs::Caller::QualifiedOuterHop",
+        "LocalNs::Caller::GenericOuterField",
+        "LocalNs::Caller::GenericOuterMethod",
+        "LocalNs::Caller::GenericOuterHop",
+        "LocalNs::Caller::GenericInnerField",
+        "LocalNs::Caller::GenericInnerMethod",
+    ] {
+        assert!(
+            local_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let local_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "LocalNs::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(local_b_persisted.callers.len(), 2);
+    for caller in [
+        "LocalNs::Caller::BaseInnerField",
+        "LocalNs::Caller::BaseInnerMethod",
+    ] {
+        assert!(
+            local_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for live in [&local_a_persisted, &local_b_persisted] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "LocalNs::Caller::failures"),
+            "unexpected persisted failures caller"
+        );
+    }
+    let imported_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(imported_a_persisted.callers.len(), 3);
+    for caller in [
+        "ImportedNs::Caller::ImportedOuterField",
+        "ImportedNs::Caller::ImportedOuterMethod",
+        "ImportedNs::Caller::ImportedOuterHop",
+    ] {
+        assert!(
+            imported_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted imported caller {caller}"
+        );
+    }
+    let imported_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(imported_b_persisted.callers.len(), 1);
+    assert!(
+        imported_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::ImportedInnerField"),
+        "missing persisted imported caller ImportedInnerField"
+    );
+    for live in [&imported_a_persisted, &imported_b_persisted] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "ImportedNs::Caller::failures"),
+            "unexpected persisted imported failures caller"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_nested_generic_base_type_outer_parameter_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T[] outerItems = new T[2];
+            public U[] innerItems = new U[2];
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+            public Box<T> GetOuterBox() => default;
+            public Box<U> GetInnerBox() => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    class Derived : Outer<HelperA>.Inner<HelperB> {
+    }
+    class Caller {
+        int ImportedOuterField() {
+            Derived d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+        int ImportedOuterMethod() {
+            Derived d = default;
+            var first = d?.GetOuterItem();
+            return first.RunA(2);
+        }
+        int ImportedOuterHop() {
+            Derived d = default;
+            var first = d?.GetOuterBox()?.items[0];
+            return first.RunA(3);
+        }
+        int ImportedInnerField() {
+            Derived d = default;
+            var first = d?.innerItems[0];
+            return first.RunB(4);
+        }
+        int failures() {
+            Derived<int> d = default;
+            var first = d?.outerItems[0];
+            return first.RunA(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the importing cross-namespace nested
+    // generic base-type conditional member element-access and method-call hop
+    // positives with the enclosing outer type parameter (`T` -> `HelperA`)
+    // composed through the base spelling on top of the on-disk type file,
+    // while a non-generic derived type reached with a concrete argument
+    // (`Derived<int>`) fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedOuterField",
+        "Demo::Caller::ImportedOuterMethod",
+        "Demo::Caller::ImportedOuterHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedOuterField",
+        "Demo::Caller::ImportedOuterMethod",
+        "Demo::Caller::ImportedOuterHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
