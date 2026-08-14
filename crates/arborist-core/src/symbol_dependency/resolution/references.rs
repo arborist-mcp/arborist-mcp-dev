@@ -2997,6 +2997,121 @@ fn resolve_csharp_var_factory_method<'a>(
                 .find(|candidate| candidate.symbol_id == symbol_id)
         }));
     }
+    // A dotted factory whose leading segment is a bare inherited or
+    // static-imported field/property root resolves the root through the
+    // unique base chain (an inherited member shadows a same-named static
+    // import) and dispatches the trailing factory as an instance method on
+    // the resulting type, such as `holder.GetItems()` or
+    // `holder.holder.GetItems()` from a type that inherits `holder` from a
+    // base class; unknown or primitive roots, unknown hops, and missing,
+    // static, or arity-mismatched factories fail closed.
+    if let Some((receiver_name, remainder)) = factory_name.split_once('.')
+        && !receiver_name.is_empty()
+        && !remainder.is_empty()
+        && !receiver_name.contains(['(', ')', '[', ']'])
+    {
+        let initial_binding = if let Some(binding) =
+            resolve_csharp_inherited_field_initializer_binding(
+                source_symbol,
+                receiver_name,
+                &[],
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )? {
+            Some(binding)
+        } else {
+            resolve_csharp_static_imported_field_initializer_binding(
+                source_symbol,
+                receiver_name,
+                &[],
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        if let Some(initial_binding) = initial_binding {
+            let (hops, method_name) = match remainder.rsplit_once('.') {
+                Some((hops, method_name)) => {
+                    let hops = if hops.is_empty() {
+                        Vec::new()
+                    } else {
+                        hops.split('.').collect::<Vec<_>>()
+                    };
+                    (hops, method_name)
+                }
+                None => (Vec::new(), remainder),
+            };
+            if method_name.is_empty() || method_name.contains(['(', ')', '.']) {
+                return Ok(None);
+            }
+            if hops.iter().any(|hop| hop.is_empty()) {
+                return Ok(None);
+            }
+            let Some(type_path) = csharp_dispatchable_type_path(
+                source_symbol,
+                raw_symbols,
+                &initial_binding,
+                csharp_is_type_declaration,
+            ) else {
+                return Ok(None);
+            };
+            let type_indexes = semantic_path_index
+                .get(&type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .collect::<Vec<_>>();
+            if type_indexes.len() != 1 {
+                return Ok(None);
+            }
+            let type_symbol = &raw_symbols[type_indexes[0]];
+            let (binding, dispatch_source_symbol) = if hops.is_empty() {
+                (initial_binding, type_symbol)
+            } else {
+                let Some((binding, dispatch)) = resolve_csharp_member_chain_binding(
+                    type_symbol,
+                    initial_binding,
+                    &hops,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                (binding, dispatch)
+            };
+            let symbol_id = resolve_csharp_instance_method_on_binding(
+                dispatch_source_symbol,
+                &binding,
+                method_name,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                factory_arity,
+                deadline,
+            )?;
+            return Ok(symbol_id.and_then(|symbol_id| {
+                raw_symbols
+                    .iter()
+                    .find(|candidate| candidate.symbol_id == symbol_id)
+            }));
+        }
+    }
     if factory_name.contains('.') {
         return resolve_csharp_factory_static_method(
             source_symbol,
@@ -3443,10 +3558,11 @@ fn resolve_csharp_initializer_chain_binding(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
     // A bare chain names a bound field, property, local, or parameter whose
-    // declared type pins the `var` receiver. An unbound bare name may be a
+    // declared type pins the `var` receiver. An unbound bare name may be an
+    // inherited member root (which shadows a same-named static import) or a
     // static-imported member root such as `STATIC_HELPER` from
     // `using static Demo.Util;`; a bound-but-unusable name shadows any
-    // static-imported member and fails closed.
+    // inherited or static-imported member and fails closed.
     if !chain.contains('.') {
         if let Some(type_name) = bindings.type_for(chain) {
             return resolve_csharp_receiver_type_binding(
@@ -3464,13 +3580,12 @@ fn resolve_csharp_initializer_chain_binding(
         if bindings.contains(chain) {
             return Ok(None);
         }
-        if let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
+        if let Some(binding) = resolve_csharp_inherited_field_initializer_binding(
             source_symbol,
             chain,
             &[],
             raw_symbols,
             semantic_path_index,
-            source_namespace_path,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -3478,12 +3593,13 @@ fn resolve_csharp_initializer_chain_binding(
         )? {
             return Ok(Some(binding));
         }
-        return resolve_csharp_inherited_field_initializer_binding(
+        return resolve_csharp_static_imported_field_initializer_binding(
             source_symbol,
             chain,
             &[],
             raw_symbols,
             semantic_path_index,
+            source_namespace_path,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
