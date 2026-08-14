@@ -1975,6 +1975,35 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
     Ok(None)
 }
 
+pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_name(
+    source_file_path: &str,
+    local_type_name: &str,
+    source_namespace_path: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpTypeAliasBinding>> {
+    if local_type_name.is_empty() || local_type_name.contains('.') {
+        return Ok(None);
+    }
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    for scope_path in csharp_import_scope_paths(source_namespace_path) {
+        let key = (scope_path, local_type_name.to_string());
+        if context.ambiguous_type_alias_names.contains(&key) {
+            return Ok(None);
+        }
+        if let Some(binding) = context.type_alias_bindings.get(&key) {
+            return Ok(Some(binding.clone()));
+        }
+    }
+    Ok(None)
+}
+
 pub(in crate::symbol_dependency) fn resolve_csharp_nested_type_alias_binding_for_reference(
     source_file_path: &str,
     reference_name: &str,

@@ -10,19 +10,19 @@ use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
     CSharpTypeAliasBinding, csharp_array_component_spelling_at_depth,
-    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
-    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
-    csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_global_base_type_alias_is_ambiguous, csharp_global_type_alias_name_is_ambiguous,
+    csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
+    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
-    resolve_csharp_declared_type_binding_for_reference,
+    resolve_csharp_declared_type_binding_for_reference, resolve_csharp_global_base_type_alias,
     resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_nested_type_alias_binding_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
     resolve_csharp_global_type_alias_binding_for_reference,
     resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_nested_type_alias_binding_for_reference,
-    resolve_csharp_static_type_imports_for_reference,
+    resolve_csharp_static_type_imports_for_reference, resolve_csharp_type_alias_binding_for_name,
     resolve_csharp_type_alias_binding_for_reference,
 };
 use super::super::go::{
@@ -3337,6 +3337,30 @@ fn resolve_csharp_factory_static_method<'a>(
                 require_same_file: false,
             },
         )
+    } else if let Some(target_path) = csharp_alias_to_dotted_static_target_path(
+        source_symbol,
+        factory_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
     } else if let Some((type_name, method_name)) = factory_name.split_once('.')
         && !type_name.is_empty()
         && type_name != "this"
@@ -3887,6 +3911,18 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                                 deadline,
                             )?
                         {
+                            type_path
+                        } else if let Some(type_path) = resolve_csharp_alias_to_dotted_type_path(
+                            source_symbol,
+                            &type_name,
+                            raw_symbols,
+                            semantic_path_index,
+                            csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                            csharp_global_import_context,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )? {
                             type_path
                         } else {
                             continue;
@@ -4549,7 +4585,22 @@ fn csharp_qualified_element_access_receiver(
             deadline,
         )?
         .is_some();
-        if resolves_as_scoped_type || resolves_as_imported_dotted_type {
+        let resolves_as_alias_dotted_type = resolve_csharp_alias_to_dotted_type_path(
+            source_symbol,
+            &extended,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        .is_some();
+        if resolves_as_scoped_type
+            || resolves_as_imported_dotted_type
+            || resolves_as_alias_dotted_type
+        {
             best = extended.clone();
             best_absorbed = absorbed;
         }
@@ -8023,6 +8074,124 @@ fn csharp_namespace_imported_dotted_static_target_path(
         return Ok(None);
     }
     let Some(target_type_path) = resolve_csharp_namespace_imported_dotted_type_path(
+        source_symbol,
+        type_path,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{target_type_path}::{method_name}")))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# alias-rooted dotted type resolution inputs explicit"
+)]
+fn resolve_csharp_alias_to_dotted_type_path(
+    source_symbol: &IndexedSymbol,
+    type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if type_path.starts_with("global::") || !type_path.contains('.') {
+        return Ok(None);
+    }
+    let Some((alias_name, rest)) = type_path.split_once('.') else {
+        return Ok(None);
+    };
+    if alias_name.is_empty()
+        || rest.is_empty()
+        || !is_safe_csharp_identifier(alias_name)
+        || rest
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+        || !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols)
+    {
+        return Ok(None);
+    }
+    let binding = match resolve_csharp_type_alias_binding_for_name(
+        &source_symbol.file_path,
+        alias_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        Some(binding) => binding,
+        None => {
+            let Some(csharp_global_import_context) = csharp_global_import_context else {
+                return Ok(None);
+            };
+            if csharp_global_base_type_alias_is_ambiguous(alias_name, csharp_global_import_context)
+            {
+                return Ok(None);
+            }
+            let Some(binding) =
+                resolve_csharp_global_base_type_alias(alias_name, csharp_global_import_context)
+            else {
+                return Ok(None);
+            };
+            binding
+        }
+    };
+    let mut target_type_path = binding.semantic_type_path;
+    for segment in rest.split('.') {
+        target_type_path.push_str("::");
+        target_type_path.push_str(segment);
+    }
+    let type_candidates = semantic_path_index
+        .get(&target_type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        .count();
+    if type_candidates != 1 {
+        return Ok(None);
+    }
+    Ok(Some(target_type_path))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# alias-rooted dotted static target resolution inputs explicit"
+)]
+fn csharp_alias_to_dotted_static_target_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((type_path, method_name)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if type_path.is_empty()
+        || !type_path.contains('.')
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || method_name == "this"
+        || type_path.starts_with("global::")
+    {
+        return Ok(None);
+    }
+    let Some(target_type_path) = resolve_csharp_alias_to_dotted_type_path(
         source_symbol,
         type_path,
         raw_symbols,
