@@ -63881,3 +63881,202 @@ namespace Other {
             .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
     );
 }
+
+#[test]
+fn traces_csharp_record_positional_property_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group GetInner() => this;
+    }
+    record Base(Group Holder, int Count);
+    class Caller : Base {
+        int FromCondElementAccess() {
+            var first = Holder?.items[0];
+            return first.Run(1);
+        }
+        int FromPlainMemberChain() {
+            var first = Holder.items[0];
+            return first.Run(2);
+        }
+        int FromMethodCallHop() {
+            var first = Holder.GetInner()?.items[0];
+            return first.Run(3);
+        }
+        int FromInitializerChain() {
+            var first = Holder;
+            var result = first.items[0];
+            return result.Run(4);
+        }
+        int failures() {
+            var primitive = Count?.items[0];
+            return primitive.Run(1);
+        }
+    }
+    record RecordCaller(Group holder) {
+        int FromOwnPositional() {
+            var first = holder?.items[0];
+            return first.Run(5);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A record primary-constructor parameter such as `Holder` in
+    // `record Base(Group Holder, int Count)` declares an init-only property,
+    // so a type deriving from the record resolves the bare inherited root
+    // through the record base for conditional and plain member element access
+    // (`Holder?.items[0]`, `Holder.items[0]`), method-call hops
+    // (`Holder.GetInner()?.items[0]`), and initializer chains
+    // (`var first = Holder`), and a record's own methods resolve its own
+    // positional parameters the same way, while primitive-typed positional
+    // parameters fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromCondElementAccess",
+        "Demo::Caller::FromPlainMemberChain",
+        "Demo::Caller::FromMethodCallHop",
+        "Demo::Caller::FromInitializerChain",
+        "Demo::RecordCaller::FromOwnPositional",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromCondElementAccess",
+        "Demo::Caller::FromPlainMemberChain",
+        "Demo::Caller::FromMethodCallHop",
+        "Demo::Caller::FromInitializerChain",
+        "Demo::RecordCaller::FromOwnPositional",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_record_positional_property_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+    }
+    record Base(Group Holder);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller : Base {
+        int FromCondElementAccess() {
+            var first = Holder?.items[0];
+            return first.Run(1);
+        }
+        int FromInitializerChain() {
+            var first = Holder;
+            var result = first.items[0];
+            return result.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromCondElementAccess",
+        "Demo::Caller::FromInitializerChain",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromCondElementAccess",
+        "Demo::Caller::FromInitializerChain",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
