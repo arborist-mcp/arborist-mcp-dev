@@ -5014,27 +5014,6 @@ fn csharp_qualified_element_access_component_type_path(
         hops.remove(0);
         (leading_binding, source_symbol, false)
     } else if !receiver.contains(['.', '(', '[', ']', ')'])
-        && let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
-            source_symbol,
-            receiver,
-            &[],
-            raw_symbols,
-            semantic_path_index,
-            source_namespace_path,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-    {
-        // A bare unbound receiver that resolves as a static-imported field
-        // or property root such as `holder` in `holder?.items[0]` with
-        // `using static Root.Sub.Util2;` pins the receiver to the imported
-        // member's declared type and walks the remaining chain and terminal
-        // array member as an instance receiver; unknown or instance-member
-        // imports fail closed.
-        (binding, source_symbol, false)
-    } else if !receiver.contains(['.', '(', '[', ']', ')'])
         && let Some(binding) = resolve_csharp_inherited_field_initializer_binding(
             source_symbol,
             receiver,
@@ -5054,6 +5033,27 @@ fn csharp_qualified_element_access_component_type_path(
         // and walks the remaining chain and terminal array member as an
         // instance receiver; unknown or primitive-typed base members and
         // unresolved base chains fail closed.
+        (binding, source_symbol, false)
+    } else if !receiver.contains(['.', '(', '[', ']', ')'])
+        && let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
+            source_symbol,
+            receiver,
+            &[],
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A bare unbound receiver that resolves as a static-imported field
+        // or property root such as `holder` in `holder?.items[0]` with
+        // `using static Root.Sub.Util2;` pins the receiver to the imported
+        // member's declared type and walks the remaining chain and terminal
+        // array member as an instance receiver; unknown or instance-member
+        // imports fail closed.
         (binding, source_symbol, false)
     } else {
         // An unbound receiver names a static type; the terminal array member
