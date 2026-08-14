@@ -30930,3 +30930,109 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_parenthesized_constructed_receiver_factory_receiver_and_array_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Box<T> {
+    public T GetSingle() => default;
+    public T[] GetItems() => default;
+}
+class Outer<T> { public class Inner<U> { public T GetOuterItem() => default; public U GetInnerItem() => default; } }
+class Caller {
+    int VarFromParenSingle() { var single = (new Box<HelperA>()).GetSingle(); return single.RunA(1); }
+    int VarFromParenElement() { var first = (new Box<HelperA>()).GetItems()[0]; return first.RunA(2); }
+    int VarFromParenNestedSingle() { var single = (new Box<Outer<HelperA>.Inner<HelperB>>()).GetSingle(); return single.GetOuterItem().RunA(3); }
+    int VarFromParenNestedSingleInner() { var single = (new Box<Outer<HelperA>.Inner<HelperB>>()).GetSingle(); return single.GetInnerItem().RunB(4); }
+    int VarFromParenNestedElement() { var first = (new Box<Outer<HelperA>.Inner<HelperB>>()).GetItems()[0]; return first.GetOuterItem().RunA(5); }
+    int VarFromParenNestedElementInner() { var first = (new Box<Outer<HelperA>.Inner<HelperB>>()).GetItems()[0]; return first.GetInnerItem().RunB(6); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a parenthesized `new`-constructed-receiver
+    // factory call or array element such as
+    // `var single = (new Box<HelperA>()).GetSingle()` or
+    // `var first = (new Box<HelperA>()).GetItems()[0]` unwraps the leading
+    // parenthesis group and substitutes the constructed receiver's concrete
+    // type arguments into the factory's declared return type, so
+    // `single.RunA(1)` dispatches on `HelperA`; a nested constructed argument
+    // such as `(new Box<Outer<HelperA>.Inner<HelperB>>())` substitutes the
+    // enclosing segment's outer `T` (`GetOuterItem()` to `HelperA`) and the
+    // inner segment's own `U` (`GetInnerItem()` to `HelperB`) before tracing
+    // the final member call.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarFromParenSingle",
+        "Demo::Caller::VarFromParenElement",
+        "Demo::Caller::VarFromParenNestedSingle",
+        "Demo::Caller::VarFromParenNestedElement",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromParenNestedSingleInner",
+        "Demo::Caller::VarFromParenNestedElementInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarFromParenSingle",
+        "Demo::Caller::VarFromParenElement",
+        "Demo::Caller::VarFromParenNestedSingle",
+        "Demo::Caller::VarFromParenNestedElement",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromParenNestedSingleInner",
+        "Demo::Caller::VarFromParenNestedElementInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
