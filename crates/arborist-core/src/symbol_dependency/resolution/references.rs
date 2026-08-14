@@ -3313,6 +3313,30 @@ fn resolve_csharp_factory_static_method<'a>(
                 require_same_file: false,
             },
         )
+    } else if let Some(target_path) = csharp_namespace_imported_dotted_static_target_path(
+        source_symbol,
+        factory_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
     } else if let Some((type_name, method_name)) = factory_name.split_once('.')
         && !type_name.is_empty()
         && type_name != "this"
@@ -3838,7 +3862,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                         type_path
                     }
                     None => {
-                        let Some(type_path) = resolve_csharp_namespace_imported_nested_type_path(
+                        if let Some(type_path) = resolve_csharp_namespace_imported_nested_type_path(
                             source_symbol,
                             &type_name,
                             raw_symbols,
@@ -3848,11 +3872,25 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                             file_overrides,
                             csharp_import_contexts_by_file,
                             deadline,
-                        )?
-                        else {
+                        )? {
+                            type_path
+                        } else if let Some(type_path) =
+                            resolve_csharp_namespace_imported_dotted_type_path(
+                                source_symbol,
+                                &type_name,
+                                raw_symbols,
+                                semantic_path_index,
+                                csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                                csharp_global_import_context,
+                                file_overrides,
+                                csharp_import_contexts_by_file,
+                                deadline,
+                            )?
+                        {
+                            type_path
+                        } else {
                             continue;
-                        };
-                        type_path
+                        }
                     }
                 }
             }
@@ -4453,11 +4491,18 @@ fn csharp_top_level_dot_split(spelling: &str) -> Option<(&str, &str)> {
 /// splits with the full type path as the receiver and the remaining member
 /// chain after it. Namespace-only prefixes are skipped, so a deep namespace
 /// such as `global::Demo.Sub.Util.holder?.items[0]` still absorbs
-/// `Demo.Sub.Util`, and a nested type such as `Outer.Inner` in
-/// `Outer.Inner.holder?.items[0]` absorbs both segments. `this` and `base`
-/// roots and receivers bound to a local receiver return unchanged so locals
-/// shadow same-named type paths. Returns the extended receiver and the number
-/// of leading chain segments absorbed into it.
+/// `Demo.Sub.Util`, a nested type such as `Outer.Inner` in
+/// `Outer.Inner.holder?.items[0]` absorbs both segments, and a dotted type
+/// path whose leading segment comes from a namespace import such as
+/// `Sub.Util2.holder?.items[0]` with `using Root;` absorbs through the
+/// imported namespace. `this` and `base` roots and receivers bound to a local
+/// receiver return unchanged so locals shadow same-named type paths. Returns
+/// the extended receiver and the number of leading chain segments absorbed
+/// into it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# element-access receiver absorption inputs explicit"
+)]
 fn csharp_qualified_element_access_receiver(
     source_symbol: &IndexedSymbol,
     receiver: &str,
@@ -4465,9 +4510,14 @@ fn csharp_qualified_element_access_receiver(
     bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
-) -> (String, usize) {
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<(String, usize)> {
     if receiver == "this" || receiver == "base" || bindings.contains(receiver) {
-        return (receiver.to_string(), 0);
+        return Ok((receiver.to_string(), 0));
     }
     let mut extended = receiver.to_string();
     let mut absorbed = 0usize;
@@ -4480,19 +4530,31 @@ fn csharp_qualified_element_access_receiver(
         extended.push('.');
         extended.push_str(segment);
         absorbed += 1;
-        if resolve_csharp_static_initializer_type_path(
+        let resolves_as_scoped_type = resolve_csharp_static_initializer_type_path(
             source_symbol,
             &extended,
             raw_symbols,
             semantic_path_index,
         )
-        .is_some()
-        {
+        .is_some();
+        let resolves_as_imported_dotted_type = resolve_csharp_namespace_imported_dotted_type_path(
+            source_symbol,
+            &extended,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        .is_some();
+        if resolves_as_scoped_type || resolves_as_imported_dotted_type {
             best = extended.clone();
             best_absorbed = absorbed;
         }
     }
-    (best, best_absorbed)
+    Ok((best, best_absorbed))
 }
 
 /// Resolves the element component type binding of a qualified element-access
@@ -4598,7 +4660,12 @@ fn csharp_qualified_element_access_component_type_path(
         bindings,
         raw_symbols,
         semantic_path_index,
-    );
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
     let chain = chain
         .split('.')
         .skip(absorbed_chain_segments)
@@ -7851,6 +7918,125 @@ fn csharp_namespace_relative_dotted_static_target_path(
             current_path.rsplit_once("::").map(|(parent, _)| parent)
         };
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# namespace-imported dotted type resolution inputs explicit"
+)]
+fn resolve_csharp_namespace_imported_dotted_type_path(
+    source_symbol: &IndexedSymbol,
+    type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if type_path.starts_with("global::") || !type_path.contains('.') {
+        return Ok(None);
+    }
+    let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_path) else {
+        return Ok(None);
+    };
+    let Some(first_segment) = semantic_path.split("::").next() else {
+        return Ok(None);
+    };
+    if !csharp_nested_type_root_is_unshadowed(first_segment, source_symbol, raw_symbols) {
+        return Ok(None);
+    }
+    let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
+        &source_symbol.file_path,
+        first_segment,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    if let Some(csharp_global_import_context) = csharp_global_import_context {
+        namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+            first_segment,
+            csharp_global_import_context,
+        ));
+    }
+    let mut target_type_paths = BTreeSet::new();
+    for binding in &namespace_imports {
+        let target_type_path = semantic_path.split("::").fold(
+            binding.semantic_namespace_path.clone(),
+            |mut current, segment| {
+                current.push_str("::");
+                current.push_str(segment);
+                current
+            },
+        );
+        let type_candidates = semantic_path_index
+            .get(&target_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .count();
+        if type_candidates > 1 {
+            return Ok(None);
+        }
+        if type_candidates == 1 {
+            target_type_paths.insert(target_type_path);
+        }
+    }
+    let target_type_paths = target_type_paths.into_iter().collect::<Vec<_>>();
+    let [target_type_path] = target_type_paths.as_slice() else {
+        return Ok(None);
+    };
+    Ok(Some(target_type_path.clone()))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# namespace-imported dotted static target resolution inputs explicit"
+)]
+fn csharp_namespace_imported_dotted_static_target_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((type_path, method_name)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if type_path.is_empty()
+        || !type_path.contains('.')
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || method_name == "this"
+        || type_path.starts_with("global::")
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return Ok(None);
+    }
+    let Some(target_type_path) = resolve_csharp_namespace_imported_dotted_type_path(
+        source_symbol,
+        type_path,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{target_type_path}::{method_name}")))
 }
 
 fn csharp_is_type_declaration(symbol: &IndexedSymbol) -> bool {
