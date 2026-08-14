@@ -5860,13 +5860,12 @@ fn resolve_csharp_member_chain_binding<'a>(
                     };
                     break (current_type_symbol, hop_type_name);
                 }
-                if current_type_symbol.node_kind == "interface_declaration"
-                    && array_member_name.is_none()
-                {
+                if current_type_symbol.node_kind == "interface_declaration" {
                     // Interfaces have no class/record base to walk; resolve
-                    // the hop through the interface-extends chain instead,
-                    // with the same shadowing and ambiguity rules as
-                    // interface method dispatch.
+                    // the hop (including element-access hops) through the
+                    // interface-extends chain instead, with the same
+                    // shadowing and ambiguity rules as interface method
+                    // dispatch.
                     let mut visited_interface_paths = BTreeSet::new();
                     match resolve_csharp_interface_member_hop(
                         current_type_symbol,
@@ -6870,6 +6869,14 @@ fn resolve_csharp_interface_member_hop<'a>(
     if !visited_interface_paths.insert(interface_symbol.semantic_path.clone()) {
         return Ok(CSharpInterfaceMemberHopResolution::Blocked);
     }
+    // An element-access hop such as `items[0]` or `fieldItems[0][0]` looks up
+    // the named member through the same interface-extends chain as a plain
+    // hop and pins the resolved array's element component type, stripping one
+    // component layer per element access, while non-array members fail
+    // closed.
+    let array_member_name = csharp_array_access_member_name(hop);
+    let element_depth = csharp_array_access_depth(hop);
+    let member_name = array_member_name.unwrap_or(hop);
     let member_bindings = match csharp_member_type_bindings_for_type(
         &interface_symbol.file_path,
         interface_symbol.byte_range,
@@ -6883,10 +6890,24 @@ fn resolve_csharp_interface_member_hop<'a>(
             return Ok(CSharpInterfaceMemberHopResolution::Blocked);
         }
     };
-    if member_bindings.contains(hop) {
-        let resolution = match member_bindings.type_for(hop) {
-            Some(hop_type_name) => {
-                CSharpInterfaceMemberHopResolution::Resolved(interface_symbol, hop_type_name)
+    if member_bindings.contains(member_name) {
+        let resolution = match member_bindings.type_for(member_name) {
+            Some(declared_type) => {
+                let hop_type_name = if array_member_name.is_some() {
+                    let Some(depth) = element_depth else {
+                        return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+                    };
+                    csharp_array_component_spelling_at_depth(&declared_type, depth)
+                } else {
+                    Some(declared_type)
+                };
+                match hop_type_name {
+                    Some(hop_type_name) => CSharpInterfaceMemberHopResolution::Resolved(
+                        interface_symbol,
+                        hop_type_name,
+                    ),
+                    None => CSharpInterfaceMemberHopResolution::Blocked,
+                }
             }
             None => CSharpInterfaceMemberHopResolution::Blocked,
         };
