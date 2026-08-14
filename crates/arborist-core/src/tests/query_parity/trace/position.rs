@@ -63293,3 +63293,260 @@ fn traces_csharp_bare_base_field_conditional_member_element_access_receivers_fro
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+
+#[test]
+fn traces_csharp_inherited_shadowing_static_import_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class OtherHelper {
+        public int Run(int value) => value;
+    }
+    class OtherGroup {
+        public OtherHelper[] items = new OtherHelper[2];
+    }
+    class Util {
+        public static OtherGroup holder = new OtherGroup();
+        public static OtherGroup otherHolder = new OtherGroup();
+    }
+    class Base {
+        public Group holder = new Group();
+    }
+}
+namespace Other {
+    using static Demo.Util;
+    class Caller : Demo.Base {
+        int FromCollidingHolder() {
+            var first = holder?.items[0];
+            return first.Run(1);
+        }
+        int FromCollidingHolderNested() {
+            var first = holder?.holder?.items[0];
+            return first.Run(2);
+        }
+        int FromStaticImportedOnly() {
+            var first = otherHolder?.items[0];
+            return first.Run(3);
+        }
+        int failures() {
+            var unknown = missing?.items[0];
+            return unknown.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A bare null-conditional member element access root that matches both an
+    // inherited field or property and a same-named `using static` import such
+    // as `holder` in `holder?.items[0]` or `holder?.holder?.items[0]` pins the
+    // receiver to the inherited base member's declared type (an inherited
+    // member shadows the static import), while a bare root that only matches
+    // the static import such as `otherHolder` still resolves through the
+    // imported member's declared type; unknown roots fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Other::Caller::FromCollidingHolder",
+        "Other::Caller::FromCollidingHolderNested",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected failures caller"
+    );
+    let live_other =
+        trace_symbol_graph(&dir, "Demo::OtherHelper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live_other.callers.len(), 1);
+    assert!(
+        live_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromStaticImportedOnly")
+    );
+    assert!(
+        !live_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Other::Caller::FromCollidingHolder",
+        "Other::Caller::FromCollidingHolderNested",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+    let persisted_other =
+        trace_symbol_graph_from_index(&db_path, "Demo::OtherHelper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_other.callers.len(), 1);
+    assert!(
+        persisted_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromStaticImportedOnly")
+    );
+    assert!(
+        !persisted_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+}
+
+#[test]
+fn traces_csharp_inherited_shadowing_static_import_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Group holder;
+    }
+    class OtherHelper {
+        public int Run(int value) => value;
+    }
+    class OtherGroup {
+        public OtherHelper[] items = new OtherHelper[2];
+    }
+    class Util {
+        public static OtherGroup holder = new OtherGroup();
+        public static OtherGroup otherHolder = new OtherGroup();
+    }
+    class Base {
+        public Group holder = new Group();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using static Demo.Util;
+    class Caller : Demo.Base {
+        int FromCollidingHolder() {
+            var first = holder?.items[0];
+            return first.Run(1);
+        }
+        int FromStaticImportedOnly() {
+            var first = otherHolder?.items[0];
+            return first.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert!(
+        live.callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromCollidingHolder")
+    );
+    let live_other = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::OtherHelper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live_other.callers.len(), 1);
+    assert!(
+        live_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromStaticImportedOnly")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromCollidingHolder")
+    );
+    let persisted_other = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::OtherHelper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_other.callers.len(), 1);
+    assert!(
+        persisted_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromStaticImportedOnly")
+    );
+}
