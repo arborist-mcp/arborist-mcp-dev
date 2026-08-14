@@ -2129,6 +2129,30 @@ fn resolve_csharp_instance_receiver_call(
                         csharp_import_contexts_by_file,
                         deadline,
                     )?
+                } else if let Some((factory_name, factory_arity)) =
+                    csharp_foreach_factory_element_spelling(raw_binding)
+                {
+                    // A bare base bound from a `foreach` over a factory-returned
+                    // array (such as `row` in `foreach (var row in
+                    // Factory.MakeNestedMatrix())` followed by `var first =
+                    // row[0]`) resolves the factory return array's element
+                    // component type one layer deeper than the recorded base
+                    // depth, since the loop variable is already the element at
+                    // depth one.
+                    csharp_factory_array_component_binding(
+                        source_symbol,
+                        &factory_name,
+                        factory_arity,
+                        base_depth + 1,
+                        &bindings,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
                 } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
                     if chain.contains('.') {
                         csharp_qualified_element_access_component_type_path(
@@ -6209,6 +6233,30 @@ fn csharp_array_element_component_binding(
             &factory_name,
             factory_arity,
             depth,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    // A base bound from a `foreach` over a factory-returned array (such as
+    // `row` in `foreach (var row in Factory.MakeNestedMatrix())` followed by
+    // `row[0]`) resolves the factory return array's element component type one
+    // layer deeper than the requested depth, since the loop variable is
+    // already the element at depth one.
+    if let Some(raw_binding) = bindings.raw_for(base)
+        && let Some((factory_name, factory_arity)) =
+            csharp_foreach_factory_element_spelling(raw_binding)
+    {
+        return csharp_factory_array_component_binding(
+            source_symbol,
+            &factory_name,
+            factory_arity,
+            depth + 1,
             bindings,
             raw_symbols,
             semantic_path_index,
