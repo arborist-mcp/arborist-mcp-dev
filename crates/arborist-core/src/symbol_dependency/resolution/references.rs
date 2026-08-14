@@ -3295,6 +3295,24 @@ fn resolve_csharp_factory_static_method<'a>(
                 require_same_file: false,
             },
         )
+    } else if let Some(target_path) = csharp_namespace_relative_dotted_static_target_path(
+        factory_name,
+        source_symbol,
+        raw_symbols,
+    ) {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
     } else if let Some((type_name, method_name)) = factory_name.split_once('.')
         && !type_name.is_empty()
         && type_name != "this"
@@ -4429,23 +4447,26 @@ fn csharp_top_level_dot_split(spelling: &str) -> Option<(&str, &str)> {
     None
 }
 
-/// Extends a `global::`-prefixed element-access receiver such as
-/// `global::Demo` to the longest dotted prefix that resolves as a unique
-/// type, so a root such as `global::Demo.Util.holder?.items[0]` or
-/// `global::Demo.Util.MakeGroup()?.items[0]` splits with the full
-/// global-qualified type path as the receiver and the remaining member chain
-/// after it. Namespace-only prefixes are skipped, so a deep namespace such as
-/// `global::Demo.Sub.Util.holder?.items[0]` still absorbs `Demo.Sub.Util`.
-/// Returns the extended receiver and the number of leading chain segments
-/// absorbed into it; non-`global::` receivers return unchanged.
-fn csharp_global_qualified_element_access_receiver(
+/// Extends an element-access receiver such as `global::Demo` or `Sub` to the
+/// longest dotted prefix that resolves as a unique type, so a root such as
+/// `global::Demo.Util.holder?.items[0]` or `Sub.Util2.holder?.items[0]`
+/// splits with the full type path as the receiver and the remaining member
+/// chain after it. Namespace-only prefixes are skipped, so a deep namespace
+/// such as `global::Demo.Sub.Util.holder?.items[0]` still absorbs
+/// `Demo.Sub.Util`, and a nested type such as `Outer.Inner` in
+/// `Outer.Inner.holder?.items[0]` absorbs both segments. `this` and `base`
+/// roots and receivers bound to a local receiver return unchanged so locals
+/// shadow same-named type paths. Returns the extended receiver and the number
+/// of leading chain segments absorbed into it.
+fn csharp_qualified_element_access_receiver(
     source_symbol: &IndexedSymbol,
     receiver: &str,
     chain: &str,
+    bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
 ) -> (String, usize) {
-    if !receiver.starts_with("global::") {
+    if receiver == "this" || receiver == "base" || bindings.contains(receiver) {
         return (receiver.to_string(), 0);
     }
     let mut extended = receiver.to_string();
@@ -4570,10 +4591,11 @@ fn csharp_qualified_element_access_component_type_path(
             }
             (receiver.to_string(), chain.to_string(), false)
         };
-    let (receiver, absorbed_chain_segments) = csharp_global_qualified_element_access_receiver(
+    let (receiver, absorbed_chain_segments) = csharp_qualified_element_access_receiver(
         source_symbol,
         &receiver,
         &chain,
+        bindings,
         raw_symbols,
         semantic_path_index,
     );
@@ -7773,6 +7795,47 @@ fn csharp_simple_type_static_target_path(
         let target_type_path = namespace_path
             .map(|namespace_path| format!("{namespace_path}::{type_name}"))
             .unwrap_or_else(|| type_name.to_string());
+        let target_type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == target_type_path && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        if target_type_candidates > 0 {
+            return (target_type_candidates == 1)
+                .then(|| format!("{target_type_path}::{method_name}"));
+        }
+        namespace_path = {
+            let current_path = namespace_path?;
+            current_path.rsplit_once("::").map(|(parent, _)| parent)
+        };
+    }
+}
+
+fn csharp_namespace_relative_dotted_static_target_path(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let (type_path, method_name) = reference_name.rsplit_once('.')?;
+    if type_path.is_empty()
+        || !type_path.contains('.')
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || method_name == "this"
+        || type_path.starts_with("global::")
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return None;
+    }
+    let relative_type_path = type_path.replace('.', "::");
+    let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
+    loop {
+        let target_type_path = namespace_path
+            .map(|namespace_path| format!("{namespace_path}::{relative_type_path}"))
+            .unwrap_or_else(|| relative_type_path.clone());
         let target_type_candidates = raw_symbols
             .iter()
             .filter(|candidate| {
