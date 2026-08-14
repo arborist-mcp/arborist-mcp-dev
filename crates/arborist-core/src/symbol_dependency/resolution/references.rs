@@ -4738,6 +4738,30 @@ fn csharp_qualified_element_access_component_type_path(
         };
         hops.remove(0);
         (leading_binding, source_symbol, false)
+    } else if let Some(leading_field) = hops.first()
+        && !leading_field.contains(['(', '[', ']', ')'])
+        && let Some(leading_binding) = resolve_csharp_static_field_initializer_binding(
+            source_symbol,
+            &format!("{receiver}.{leading_field}"),
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A leading static type-qualified field or property hop such as
+        // `Util.holder` in `Util.holder?.items[0]` or
+        // `foreach (var item in Util.holder?.items)` resolves the static
+        // member's declared type on the named type (through the same
+        // same-namespace, namespace-imported, and alias rules as
+        // receiver type references), consumes the leading hop, and walks the
+        // remaining chain and terminal array member as an instance receiver;
+        // unknown or instance-member roots and non-array terminals fail
+        // closed.
+        hops.remove(0);
+        (leading_binding, source_symbol, false)
     } else {
         // An unbound receiver names a static type; the terminal array member
         // must be declared static on that type.
