@@ -3194,86 +3194,140 @@ fn resolve_csharp_factory_static_method<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<&'a IndexedSymbol>> {
-    let symbol_id =
-        if let Some(target_path) = csharp_global_qualified_static_target_path(factory_name) {
-            resolve_csharp_candidate(
-                raw_symbols,
-                semantic_path_index,
-                &target_path,
-                Some(source_symbol),
-                factory_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            )
-        } else if let Some(target_path) =
-            csharp_nested_type_static_target_path(factory_name, source_symbol, raw_symbols)
-        {
-            resolve_csharp_candidate(
-                raw_symbols,
-                semantic_path_index,
-                &target_path,
-                Some(source_symbol),
-                factory_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            )
-        } else if let Some(target_path) =
-            csharp_simple_type_static_target_path(factory_name, source_symbol, raw_symbols)
-        {
-            resolve_csharp_candidate(
-                raw_symbols,
-                semantic_path_index,
-                &target_path,
-                Some(source_symbol),
-                factory_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            )
-        } else if let Some((type_name, method_name)) = factory_name.split_once('.')
-            && !type_name.is_empty()
-            && type_name != "this"
-            && !type_name.starts_with("global::")
-            && !method_name.is_empty()
-            && !method_name.contains('.')
-            && csharp_namespace_import_type_is_unshadowed(type_name, source_symbol, raw_symbols)
-        {
-            let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
-                &source_symbol.file_path,
-                type_name,
-                source_namespace_path,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?;
-            if let Some(csharp_global_import_context) = csharp_global_import_context {
-                namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
-                    type_name,
-                    csharp_global_import_context,
-                ));
-            }
-            resolve_csharp_namespace_imported_static_method(
-                raw_symbols,
-                semantic_path_index,
-                &namespace_imports,
-                type_name,
-                method_name,
-                factory_arity,
-            )
-        } else {
-            None
+    let symbol_id = if let Some(target_path) =
+        csharp_global_qualified_static_target_path(factory_name)
+    {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
+    } else if let Some(target_path) =
+        csharp_nested_type_static_target_path(factory_name, source_symbol, raw_symbols)
+    {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
+    } else if let Some((method_name, binding)) = resolve_csharp_type_alias_binding_for_reference(
+        &source_symbol.file_path,
+        factory_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        let Some((alias_name, _)) = factory_name.split_once('.') else {
+            return Ok(None);
         };
+        if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+            return Ok(None);
+        }
+        resolve_csharp_imported_static_method(
+            raw_symbols,
+            semantic_path_index,
+            &binding,
+            &method_name,
+            factory_arity,
+        )
+    } else if csharp_type_alias_name_is_ambiguous_for_reference(
+        &source_symbol.file_path,
+        factory_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(None);
+    } else if let Some(csharp_global_import_context) = csharp_global_import_context
+        && csharp_global_type_alias_name_is_ambiguous(factory_name, csharp_global_import_context)
+    {
+        return Ok(None);
+    } else if let Some(csharp_global_import_context) = csharp_global_import_context
+        && let Some((method_name, binding)) = resolve_csharp_global_type_alias_binding_for_reference(
+            factory_name,
+            csharp_global_import_context,
+        )
+    {
+        let Some((alias_name, _)) = factory_name.split_once('.') else {
+            return Ok(None);
+        };
+        if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+            return Ok(None);
+        }
+        resolve_csharp_imported_static_method(
+            raw_symbols,
+            semantic_path_index,
+            &binding,
+            &method_name,
+            factory_arity,
+        )
+    } else if let Some(target_path) =
+        csharp_simple_type_static_target_path(factory_name, source_symbol, raw_symbols)
+    {
+        resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: true,
+                require_instance: false,
+                require_same_file: false,
+            },
+        )
+    } else if let Some((type_name, method_name)) = factory_name.split_once('.')
+        && !type_name.is_empty()
+        && type_name != "this"
+        && !type_name.starts_with("global::")
+        && !method_name.is_empty()
+        && !method_name.contains('.')
+        && csharp_namespace_import_type_is_unshadowed(type_name, source_symbol, raw_symbols)
+    {
+        let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
+            &source_symbol.file_path,
+            type_name,
+            source_namespace_path,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
+        if let Some(csharp_global_import_context) = csharp_global_import_context {
+            namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+                type_name,
+                csharp_global_import_context,
+            ));
+        }
+        resolve_csharp_namespace_imported_static_method(
+            raw_symbols,
+            semantic_path_index,
+            &namespace_imports,
+            type_name,
+            method_name,
+            factory_arity,
+        )
+    } else {
+        None
+    };
     Ok(symbol_id.and_then(|symbol_id| {
         raw_symbols
             .iter()
