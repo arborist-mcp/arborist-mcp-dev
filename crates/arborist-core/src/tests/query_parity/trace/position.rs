@@ -65486,3 +65486,284 @@ fn traces_csharp_generic_interface_extends_conditional_member_element_access_rec
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_generic_interface_extends_method_call_hop_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    interface IBase<T> {
+        T GetItem();
+        Box<T> GetBox();
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IFixed : IBase<Helper> {
+    }
+    interface IWrapped<T> : IBase<Holder<T>> {
+    }
+    interface IOther<T> {
+        T GetItem();
+    }
+    interface IDup<T> : IBase<T>, IOther<T> {
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+    class Caller {
+        int ExtendsMethod() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+        int FixedMethod() {
+            IFixed g = default;
+            var first = g?.GetItem();
+            return first.Run(2);
+        }
+        int MultiLevelMethod() {
+            IDeep<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(3);
+        }
+        int TransformedHop() {
+            IWrapped<Helper> g = default;
+            var holder = g?.GetItem();
+            return holder.value.Run(4);
+        }
+        int MethodChainHop() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetBox()?.items[0];
+            return first.Run(5);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.GetItem();
+            IGeneric<Other> o = default;
+            var other = o?.GetItem();
+            IDup<Helper> d = default;
+            var dup = d?.GetItem();
+            return first.Run(6) + other.Run(7) + dup.Run(8);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional method-call hop on a constructed generic interface
+    // receiver substitutes the receiver's concrete type arguments through the
+    // interface-extends chain into the method's declared return type, so
+    // `T GetItem()` declared on `IBase<T>` resolves to `Helper` for
+    // `IGeneric<Helper> : IBase<T>`, through a multi-level chain (`IDeep<T> :
+    // IGeneric<T> : IBase<T>`), through a non-generic parent spelled with
+    // concrete arguments (`IFixed : IBase<Helper>`), through a transformed
+    // parent argument (`IWrapped<T> : IBase<Holder<T>>` resolving `GetItem()`
+    // to `Holder<Helper>` and `value` to `Helper`), and through a method-call
+    // hop returning a generic type (`GetBox()` returning `Box<T>` resolving
+    // `items[0]` to `Helper`), while a concrete argument whose return element
+    // type has no matching member (`IGeneric<int>`, `IGeneric<Other>`), and
+    // competing declarations across parent branches (`IDup<T> : IBase<T>,
+    // IOther<T>`) fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::TransformedHop",
+        "Demo::Caller::MethodChainHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::FixedMethod",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::TransformedHop",
+        "Demo::Caller::MethodChainHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_generic_interface_extends_method_call_hop_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Holder<U> {
+        public U value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    interface IBase<T> {
+        T GetItem();
+        Box<T> GetBox();
+    }
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IDeep<T> : IGeneric<T> {
+    }
+    interface IWrapped<T> : IBase<Holder<T>> {
+    }
+    interface IOther<T> {
+        T GetItem();
+    }
+    interface IDup<T> : IBase<T>, IOther<T> {
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller {
+        int ExtendsMethod() {
+            IGeneric<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+        int MultiLevelMethod() {
+            IDeep<Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(2);
+        }
+        int TransformedHop() {
+            IWrapped<Helper> g = default;
+            var holder = g?.GetItem();
+            return holder.value.Run(3);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the generic interface-extends
+    // method-call hop positives on top of the on-disk type file, while a
+    // concrete argument whose return element type has no matching member
+    // fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ExtendsMethod",
+        "Demo::Caller::MultiLevelMethod",
+        "Demo::Caller::TransformedHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
