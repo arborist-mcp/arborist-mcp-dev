@@ -63550,3 +63550,334 @@ fn traces_csharp_inherited_shadowing_static_import_conditional_member_element_ac
             .any(|candidate| candidate.symbol_id == "Other::Caller::FromStaticImportedOnly")
     );
 }
+
+#[test]
+fn traces_csharp_inherited_root_factory_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Helper[] GetItems() => items;
+        public Group GetSingle() => this;
+    }
+    class Util {
+        public static Group utilHolder = new Group();
+    }
+    class Base {
+        public Group holder = new Group();
+        public int Count = 2;
+    }
+    class Caller : Base {
+        int FromBareInheritedFactoryIndex() {
+            var first = holder.GetItems()[0];
+            return first.Run(1);
+        }
+        int FromBareInheritedFactoryCondIndex() {
+            var first = holder?.GetItems()?[0];
+            return first.Run(2);
+        }
+        int FromBareInheritedMemberChainCondIndex() {
+            var first = holder.GetSingle()?.items[0];
+            return first.Run(3);
+        }
+        int FromBareInheritedNullConditionalIndex() {
+            var first = holder?.items?[0];
+            return first.Run(4);
+        }
+        int failures() {
+            var unknown = missing.GetItems()[0];
+            var primitive = Count.GetItems()[0];
+            var nonArray = holder.GetSingle()[0];
+            return unknown.Run(1) + primitive.Run(1) + nonArray.Run(1);
+        }
+    }
+}
+namespace Other {
+    using static Demo.Util;
+    class ImportedCaller {
+        int FromStaticImportedFieldFactoryIndex() {
+            var first = utilHolder.GetItems()[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A conditional or plain member element access rooted at a bare inherited
+    // field or property whose trailing call is a factory returning the indexed
+    // array, such as `holder.GetItems()[0]` or `holder?.GetItems()?[0]` from a
+    // type that inherits `holder` from a base class, resolves the bare root
+    // through the unique base chain and dispatches the factory as an instance
+    // method on the root's declared type before stripping the element-access
+    // layer, while a bare static-imported field root such as `utilHolder`
+    // resolves through the imported member; a root that is only reachable as a
+    // member chain (`holder.GetSingle()?.items[0]`) or a null-conditional
+    // index (`holder?.items?[0]`) dispatches through the same member-chain
+    // rules, and unknown, primitive-typed, or non-array-returning roots fail
+    // closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromBareInheritedFactoryIndex",
+        "Demo::Caller::FromBareInheritedFactoryCondIndex",
+        "Demo::Caller::FromBareInheritedMemberChainCondIndex",
+        "Demo::Caller::FromBareInheritedNullConditionalIndex",
+        "Other::ImportedCaller::FromStaticImportedFieldFactoryIndex",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::FromBareInheritedFactoryIndex",
+        "Demo::Caller::FromBareInheritedFactoryCondIndex",
+        "Demo::Caller::FromBareInheritedMemberChainCondIndex",
+        "Demo::Caller::FromBareInheritedNullConditionalIndex",
+        "Other::ImportedCaller::FromStaticImportedFieldFactoryIndex",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_inherited_root_factory_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+        public Helper[] GetItems() => items;
+    }
+    class Base {
+        public Group holder = new Group();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    class Caller : Base {
+        int FromPlainFactoryIndex() {
+            var first = holder.GetItems()[0];
+            return first.Run(1);
+        }
+        int FromCondCallCondIndex() {
+            var first = holder?.GetItems()?[0];
+            return first.Run(2);
+        }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromPlainFactoryIndex",
+        "Demo::Caller::FromCondCallCondIndex",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FromPlainFactoryIndex",
+        "Demo::Caller::FromCondCallCondIndex",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_inherited_shadowing_static_import_initializer_chain_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Group {
+        public Helper[] items = new Helper[2];
+    }
+    class OtherHelper {
+        public int Run(int value) => value;
+    }
+    class OtherGroup {
+        public OtherHelper[] items = new OtherHelper[2];
+    }
+    class Util {
+        public static OtherGroup holder = new OtherGroup();
+        public static OtherGroup otherHolder = new OtherGroup();
+    }
+    class Base {
+        public Group holder = new Group();
+    }
+}
+namespace Other {
+    using static Demo.Util;
+    class Caller : Demo.Base {
+        int FromCollidingInitializerChain() {
+            var first = holder;
+            var result = first.items[0];
+            return result.Run(1);
+        }
+        int FromStaticImportedOnlyInitializerChain() {
+            var first = otherHolder;
+            var result = first.items[0];
+            return result.Run(2);
+        }
+        int failures() {
+            var unknown = missing;
+            var result = unknown.items[0];
+            return result.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A bare initializer-chain root such as `var first = holder` that matches
+    // both an inherited field and a same-named `using static` import pins the
+    // receiver to the inherited base member's declared type (an inherited
+    // member shadows the static import), while a bare root that only matches
+    // the static import such as `otherHolder` still resolves through the
+    // imported member's declared type; unknown roots fail closed.
+    let helper_symbol = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert!(
+        live.callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromCollidingInitializerChain")
+    );
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+    let live_other =
+        trace_symbol_graph(&dir, "Demo::OtherHelper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live_other.callers.len(), 1);
+    assert!(live_other.callers.iter().any(|candidate| {
+        candidate.symbol_id == "Other::Caller::FromStaticImportedOnlyInitializerChain"
+    }));
+    assert!(
+        !live_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert!(
+        persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::FromCollidingInitializerChain")
+    );
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+    let persisted_other =
+        trace_symbol_graph_from_index(&db_path, "Demo::OtherHelper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted_other.callers.len(), 1);
+    assert!(persisted_other.callers.iter().any(|candidate| {
+        candidate.symbol_id == "Other::Caller::FromStaticImportedOnlyInitializerChain"
+    }));
+    assert!(
+        !persisted_other
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures")
+    );
+}
