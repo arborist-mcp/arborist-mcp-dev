@@ -1952,6 +1952,56 @@ fn resolve_csharp_instance_receiver_call(
             )?
         {
             Some(binding)
+        } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding)
+            && let Some(element_depth) = csharp_array_access_depth(raw_receiver_name)
+        {
+            // A `var` local bound from a member-chain initializer (such as
+            // `var boxes = this.holder.boxes` or `var boxes = holder.boxes`)
+            // resolves the chain terminal's declared array type before
+            // stripping one component layer per element access; a dotted
+            // chain walks the terminal array member through the qualified
+            // element-access path, and a bare chain names a bound
+            // field/property/local whose declared array type pins the element
+            // component type directly. Unresolvable chains, marker-bound
+            // chain terminals, and non-array terminals fail closed.
+            if chain.contains('.') {
+                csharp_qualified_element_access_component_type_path(
+                    source_symbol,
+                    chain,
+                    element_depth,
+                    &bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                let Some(declared_type) = bindings.raw_for(chain) else {
+                    return Ok(CSharpInstanceReceiverResolution::Blocked);
+                };
+                if declared_type.is_empty() || declared_type.starts_with('@') {
+                    return Ok(CSharpInstanceReceiverResolution::Blocked);
+                }
+                let Some(component_type) =
+                    csharp_array_component_spelling_at_depth(declared_type, element_depth)
+                else {
+                    return Ok(CSharpInstanceReceiverResolution::Blocked);
+                };
+                resolve_csharp_receiver_type_binding(
+                    source_symbol,
+                    &component_type,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            }
         } else {
             return Ok(CSharpInstanceReceiverResolution::Blocked);
         }
