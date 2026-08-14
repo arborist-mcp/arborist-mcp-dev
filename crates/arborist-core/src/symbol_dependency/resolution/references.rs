@@ -3054,23 +3054,21 @@ fn resolve_csharp_var_factory_method<'a>(
     // type-qualified static factory call, such as
     // `Factory.MakeNestedArray()[0].GetOuterItem` in
     // `var first = Factory.MakeNestedArray()[0].GetOuterItem()` or
-    // `Factory.MakeNestedArray()[0].holder.MakeHelper()`: the leading call
+    // `Factory.MakeNestedMatrix()[0][0].GetInnerItem()`: the leading call
     // resolves through the same factory rules as a `var` initializer, the
-    // element access dispatches on the call's declared return array's
-    // element component type, and the trailing factory resolves as an
-    // instance method on that component binding, walking any intermediate
-    // field, property, element, or arity-matched method-call hops through
-    // the same member-chain rules. Unresolvable or arity-mismatched
-    // leading factories, primitive or multi-dimensional return arrays,
-    // and missing, static, or arity-mismatched trailing factories fail
-    // closed.
+    // element-access suffix (one or more bracket groups) dispatches on the
+    // call's declared return array's element component type, and the
+    // trailing factory resolves as an instance method on that component
+    // binding, walking any intermediate field, property, element, or
+    // arity-matched method-call hops through the same member-chain rules.
+    // Unresolvable or arity-mismatched leading factories, primitive or
+    // multi-dimensional return arrays, and missing, static, or
+    // arity-mismatched trailing factories fail closed.
     if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(factory_name)
         && remainder.starts_with('[')
-        && let Some(open) = remainder.find('[')
-        && let Some(relative_close) = remainder[open..].find(']')
+        && let Some(element_suffix_len) = csharp_element_access_suffix_len(remainder)
+        && let Some(depth) = csharp_element_access_suffix_depth(&remainder[..element_suffix_len])
         && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
-        && let Some(depth) =
-            csharp_element_access_suffix_depth(&remainder[..=open + relative_close])
         && let Some(element_binding) = csharp_factory_array_component_binding(
             source_symbol,
             &leading_name,
@@ -3086,7 +3084,7 @@ fn resolve_csharp_var_factory_method<'a>(
             deadline,
         )?
     {
-        let (hops, method_name) = match remainder[open + relative_close + 1..].strip_prefix('.') {
+        let (hops, method_name) = match remainder[element_suffix_len..].strip_prefix('.') {
             Some(trailing) => match trailing.rsplit_once('.') {
                 Some((hops, method_name)) => {
                     let hops = if hops.is_empty() {
@@ -7443,6 +7441,31 @@ fn csharp_element_access_suffix_depth(suffix: &str) -> Option<usize> {
         return None;
     }
     Some(depth)
+}
+
+/// Returns the byte length of the leading run of well-formed, non-nested
+/// bracket groups in an element-access suffix such as `[0]` (length 3) or
+/// `[0][0]` (length 6), or `None` when the suffix does not start with a
+/// well-formed bracket group. The length splits the bracket suffix from the
+/// trailing dotted member chain (`[0][0].GetItems` -> `[0][0]` and
+/// `GetItems`), mirroring `csharp_element_access_suffix_depth`.
+fn csharp_element_access_suffix_len(suffix: &str) -> Option<usize> {
+    let mut rest = suffix;
+    let mut end = 0usize;
+    while let Some(close) = rest.find(']') {
+        if close == 0 || rest[1..close].contains(['[', ']']) {
+            return None;
+        }
+        end += close + 1;
+        rest = &rest[close + 1..];
+        if rest.is_empty() || !rest.starts_with('[') {
+            break;
+        }
+    }
+    if end == 0 {
+        return None;
+    }
+    Some(end)
 }
 
 /// Parses a bare factory-call root with a trailing element-access suffix such
