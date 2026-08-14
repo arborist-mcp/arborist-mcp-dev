@@ -30348,3 +30348,132 @@ fn traces_csharp_nested_generic_receiver_outer_parameter_chained_var_held_array_
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_foreach_factory_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+        }
+    }
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB>[][] MakeNestedMatrix() => default;
+    }
+    class Caller {
+        int ForeachElementAccessVarOuter() {
+            foreach (var row in Factory.MakeNestedMatrix()) {
+                var first = row[0];
+                return first.GetOuterItem().RunA(1);
+            }
+            return 0;
+        }
+        int ForeachElementAccessVarInner() {
+            foreach (var row in Factory.MakeNestedMatrix()) {
+                var first = row[0];
+                return first.GetInnerItem().RunB(2);
+            }
+            return 0;
+        }
+        int ForeachDirectOuter() {
+            foreach (var row in Factory.MakeNestedMatrix()) {
+                return row[0].GetOuterItem().RunA(3);
+            }
+            return 0;
+        }
+        int ForeachDirectInner() {
+            foreach (var row in Factory.MakeNestedMatrix()) {
+                return row[0].GetInnerItem().RunB(4);
+            }
+            return 0;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` loop variable over a factory-returned jagged array
+    // (`foreach (var row in Factory.MakeNestedMatrix())`) binds the loop
+    // variable to the factory return array's element component type, so a
+    // direct element access on the loop variable (`row[0].GetOuterItem()` or
+    // `row[0].GetInnerItem()`) and an element-access `var` local bound from
+    // it (`var first = row[0]`; `first.GetOuterItem()` or
+    // `first.GetInnerItem()`) strip one component layer per element access
+    // and substitute each enclosing segment's concrete outer and inner
+    // arguments, tracing to `HelperA::RunA` or `HelperB::RunB`.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachElementAccessVarOuter",
+        "Demo::Caller::ForeachDirectOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachElementAccessVarInner",
+        "Demo::Caller::ForeachDirectInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachElementAccessVarOuter",
+        "Demo::Caller::ForeachDirectOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachElementAccessVarInner",
+        "Demo::Caller::ForeachDirectInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
