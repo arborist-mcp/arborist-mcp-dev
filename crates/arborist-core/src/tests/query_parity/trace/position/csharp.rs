@@ -30711,3 +30711,100 @@ class Caller {
         ["Demo::Caller::ConstructedNestedInner"]
     );
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_var_constructed_receiver_factory_initializer_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Box<T> { public T GetSingle() => default; }
+class Outer<T> {
+    public class Inner<U> {
+        public T GetOuterItem() => default;
+        public U GetInnerItem() => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int VarFromNewSimple() { var single = new Box<HelperA>().GetSingle(); return single.RunA(1); }
+    int VarFromNewNestedOuter() { var item = new Box<Outer<HelperA>.Inner<HelperB>>().GetSingle(); return item.GetOuterItem().RunA(2); }
+    int VarFromNewNestedInner() { var item = new Box<Outer<HelperA>.Inner<HelperB>>().GetSingle(); return item.GetInnerItem().RunB(3); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a `new`-constructed-receiver factory
+    // call such as `var single = new Box<HelperA>().GetSingle()` infers the
+    // factory's declared return type with the constructed receiver's concrete
+    // type arguments substituted, so `single.RunA(1)` dispatches on
+    // `HelperA`; a nested constructed argument such as
+    // `new Box<Outer<HelperA>.Inner<HelperB>>()` substitutes the enclosing
+    // segment's outer `T` (`item.GetOuterItem()` to `HelperA`) and the inner
+    // segment's own `U` (`item.GetInnerItem()` to `HelperB`) before tracing
+    // the final member call.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromNewSimple",
+        "Demo::Caller::VarFromNewNestedOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 1);
+    assert_eq!(
+        b_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::VarFromNewNestedInner"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarFromNewSimple",
+        "Demo::Caller::VarFromNewNestedOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 1);
+    assert_eq!(
+        b_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::VarFromNewNestedInner"]
+    );
+}
