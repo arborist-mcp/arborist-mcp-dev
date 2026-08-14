@@ -495,6 +495,52 @@ fn strip_csharp_generic_type_arguments(type_path: &str) -> Option<String> {
     generic_argument_contents.is_empty().then_some(normalized)
 }
 
+/// Parses the top-level type-argument spellings of a constructed generic
+/// type such as `Box<Helper>` (`["Helper"]`), `Box<Dictionary<string, int>>`
+/// (`["Dictionary<string, int>"]`), or `Pair<A, B>` (`["A", "B"]`).
+/// Non-generic spellings, empty argument lists, and malformed or trailing
+/// lists return `None` and fail closed.
+pub(crate) fn csharp_generic_type_arguments(type_path: &str) -> Option<Vec<String>> {
+    let open = type_path.find('<')?;
+    let mut arguments = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for (index, character) in type_path[open + 1..].char_indices() {
+        match character {
+            '<' => {
+                depth += 1;
+                current.push('<');
+            }
+            '>' => {
+                if depth == 0 {
+                    let argument = current.trim();
+                    if argument.is_empty() {
+                        return None;
+                    }
+                    arguments.push(argument.to_string());
+                    let remainder = &type_path[open + 1 + index + character.len_utf8()..];
+                    if !remainder.is_empty() {
+                        return None;
+                    }
+                    return Some(arguments);
+                }
+                depth -= 1;
+                current.push('>');
+            }
+            ',' if depth == 0 => {
+                let argument = current.trim();
+                if argument.is_empty() {
+                    return None;
+                }
+                arguments.push(argument.to_string());
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+    None
+}
+
 fn csharp_qualified_type_semantic_path(type_path: &str) -> Option<String> {
     let type_path = type_path.strip_prefix("global::").unwrap_or(type_path);
     if type_path.is_empty()

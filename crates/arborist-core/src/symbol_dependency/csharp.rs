@@ -135,6 +135,7 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
     interface_parent_bindings_by_range: BTreeMap<(usize, usize), Vec<CSharpInterfaceParentBinding>>,
     receiver_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
     member_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
+    type_parameter_names_by_range: BTreeMap<(usize, usize), Vec<String>>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -145,6 +146,11 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     pub(crate) is_global_qualified: bool,
     pub(crate) alias_name: Option<String>,
     pub(crate) namespace_import_paths: Vec<String>,
+    /// Top-level type-argument spellings of a constructed generic binding
+    /// such as `Box<Helper>` (`["Helper"]`); empty for non-generic bindings.
+    /// Member-chain resolution substitutes a generic type's type parameters
+    /// with these spellings when a hop's declared type references one.
+    pub(crate) generic_arguments: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,6 +429,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                     is_global_qualified: base_type.is_global_qualified,
                     alias_name: None,
                     namespace_import_paths: Vec::new(),
+                    generic_arguments: Vec::new(),
                 },
             )
             .is_some()
@@ -470,6 +477,12 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
         &source,
         &mut member_type_bindings_by_range,
     )?;
+    let mut type_parameter_names_by_range = BTreeMap::new();
+    collect_csharp_type_parameter_names_by_range(
+        root,
+        &source,
+        &mut type_parameter_names_by_range,
+    )?;
     Ok(CSharpImportContext {
         type_alias_bindings,
         ambiguous_type_alias_names: ambiguous_alias_names,
@@ -477,6 +490,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
         interface_parent_bindings_by_range,
         receiver_type_bindings_by_range,
         member_type_bindings_by_range,
+        type_parameter_names_by_range,
         static_type_import_bindings,
         namespace_import_bindings,
     })
@@ -517,6 +531,43 @@ fn collect_csharp_member_type_bindings_by_range(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         collect_csharp_member_type_bindings_by_range(child, source, bindings_by_range)?;
+    }
+    Ok(())
+}
+
+/// Collects the ordered type-parameter names of each generic type
+/// declaration (such as `T` in `class Box<T>`) keyed by the declaration's
+/// byte range, so member-chain resolution can substitute a constructed
+/// receiver's type arguments for the type parameters in member declared
+/// types. Non-generic type declarations record an empty name list.
+fn collect_csharp_type_parameter_names_by_range(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+    names_by_range: &mut BTreeMap<(usize, usize), Vec<String>>,
+) -> Result<()> {
+    if is_csharp_type_declaration(node) {
+        let mut names = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "type_parameter_list" {
+                let mut parameter_cursor = child.walk();
+                for parameter in child.named_children(&mut parameter_cursor) {
+                    if parameter.kind() == "type_parameter"
+                        && let Some(name) = parameter.child_by_field_name("name")
+                    {
+                        let name = node_text(name, source)?.trim();
+                        if !name.is_empty() {
+                            names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        names_by_range.insert((node.start_byte(), node.end_byte()), names);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_csharp_type_parameter_names_by_range(child, source, names_by_range)?;
     }
     Ok(())
 }
@@ -1808,6 +1859,7 @@ pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interfa
                 is_global_qualified: parent.is_global_qualified,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             source_namespace_path,
         ) else {
@@ -1854,6 +1906,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_declared_type_binding_for_ref
             is_global_qualified,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         },
         source_namespace_path,
     ))
@@ -1898,6 +1951,71 @@ pub(in crate::symbol_dependency) fn csharp_member_type_bindings_for_type(
         .member_type_bindings_by_range
         .get(&type_range)
         .cloned())
+}
+
+/// Returns the ordered type-parameter names of a type declaration in the
+/// given source file. `None` means no type declaration occupies the range,
+/// so generic substitution fails closed.
+pub(in crate::symbol_dependency) fn csharp_type_parameter_names_for_type(
+    source_file_path: &str,
+    type_range: (usize, usize),
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<String>>> {
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context
+        .type_parameter_names_by_range
+        .get(&type_range)
+        .cloned())
+}
+
+/// Substitutes a generic type's type parameters with a constructed
+/// receiver's concrete type arguments in a member declared-type spelling
+/// such as `T[]` or `Dictionary<string, T>`, replacing each parameter at
+/// whole-identifier boundaries with its corresponding argument. A
+/// parameter/argument arity mismatch leaves the spelling unchanged and fails
+/// closed downstream.
+pub(in crate::symbol_dependency) fn substitute_csharp_type_parameters(
+    spelling: &str,
+    parameters: &[String],
+    arguments: &[String],
+) -> String {
+    if parameters.len() != arguments.len() {
+        return spelling.to_string();
+    }
+    let mut result = String::with_capacity(spelling.len());
+    let mut rest = spelling;
+    while !rest.is_empty() {
+        let Some(next) =
+            rest.find(|character: char| character.is_ascii_alphabetic() || character == '_')
+        else {
+            result.push_str(rest);
+            break;
+        };
+        result.push_str(&rest[..next]);
+        rest = &rest[next..];
+        let mut end = 0usize;
+        for (byte_offset, character) in rest.char_indices() {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                end = byte_offset + character.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let token = &rest[..end];
+        match parameters.iter().position(|parameter| parameter == token) {
+            Some(position) => result.push_str(&arguments[position]),
+            None => result.push_str(token),
+        }
+        rest = &rest[end..];
+    }
+    result
 }
 
 fn resolve_csharp_base_type_binding_parts(

@@ -21,7 +21,7 @@ pub(crate) use c::{
 };
 pub(crate) use csharp::{
     csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
-    csharp_file_static_type_imports, csharp_file_type_alias_imports,
+    csharp_file_static_type_imports, csharp_file_type_alias_imports, csharp_generic_type_arguments,
     csharp_generic_type_semantic_path, csharp_global_namespace_imports,
     csharp_global_static_type_imports, csharp_global_type_alias_imports,
 };

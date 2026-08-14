@@ -13,7 +13,7 @@ use super::super::csharp::{
     csharp_global_base_type_alias_is_ambiguous, csharp_global_type_alias_name_is_ambiguous,
     csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
     csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
-    csharp_type_alias_name_is_declared_for_reference,
+    csharp_type_alias_name_is_declared_for_reference, csharp_type_parameter_names_for_type,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference, resolve_csharp_global_base_type_alias,
     resolve_csharp_global_namespace_imports_for_reference,
@@ -23,7 +23,7 @@ use super::super::csharp::{
     resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_nested_type_alias_binding_for_reference,
     resolve_csharp_static_type_imports_for_reference, resolve_csharp_type_alias_binding_for_name,
-    resolve_csharp_type_alias_binding_for_reference,
+    resolve_csharp_type_alias_binding_for_reference, substitute_csharp_type_parameters,
 };
 use super::super::go::{
     GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
@@ -2536,6 +2536,7 @@ fn resolve_csharp_var_factory_method<'a>(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         };
         let (binding, dispatch_source_symbol) = if hops.is_empty() {
             (binding, type_symbol)
@@ -2672,6 +2673,7 @@ fn resolve_csharp_var_factory_method<'a>(
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3271,6 +3273,7 @@ fn resolve_csharp_factory_instance_method<'a>(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         },
         method_name,
         raw_symbols,
@@ -3642,6 +3645,7 @@ fn resolve_csharp_initializer_chain_binding(
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3707,6 +3711,7 @@ fn resolve_csharp_initializer_chain_binding(
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -4232,6 +4237,7 @@ fn canonicalize_csharp_type_binding(
         is_global_qualified: true,
         alias_name: None,
         namespace_import_paths: Vec::new(),
+        generic_arguments: Vec::new(),
     })
 }
 
@@ -4872,6 +4878,7 @@ fn csharp_qualified_element_access_component_type_path(
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             type_candidates[0],
             false,
@@ -4924,6 +4931,7 @@ fn csharp_qualified_element_access_component_type_path(
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
+                generic_arguments: Vec::new(),
             },
             base_symbol,
             false,
@@ -5790,7 +5798,18 @@ fn resolve_csharp_member_chain_binding<'a>(
             if return_type.is_empty() {
                 return Ok(None);
             }
-            let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, depth)
+            let return_type = substitute_csharp_method_return_type(
+                method_symbol,
+                &binding,
+                return_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            let Some(component_name) =
+                csharp_array_component_spelling_at_depth(&return_type, depth)
             else {
                 return Ok(None);
             };
@@ -5855,9 +5874,33 @@ fn resolve_csharp_member_chain_binding<'a>(
                     } else {
                         member_bindings.type_for(member_name)
                     };
-                    let Some(hop_type_name) = hop_type_name else {
+                    let Some(mut hop_type_name) = hop_type_name else {
                         return Ok(None);
                     };
+                    // A constructed generic receiver such as `Box<Helper>`
+                    // substitutes its type arguments for the declaring type's
+                    // parameters in the hop's declared type (`T[]` becomes
+                    // `Helper[]`) when the member is declared directly on the
+                    // bound type; base-walked and interface-extends members
+                    // fail closed rather than guess parameter mappings across
+                    // generic inheritance.
+                    if !binding.generic_arguments.is_empty()
+                        && current_type_symbol.semantic_path == type_symbol.semantic_path
+                    {
+                        let parameters = csharp_type_parameter_names_for_type(
+                            &current_type_symbol.file_path,
+                            current_type_symbol.byte_range,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )?
+                        .unwrap_or_default();
+                        hop_type_name = substitute_csharp_type_parameters(
+                            &hop_type_name,
+                            &parameters,
+                            &binding.generic_arguments,
+                        );
+                    }
                     break (current_type_symbol, hop_type_name);
                 }
                 if current_type_symbol.node_kind == "interface_declaration" {
@@ -5938,6 +5981,70 @@ fn resolve_csharp_member_chain_binding<'a>(
         scope_source_symbol = declaring_type_symbol;
     }
     Ok(Some((binding, scope_source_symbol)))
+}
+
+/// Substitutes a method's declared return type with the receiver binding's
+/// generic type arguments when the method is declared directly on the
+/// receiver's generic type, so `GetInner()` on a `Box<Helper>` receiver
+/// resolves the declared `Box<T>` return to `Box<Helper>`. A method declared
+/// on a base or interface type, a missing or ambiguous declaring type, or a
+/// parameter/argument arity mismatch leaves the return type unchanged and
+/// fails closed downstream.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# generic method return type substitution inputs explicit"
+)]
+fn substitute_csharp_method_return_type(
+    method: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    return_type: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<String> {
+    if binding.generic_arguments.is_empty() {
+        return Ok(return_type.to_string());
+    }
+    let Some(scope_path) = method.scope_path.as_deref() else {
+        return Ok(return_type.to_string());
+    };
+    // The method must be declared directly on the receiver's resolved type,
+    // so a base- or interface-declared method never guesses parameter
+    // mappings across generic inheritance.
+    let Some(binding_type_path) =
+        csharp_dispatchable_type_path(method, raw_symbols, binding, csharp_is_type_declaration)
+    else {
+        return Ok(return_type.to_string());
+    };
+    if binding_type_path != scope_path {
+        return Ok(return_type.to_string());
+    }
+    let type_indexes = semantic_path_index
+        .get(scope_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        .collect::<Vec<_>>();
+    if type_indexes.len() != 1 {
+        return Ok(return_type.to_string());
+    }
+    let type_symbol = &raw_symbols[type_indexes[0]];
+    let parameters = csharp_type_parameter_names_for_type(
+        &type_symbol.file_path,
+        type_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    .unwrap_or_default();
+    Ok(substitute_csharp_type_parameters(
+        return_type,
+        &parameters,
+        &binding.generic_arguments,
+    ))
 }
 
 /// Splits a factory-chain spelling such as `makeGroup().GetItems`,
@@ -6139,9 +6246,19 @@ fn resolve_csharp_method_call_hop_binding<'a>(
     if return_type.is_empty() {
         return Ok(None);
     }
+    let return_type = substitute_csharp_method_return_type(
+        method,
+        binding,
+        return_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
     let Some(next_binding) = resolve_csharp_receiver_type_binding(
         method,
-        return_type,
+        &return_type,
         raw_symbols,
         semantic_path_index,
         csharp_source_namespace_path(method, raw_symbols).flatten(),
@@ -6288,6 +6405,7 @@ fn resolve_csharp_this_member_chain_call(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6392,6 +6510,7 @@ fn resolve_csharp_base_member_chain_call(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6599,6 +6718,11 @@ fn resolve_csharp_receiver_type_binding(
     if type_name.is_empty() {
         return Ok(None);
     }
+    // A constructed generic spelling such as `Box<Helper>` records its
+    // top-level type arguments so member-chain resolution can substitute the
+    // generic type's parameters in member declared types.
+    let generic_arguments =
+        crate::language::csharp_generic_type_arguments(type_name).unwrap_or_default();
     let binding = if !type_name.starts_with("global::")
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
@@ -6615,6 +6739,7 @@ fn resolve_csharp_receiver_type_binding(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
         })
     } else {
         resolve_csharp_declared_type_binding_for_reference(
@@ -6627,9 +6752,10 @@ fn resolve_csharp_receiver_type_binding(
             deadline,
         )?
     };
-    let Some(binding) = binding else {
+    let Some(mut binding) = binding else {
         return Ok(None);
     };
+    binding.generic_arguments = generic_arguments;
     if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
         // A nullable value type such as `Point?` does not expose the
         // underlying struct's members directly; the receiver must be
