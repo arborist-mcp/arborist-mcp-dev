@@ -30223,3 +30223,128 @@ fn traces_csharp_nested_generic_receiver_outer_parameter_var_held_array_element_
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_generic_receiver_outer_parameter_chained_var_held_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class Outer<T> {
+        public class Inner<U> {
+            public T GetOuterItem() => default;
+            public U GetInnerItem() => default;
+        }
+    }
+    class Factory {
+        public static Outer<HelperA>.Inner<HelperB>[][] MakeNestedMatrix() => default;
+    }
+    class Caller {
+        int ChainedVarOuter() {
+            var row = Factory.MakeNestedMatrix()[0];
+            var first = row[0];
+            return first.GetOuterItem().RunA(1);
+        }
+        int ChainedVarInner() {
+            var row = Factory.MakeNestedMatrix()[0];
+            var first = row[0];
+            return first.GetInnerItem().RunB(2);
+        }
+        int DeepChainOuter() {
+            var matrix = Factory.MakeNestedMatrix();
+            var row = matrix[0];
+            var first = row[0];
+            return first.GetOuterItem().RunA(3);
+        }
+        int DeepChainInner() {
+            var matrix = Factory.MakeNestedMatrix();
+            var row = matrix[0];
+            var first = row[0];
+            return first.GetInnerItem().RunB(4);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access on another element-access
+    // `var` local (`var first = row[0]` where `var row =
+    // Factory.MakeNestedMatrix()[0]`), and a chain rooted one level deeper
+    // (`var matrix = Factory.MakeNestedMatrix()`; `var row = matrix[0]`;
+    // `var first = row[0]`), resolves each intermediate element-access
+    // initializer's recorded depth against the terminal factory-returned
+    // jagged array, so `first.GetOuterItem()` and `first.GetInnerItem()`
+    // substitute the enclosing segment's concrete arguments and trace to
+    // `HelperA::RunA` or `HelperB::RunB`.
+    let a_live = trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainedVarOuter",
+        "Demo::Caller::DeepChainOuter",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainedVarInner",
+        "Demo::Caller::DeepChainInner",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainedVarOuter",
+        "Demo::Caller::DeepChainOuter",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainedVarInner",
+        "Demo::Caller::DeepChainInner",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
