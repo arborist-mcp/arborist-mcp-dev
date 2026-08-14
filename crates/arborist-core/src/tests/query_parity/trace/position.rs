@@ -69166,3 +69166,641 @@ fn traces_csharp_nested_generic_factory_returned_receiver_outer_parameter_member
         );
     }
 }
+
+#[test]
+fn traces_csharp_multi_level_nested_generic_receiver_outer_parameter_members_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class HelperC {
+        public int RunC(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class A<T> {
+        public class B<U> {
+            public class C<V> {
+                public T[] levelA = new T[2];
+                public U[] levelB = new U[2];
+                public V[] levelC = new V[2];
+                public T GetA() => default;
+                public U GetB() => default;
+                public V GetC() => default;
+                public Box<T> GetABox() => default;
+                public Box<U> GetBBox() => default;
+                public Box<V> GetCBox() => default;
+            }
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "using Lib;
+namespace Demo {
+    class Derived : A<HelperA>.B<HelperB>.C<HelperC> {
+    }
+    class GenericDerived<X, Y, Z> : A<X>.B<Y>.C<Z> {
+    }
+    class Factory {
+        public static A<HelperA>.B<HelperB>.C<HelperC> MakeNested() => default;
+    }
+    class Caller {
+        int DirectLevelA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.levelA[0];
+            return first.RunA(1);
+        }
+        int DirectLevelB() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.levelB[0];
+            return first.RunB(2);
+        }
+        int DirectLevelC() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.levelC[0];
+            return first.RunC(3);
+        }
+        int DirectMethodA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetA();
+            return first.RunA(4);
+        }
+        int DirectMethodB() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetB();
+            return first.RunB(5);
+        }
+        int DirectMethodC() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetC();
+            return first.RunC(6);
+        }
+        int DirectHopA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetABox()?.items[0];
+            return first.RunA(7);
+        }
+        int DirectHopB() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetBBox()?.items[0];
+            return first.RunB(8);
+        }
+        int DirectHopC() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetCBox()?.items[0];
+            return first.RunC(9);
+        }
+        int BaseLevelA() {
+            Derived d = default;
+            var first = d?.levelA[0];
+            return first.RunA(10);
+        }
+        int BaseLevelB() {
+            Derived d = default;
+            var first = d?.levelB[0];
+            return first.RunB(11);
+        }
+        int BaseLevelC() {
+            Derived d = default;
+            var first = d?.levelC[0];
+            return first.RunC(12);
+        }
+        int BaseMethodA() {
+            Derived d = default;
+            var first = d?.GetA();
+            return first.RunA(13);
+        }
+        int BaseMethodB() {
+            Derived d = default;
+            var first = d?.GetB();
+            return first.RunB(14);
+        }
+        int BaseMethodC() {
+            Derived d = default;
+            var first = d?.GetC();
+            return first.RunC(15);
+        }
+        int GenericLevelA() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.levelA[0];
+            return first.RunA(16);
+        }
+        int GenericLevelB() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.levelB[0];
+            return first.RunB(17);
+        }
+        int GenericLevelC() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.levelC[0];
+            return first.RunC(18);
+        }
+        int GenericMethodA() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.GetA();
+            return first.RunA(19);
+        }
+        int GenericMethodB() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.GetB();
+            return first.RunB(20);
+        }
+        int GenericMethodC() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.GetC();
+            return first.RunC(21);
+        }
+        int FactoryLevelA() {
+            var o = Factory.MakeNested();
+            var first = o?.levelA[0];
+            return first.RunA(22);
+        }
+        int FactoryLevelB() {
+            var o = Factory.MakeNested();
+            var first = o?.levelB[0];
+            return first.RunB(23);
+        }
+        int FactoryLevelC() {
+            var o = Factory.MakeNested();
+            var first = o?.levelC[0];
+            return first.RunC(24);
+        }
+        int FactoryMethodA() {
+            var o = Factory.MakeNested();
+            var first = o?.GetA();
+            return first.RunA(25);
+        }
+        int FactoryMethodB() {
+            var o = Factory.MakeNested();
+            var first = o?.GetB();
+            return first.RunB(26);
+        }
+        int FactoryMethodC() {
+            var o = Factory.MakeNested();
+            var first = o?.GetC();
+            return first.RunC(27);
+        }
+        int FactoryHopB() {
+            var o = Factory.MakeNested();
+            var first = o?.GetBBox()?.items[0];
+            return first.RunB(28);
+        }
+        int failures() {
+            A<HelperA>.B<int>.C<HelperC> o = default;
+            var first = o?.levelB[0];
+            return first.RunB(29);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A three-level nested generic receiver composed through a direct
+    // constructed spelling (`A<HelperA>.B<HelperB>.C<HelperC>`), a derived
+    // base spelling (`Derived : A<HelperA>.B<HelperB>.C<HelperC>`), a generic
+    // deriving type (`GenericDerived<X, Y, Z> : A<X>.B<Y>.C<Z>` reached as
+    // `GenericDerived<HelperA, HelperB, HelperC>`), or a factory-returned
+    // `var` receiver (`var o = Factory.MakeNested()`) substitutes each
+    // enclosing segment's concrete argument, so conditional member
+    // element-access, method-call, and element-access-on-method-return hop
+    // members that reference the first, second, or third segment's type
+    // parameter (`T[] levelA`/`T GetA()`/`Box<T> GetABox()`, `U[] levelB`,
+    // or `V[] levelC` on `C<V>`) resolve to `HelperA::RunA`,
+    // `HelperB::RunB`, or `HelperC::RunC`. A receiver whose middle segment is
+    // a primitive concrete argument (`A<HelperA>.B<int>.C<HelperC>`) fails
+    // closed instead of tracing a caller.
+    let a_live = trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(a_live.callers.len(), 9);
+    for caller in [
+        "Demo::Caller::DirectLevelA",
+        "Demo::Caller::DirectMethodA",
+        "Demo::Caller::DirectHopA",
+        "Demo::Caller::BaseLevelA",
+        "Demo::Caller::BaseMethodA",
+        "Demo::Caller::GenericLevelA",
+        "Demo::Caller::GenericMethodA",
+        "Demo::Caller::FactoryLevelA",
+        "Demo::Caller::FactoryMethodA",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(b_live.callers.len(), 10);
+    for caller in [
+        "Demo::Caller::DirectLevelB",
+        "Demo::Caller::DirectMethodB",
+        "Demo::Caller::DirectHopB",
+        "Demo::Caller::BaseLevelB",
+        "Demo::Caller::BaseMethodB",
+        "Demo::Caller::GenericLevelB",
+        "Demo::Caller::GenericMethodB",
+        "Demo::Caller::FactoryLevelB",
+        "Demo::Caller::FactoryMethodB",
+        "Demo::Caller::FactoryHopB",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let c_live = trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(c_live.callers.len(), 9);
+    for caller in [
+        "Demo::Caller::DirectLevelC",
+        "Demo::Caller::DirectMethodC",
+        "Demo::Caller::DirectHopC",
+        "Demo::Caller::BaseLevelC",
+        "Demo::Caller::BaseMethodC",
+        "Demo::Caller::GenericLevelC",
+        "Demo::Caller::GenericMethodC",
+        "Demo::Caller::FactoryLevelC",
+        "Demo::Caller::FactoryMethodC",
+    ] {
+        assert!(
+            c_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for live in [&a_live, &b_live, &c_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected failures caller"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(a_persisted.callers.len(), 9);
+    for caller in [
+        "Demo::Caller::DirectLevelA",
+        "Demo::Caller::DirectMethodA",
+        "Demo::Caller::DirectHopA",
+        "Demo::Caller::BaseLevelA",
+        "Demo::Caller::BaseMethodA",
+        "Demo::Caller::GenericLevelA",
+        "Demo::Caller::GenericMethodA",
+        "Demo::Caller::FactoryLevelA",
+        "Demo::Caller::FactoryMethodA",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(b_persisted.callers.len(), 10);
+    for caller in [
+        "Demo::Caller::DirectLevelB",
+        "Demo::Caller::DirectMethodB",
+        "Demo::Caller::DirectHopB",
+        "Demo::Caller::BaseLevelB",
+        "Demo::Caller::BaseMethodB",
+        "Demo::Caller::GenericLevelB",
+        "Demo::Caller::GenericMethodB",
+        "Demo::Caller::FactoryLevelB",
+        "Demo::Caller::FactoryMethodB",
+        "Demo::Caller::FactoryHopB",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(c_persisted.callers.len(), 9);
+    for caller in [
+        "Demo::Caller::DirectLevelC",
+        "Demo::Caller::DirectMethodC",
+        "Demo::Caller::DirectHopC",
+        "Demo::Caller::BaseLevelC",
+        "Demo::Caller::BaseMethodC",
+        "Demo::Caller::GenericLevelC",
+        "Demo::Caller::GenericMethodC",
+        "Demo::Caller::FactoryLevelC",
+        "Demo::Caller::FactoryMethodC",
+    ] {
+        assert!(
+            c_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for persisted in [&a_persisted, &b_persisted, &c_persisted] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected persisted failures caller"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_multi_level_nested_generic_receiver_outer_parameter_members_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let caller_path = dir.join("Demo.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class HelperA {
+        public int RunA(int value) => value;
+    }
+    class HelperB {
+        public int RunB(int value) => value;
+    }
+    class HelperC {
+        public int RunC(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class A<T> {
+        public class B<U> {
+            public class C<V> {
+                public T[] levelA = new T[2];
+                public U[] levelB = new U[2];
+                public V[] levelC = new V[2];
+                public T GetA() => default;
+                public U GetB() => default;
+                public V GetC() => default;
+                public Box<T> GetABox() => default;
+                public Box<U> GetBBox() => default;
+                public Box<V> GetCBox() => default;
+            }
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo {
+    using Lib;
+    class Derived : A<HelperA>.B<HelperB>.C<HelperC> {
+    }
+    class GenericDerived<X, Y, Z> : A<X>.B<Y>.C<Z> {
+    }
+    class Factory {
+        public static A<HelperA>.B<HelperB>.C<HelperC> MakeNested() => default;
+    }
+    class Caller {
+        int DirectLevelA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.levelA[0];
+            return first.RunA(1);
+        }
+        int DirectMethodA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetA();
+            return first.RunA(2);
+        }
+        int DirectHopA() {
+            A<HelperA>.B<HelperB>.C<HelperC> o = default;
+            var first = o?.GetABox()?.items[0];
+            return first.RunA(3);
+        }
+        int BaseLevelB() {
+            Derived d = default;
+            var first = d?.levelB[0];
+            return first.RunB(4);
+        }
+        int BaseMethodB() {
+            Derived d = default;
+            var first = d?.GetB();
+            return first.RunB(5);
+        }
+        int GenericMethodC() {
+            GenericDerived<HelperA, HelperB, HelperC> d = default;
+            var first = d?.GetC();
+            return first.RunC(6);
+        }
+        int FactoryLevelA() {
+            var o = Factory.MakeNested();
+            var first = o?.levelA[0];
+            return first.RunA(7);
+        }
+        int FactoryMethodB() {
+            var o = Factory.MakeNested();
+            var first = o?.GetB();
+            return first.RunB(8);
+        }
+        int FactoryHopC() {
+            var o = Factory.MakeNested();
+            var first = o?.GetCBox()?.items[0];
+            return first.RunC(9);
+        }
+        int failures() {
+            A<HelperA>.B<int>.C<HelperC> o = default;
+            var first = o?.levelB[0];
+            return first.RunB(10);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the multi-level nested generic receiver
+    // conditional member element-access, method-call, and
+    // element-access-on-method-return hop positives with each enclosing
+    // segment's concrete argument substituted on top of the on-disk type file
+    // (direct constructed, derived base, and factory-returned `var`
+    // receivers), while a receiver whose middle segment is a primitive
+    // concrete argument (`A<HelperA>.B<int>.C<HelperC>`) fails closed.
+    let a_live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(a_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::DirectLevelA",
+        "Demo::Caller::DirectMethodA",
+        "Demo::Caller::DirectHopA",
+        "Demo::Caller::FactoryLevelA",
+    ] {
+        assert!(
+            a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let b_live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperB::RunB",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::BaseLevelB",
+        "Demo::Caller::BaseMethodB",
+        "Demo::Caller::FactoryMethodB",
+    ] {
+        assert!(
+            b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    let c_live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::HelperC::RunC",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(c_live.callers.len(), 2);
+    for caller in ["Demo::Caller::GenericMethodC", "Demo::Caller::FactoryHopC"] {
+        assert!(
+            c_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    for live in [&a_live, &b_live, &c_live] {
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected failures caller"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let a_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperA::RunA",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(a_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::DirectLevelA",
+        "Demo::Caller::DirectMethodA",
+        "Demo::Caller::DirectHopA",
+        "Demo::Caller::FactoryLevelA",
+    ] {
+        assert!(
+            a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let b_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperB::RunB",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::BaseLevelB",
+        "Demo::Caller::BaseMethodB",
+        "Demo::Caller::FactoryMethodB",
+    ] {
+        assert!(
+            b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let c_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::HelperC::RunC",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(c_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::GenericMethodC", "Demo::Caller::FactoryHopC"] {
+        assert!(
+            c_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    for persisted in [&a_persisted, &b_persisted, &c_persisted] {
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+            "unexpected persisted failures caller"
+        );
+    }
+}
