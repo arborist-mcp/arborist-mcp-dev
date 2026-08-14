@@ -66640,3 +66640,262 @@ fn traces_csharp_cross_namespace_generic_inheritance_receivers_from_dirty_vfs_ov
         "unexpected persisted failures caller"
     );
 }
+#[test]
+fn traces_csharp_cross_namespace_generic_imported_caller_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    class Other {
+        public int Run(int value) => value;
+    }
+    interface IBase<T> {
+        T[] items { get; }
+        T GetItem();
+        Box<T> GetBox();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "namespace Demo {
+    using Lib;
+    interface IGeneric<T> : IBase<T> {
+    }
+    interface IMulti<T, U> : IBase<T> {
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int ImportedMethod() {
+            IGeneric<Lib.Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+        int ImportedHop() {
+            IGeneric<Lib.Helper> g = default;
+            var first = g?.GetBox()?.items[0];
+            return first.Run(2);
+        }
+        int MultiParam() {
+            IMulti<Lib.Helper, Lib.Other> g = default;
+            var first = g?.items[0];
+            return first.Run(3);
+        }
+        int MultiParamMethod() {
+            IMulti<Lib.Helper, Lib.Other> g = default;
+            var first = g?.GetItem();
+            return first.Run(4);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A caller in a third namespace that imports the interface namespace
+    // resolves the cross-namespace generic interface receiver through its own
+    // `using Demo`, then substitutes qualified concrete type arguments
+    // (`IGeneric<Lib.Helper>`), a method-call hop returning a generic type
+    // (`GetBox()` returning `Box<T>`), and a multi-parameter interface
+    // (`IMulti<T, U> : IBase<T>` with `IMulti<Lib.Helper, Lib.Other>`) into
+    // the conditional member element-access and method-call hop receivers, so
+    // each resolves to `Lib::Helper`, while a concrete argument whose element
+    // type has no matching member (`IGeneric<int>`) fails closed.
+    let helper_symbol = "Lib::Helper::Run";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    for caller in [
+        "Other::Caller::ImportedMethod",
+        "Other::Caller::ImportedHop",
+        "Other::Caller::MultiParam",
+        "Other::Caller::MultiParamMethod",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in [
+        "Other::Caller::ImportedMethod",
+        "Other::Caller::ImportedHop",
+        "Other::Caller::MultiParam",
+        "Other::Caller::MultiParamMethod",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_cross_namespace_generic_imported_caller_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let lib_path = dir.join("Lib.cs");
+    let interface_path = dir.join("Demo.cs");
+    let caller_path = dir.join("Other.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &lib_path,
+        "namespace Lib {
+    class Helper {
+        public int Run(int value) => value;
+    }
+    class Box<T> {
+        public T[] items = new T[2];
+    }
+    interface IBase<T> {
+        T[] items { get; }
+        T GetItem();
+        Box<T> GetBox();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "namespace Demo {
+    using Lib;
+    interface IGeneric<T> : IBase<T> {
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other { class Stale {} }
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    class Caller {
+        int ImportedMethod() {
+            IGeneric<Lib.Helper> g = default;
+            var first = g?.GetItem();
+            return first.Run(1);
+        }
+        int ImportedHop() {
+            IGeneric<Lib.Helper> g = default;
+            var first = g?.GetBox()?.items[0];
+            return first.Run(2);
+        }
+        int failures() {
+            IGeneric<int> g = default;
+            var first = g?.items[0];
+            return first.Run(1);
+        }
+    }
+}
+";
+
+    // The dirty-VFS overlay resolves the importing third-namespace caller's
+    // cross-namespace generic interface-extends method-call hop positives on
+    // top of the on-disk type and interface files, while a concrete argument
+    // whose element type has no matching member fails closed.
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in [
+        "Other::Caller::ImportedMethod",
+        "Other::Caller::ImportedHop",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Lib::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in [
+        "Other::Caller::ImportedMethod",
+        "Other::Caller::ImportedHop",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
