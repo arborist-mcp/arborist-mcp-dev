@@ -6836,14 +6836,63 @@ fn resolve_csharp_receiver_type_binding(
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
     {
-        csharp_scoped_receiver_type_path(
+        let scoped_type_path = csharp_scoped_receiver_type_path(
             source_symbol,
             raw_symbols,
             semantic_path_index,
             &semantic_path,
             csharp_is_type_declaration,
-        )
-        .map(|type_path| CSharpBaseTypeBinding {
+        );
+        let type_path = match scoped_type_path {
+            Some(type_path) => Some(type_path),
+            None => {
+                // A dotted nested spelling whose first segment is neither a
+                // local namespace type nor a global type may still resolve
+                // through the same namespace-import and alias rules as
+                // receiver type references, so `Outer<Helper>.Inner<Helper>`
+                // with `using Lib;` reaches the imported `Lib::Outer::Inner`
+                // instead of failing closed.
+                let mut type_path = resolve_csharp_namespace_imported_nested_type_path(
+                    source_symbol,
+                    type_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?;
+                if type_path.is_none() {
+                    type_path = resolve_csharp_namespace_imported_dotted_type_path(
+                        source_symbol,
+                        type_name,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?;
+                }
+                if type_path.is_none() {
+                    type_path = resolve_csharp_alias_to_dotted_type_path(
+                        source_symbol,
+                        type_name,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?;
+                }
+                type_path
+            }
+        };
+        type_path.map(|type_path| CSharpBaseTypeBinding {
             semantic_type_path: type_path,
             is_global_qualified: true,
             alias_name: None,
