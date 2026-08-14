@@ -2091,6 +2091,25 @@ fn resolve_csharp_instance_receiver_call(
                     csharp_import_contexts_by_file,
                     deadline,
                 )?
+            } else if bindings.element_access_base_for(&base_reference).is_some() {
+                // A bare base that is itself an element-access `var` local
+                // (such as `row` in `var row = Factory.MakeNestedMatrix()[0]`
+                // followed by `var first = row[0]`) resolves through the same
+                // component-binding recursion, stripping the additional
+                // element-access depth against the terminal base.
+                csharp_array_element_component_binding(
+                    source_symbol,
+                    &base_reference,
+                    base_depth,
+                    &bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
             } else {
                 let raw_binding = bindings.raw_for(&base_reference).unwrap_or_default();
                 if let Some((factory_name, factory_arity)) =
@@ -6089,6 +6108,28 @@ fn csharp_array_element_component_binding(
     // closed.
     if let Some((base_reference, base_arity, base_depth)) = bindings.element_access_base_for(base) {
         let combined_depth = base_depth + depth;
+        // A base that is itself an element-access `var` local (such as `row`
+        // in `var row = Factory.MakeNestedMatrix()[0]` followed by
+        // `var first = row[0]`) recurses with the accumulated depth so each
+        // intermediate initializer strips its recorded layers before the
+        // terminal base (factory call, dotted chain, declared array type, or
+        // marker-bound collection) resolves; chains that do not terminate in
+        // a resolvable base fail closed.
+        if bindings.element_access_base_for(&base_reference).is_some() {
+            return csharp_array_element_component_binding(
+                source_symbol,
+                &base_reference,
+                combined_depth,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
         if let Some(factory_call) = base_reference.strip_suffix("()") {
             return csharp_factory_array_component_binding(
                 source_symbol,
