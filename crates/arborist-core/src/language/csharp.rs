@@ -27,6 +27,12 @@ pub(crate) struct CSharpFileBaseType {
     pub(crate) type_range: (usize, usize),
     pub(crate) semantic_base_type_path: String,
     pub(crate) is_global_qualified: bool,
+    /// Raw top-level type-argument spellings from the base-list spelling,
+    /// such as `["T"]` for `class Derived<T> : Box<T>`; empty for non-generic
+    /// base spellings. Generic-inheritance resolution substitutes a
+    /// constructed receiver's concrete arguments for these spellings to
+    /// compose the base type's arguments.
+    pub(crate) generic_argument_spellings: Vec<String>,
 }
 
 pub(crate) fn csharp_file_base_types(
@@ -55,6 +61,10 @@ pub(crate) fn csharp_file_base_types(
                             type_range: (node.start_byte(), node.end_byte()),
                             semantic_base_type_path,
                             is_global_qualified,
+                            generic_argument_spellings: csharp_generic_type_arguments(
+                                base_type_text,
+                            )
+                            .unwrap_or_default(),
                         });
                     }
                 }

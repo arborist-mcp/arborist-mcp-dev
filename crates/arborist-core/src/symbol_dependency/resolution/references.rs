@@ -2330,13 +2330,50 @@ fn resolve_csharp_factory_receiver_binding(
     if return_type.is_empty() {
         return Ok(None);
     }
+    // A factory dispatched on a bound receiver's declared type substitutes
+    // the receiver's concrete generic arguments into the method's return
+    // type, so `var first = d?.GetItem()` on a `Derived<Helper> : Box<T>`
+    // receiver resolves the declared `T` return to `Helper`. Other factory
+    // shapes have no generic receiver mapping and keep the declared return
+    // type, failing closed downstream when it names a type parameter.
+    let substituted_return_type = if let Some((receiver_name, method_name)) =
+        factory_name.split_once('.')
+        && !receiver_name.is_empty()
+        && !method_name.is_empty()
+        && !method_name.contains(['(', ')', '.'])
+        && let Some(receiver_type_name) = bindings.type_for(receiver_name)
+        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &receiver_type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+        substitute_csharp_method_return_type(
+            method,
+            &receiver_binding,
+            return_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        return_type.to_string()
+    };
     // Resolve the factory's declared return type in the factory's own scope
     // and canonicalize it to the global-qualified semantic path, so a caller
     // in another namespace dispatches the final member on the canonical
     // declared type independently of its own imports.
     let Some(binding) = resolve_csharp_receiver_type_binding(
         method,
-        return_type,
+        &substituted_return_type,
         raw_symbols,
         semantic_path_index,
         csharp_source_namespace_path(method, raw_symbols).flatten(),
@@ -2537,6 +2574,7 @@ fn resolve_csharp_var_factory_method<'a>(
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         };
         let (binding, dispatch_source_symbol) = if hops.is_empty() {
             (binding, type_symbol)
@@ -2674,6 +2712,7 @@ fn resolve_csharp_var_factory_method<'a>(
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3274,6 +3313,7 @@ fn resolve_csharp_factory_instance_method<'a>(
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         },
         method_name,
         raw_symbols,
@@ -3646,6 +3686,7 @@ fn resolve_csharp_initializer_chain_binding(
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -3712,6 +3753,7 @@ fn resolve_csharp_initializer_chain_binding(
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             &hops,
             raw_symbols,
@@ -4232,12 +4274,17 @@ fn canonicalize_csharp_type_binding(
         binding,
         csharp_is_type_declaration,
     )?;
+    // The canonical binding keeps the constructed generic arguments so a
+    // later hop can still substitute the type's parameters (for example a
+    // `Holder<Helper>` element component must resolve `U value` to
+    // `Helper`); raw base-list spellings do not survive canonicalization.
     Some(CSharpBaseTypeBinding {
         semantic_type_path: type_path,
         is_global_qualified: true,
         alias_name: None,
         namespace_import_paths: Vec::new(),
-        generic_arguments: Vec::new(),
+        generic_arguments: binding.generic_arguments.clone(),
+        raw_generic_argument_spellings: Vec::new(),
     })
 }
 
@@ -4879,6 +4926,7 @@ fn csharp_qualified_element_access_component_type_path(
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             type_candidates[0],
             false,
@@ -4932,6 +4980,7 @@ fn csharp_qualified_element_access_component_type_path(
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             base_symbol,
             false,
@@ -5804,6 +5853,7 @@ fn resolve_csharp_member_chain_binding<'a>(
                 return_type,
                 raw_symbols,
                 semantic_path_index,
+                csharp_global_import_context,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -5877,29 +5927,58 @@ fn resolve_csharp_member_chain_binding<'a>(
                     let Some(mut hop_type_name) = hop_type_name else {
                         return Ok(None);
                     };
-                    // A constructed generic receiver such as `Box<Helper>`
-                    // substitutes its type arguments for the declaring type's
-                    // parameters in the hop's declared type (`T[]` becomes
-                    // `Helper[]`) when the member is declared directly on the
-                    // bound type; base-walked and interface-extends members
-                    // fail closed rather than guess parameter mappings across
-                    // generic inheritance.
-                    if !binding.generic_arguments.is_empty()
-                        && current_type_symbol.semantic_path == type_symbol.semantic_path
-                    {
-                        let parameters = csharp_type_parameter_names_for_type(
-                            &current_type_symbol.file_path,
-                            current_type_symbol.byte_range,
+                    // A generic declaring type substitutes its type
+                    // parameters with the concrete arguments composed for it
+                    // through the unique class/record ancestor chain, so
+                    // `items` declared as `T[]` on `Box<T>` resolves to
+                    // `Helper[]` both directly on a `Box<Helper>` receiver and
+                    // through a `Derived<Helper> : Box<T>` base. Interface-
+                    // extends members resolve without generic argument
+                    // composition and fail closed across generic interface
+                    // inheritance, as do unresolvable chains, arity
+                    // mismatches, and receiver bindings without concrete
+                    // generic arguments (such as constructed `new Box<int>()`
+                    // element-access receivers, whose spellings strip the type
+                    // arguments); those leave non-generic members unchanged
+                    // and defer generic-member substitution to downstream
+                    // fail-closed checks.
+                    let parameters = csharp_type_parameter_names_for_type(
+                        &current_type_symbol.file_path,
+                        current_type_symbol.byte_range,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
+                    .unwrap_or_default();
+                    if !parameters.is_empty() {
+                        let Some(declaring_type_args) = csharp_compose_generic_arguments_to_type(
+                            &type_symbol.semantic_path,
+                            &binding.generic_arguments,
+                            &current_type_symbol.semantic_path,
+                            raw_symbols,
+                            semantic_path_index,
+                            csharp_global_import_context,
                             file_overrides,
                             csharp_import_contexts_by_file,
                             deadline,
                         )?
-                        .unwrap_or_default();
-                        hop_type_name = substitute_csharp_type_parameters(
-                            &hop_type_name,
-                            &parameters,
-                            &binding.generic_arguments,
-                        );
+                        else {
+                            return Ok(None);
+                        };
+                        if declaring_type_args.is_empty() {
+                            // No concrete arguments were composed for the
+                            // declaring type; keep the hop type as declared so
+                            // non-generic members still resolve and generic
+                            // members fail closed downstream.
+                        } else if parameters.len() != declaring_type_args.len() {
+                            return Ok(None);
+                        } else {
+                            hop_type_name = substitute_csharp_type_parameters(
+                                &hop_type_name,
+                                &parameters,
+                                &declaring_type_args,
+                            );
+                        }
                     }
                     break (current_type_symbol, hop_type_name);
                 }
@@ -5983,11 +6062,13 @@ fn resolve_csharp_member_chain_binding<'a>(
     Ok(Some((binding, scope_source_symbol)))
 }
 
-/// Substitutes a method's declared return type with the receiver binding's
-/// generic type arguments when the method is declared directly on the
-/// receiver's generic type, so `GetInner()` on a `Box<Helper>` receiver
-/// resolves the declared `Box<T>` return to `Box<Helper>`. A method declared
-/// on a base or interface type, a missing or ambiguous declaring type, or a
+/// Substitutes a method's declared return type with the concrete generic
+/// arguments composed for its declaring type, so `GetBox()` declared as
+/// returning `Box<T>` on `Box<T>` resolves to `Box<Helper>` both when the
+/// receiver is `Box<Helper>` directly and when it reaches the method through
+/// a generic class/record base such as `Derived<Helper> : Box<T>`. A
+/// non-generic declaring type, a missing or ambiguous declaring type, a base
+/// or interface chain that cannot be walked uniquely, or a
 /// parameter/argument arity mismatch leaves the return type unchanged and
 /// fails closed downstream.
 #[allow(
@@ -6000,27 +6081,19 @@ fn substitute_csharp_method_return_type(
     return_type: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
     file_overrides: Option<&BTreeMap<String, String>>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<String> {
-    if binding.generic_arguments.is_empty() {
-        return Ok(return_type.to_string());
-    }
     let Some(scope_path) = method.scope_path.as_deref() else {
         return Ok(return_type.to_string());
     };
-    // The method must be declared directly on the receiver's resolved type,
-    // so a base- or interface-declared method never guesses parameter
-    // mappings across generic inheritance.
     let Some(binding_type_path) =
         csharp_dispatchable_type_path(method, raw_symbols, binding, csharp_is_type_declaration)
     else {
         return Ok(return_type.to_string());
     };
-    if binding_type_path != scope_path {
-        return Ok(return_type.to_string());
-    }
     let type_indexes = semantic_path_index
         .get(scope_path)
         .into_iter()
@@ -6040,10 +6113,30 @@ fn substitute_csharp_method_return_type(
         deadline,
     )?
     .unwrap_or_default();
+    if parameters.is_empty() {
+        return Ok(return_type.to_string());
+    }
+    let Some(declaring_type_args) = csharp_compose_generic_arguments_to_type(
+        &binding_type_path,
+        &binding.generic_arguments,
+        scope_path,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(return_type.to_string());
+    };
+    if parameters.len() != declaring_type_args.len() {
+        return Ok(return_type.to_string());
+    }
     Ok(substitute_csharp_type_parameters(
         return_type,
         &parameters,
-        &binding.generic_arguments,
+        &declaring_type_args,
     ))
 }
 
@@ -6252,6 +6345,7 @@ fn resolve_csharp_method_call_hop_binding<'a>(
         return_type,
         raw_symbols,
         semantic_path_index,
+        csharp_global_import_context,
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
@@ -6406,6 +6500,7 @@ fn resolve_csharp_this_member_chain_call(
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6511,6 +6606,7 @@ fn resolve_csharp_base_member_chain_call(
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         },
         &hops,
         raw_symbols,
@@ -6740,6 +6836,7 @@ fn resolve_csharp_receiver_type_binding(
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         })
     } else {
         resolve_csharp_declared_type_binding_for_reference(
@@ -7337,6 +7434,93 @@ fn csharp_base_type_path(
         binding,
         csharp_is_base_constructible_type,
     )
+}
+
+/// Composes the concrete generic type arguments for `target_type_path` when
+/// it is reached from `source_type_path` through the unique class/record
+/// ancestor chain, substituting each walked type's declared type parameters
+/// with its current concrete arguments into the next base-list spelling. The
+/// source's own arguments seed the walk, so a `Derived<Helper>` receiver
+/// reaching base `Box<T>` yields `["Helper"]`, a non-generic `Fixed :
+/// Box<Helper>` receiver reaching `Box<T>` yields `["Helper"]` from the base
+/// spelling, and multi-level chains compose per level. `None` means the
+/// chain cannot be walked uniquely, the target is not reachable through
+/// class/record bases (including interface-extends chains), or a
+/// parameter/argument arity mismatch blocks the mapping, so callers fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# generic inheritance composition inputs explicit"
+)]
+fn csharp_compose_generic_arguments_to_type(
+    source_type_path: &str,
+    source_type_args: &[String],
+    target_type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<String>>> {
+    let mut current_type_path = source_type_path.to_string();
+    let mut current_type_args = source_type_args.to_vec();
+    let mut visited_type_paths = BTreeSet::new();
+    loop {
+        if current_type_path == target_type_path {
+            return Ok(Some(current_type_args));
+        }
+        if !visited_type_paths.insert(current_type_path.clone()) {
+            return Ok(None);
+        }
+        let Some(type_indexes) = semantic_path_index.get(&current_type_path) else {
+            return Ok(None);
+        };
+        let type_indexes = type_indexes
+            .iter()
+            .copied()
+            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let current_type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(base_binding) = csharp_base_type_binding_for_type(
+            current_type_symbol,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(base_type_path) =
+            csharp_base_type_path(current_type_symbol, raw_symbols, &base_binding)
+        else {
+            return Ok(None);
+        };
+        let parameters = csharp_type_parameter_names_for_type(
+            &current_type_symbol.file_path,
+            current_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        .unwrap_or_default();
+        if parameters.len() != current_type_args.len() {
+            return Ok(None);
+        }
+        current_type_args = base_binding
+            .raw_generic_argument_spellings
+            .iter()
+            .map(|spelling| {
+                substitute_csharp_type_parameters(spelling, &parameters, &current_type_args)
+            })
+            .collect();
+        current_type_path = base_type_path;
+    }
 }
 
 /// Resolves the receiver's declared type to a unique struct path using the

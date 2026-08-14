@@ -151,6 +151,13 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     /// Member-chain resolution substitutes a generic type's type parameters
     /// with these spellings when a hop's declared type references one.
     pub(crate) generic_arguments: Vec<String>,
+    /// Raw top-level type-argument spellings written in the base list, such
+    /// as `["T"]` for `class Derived<T> : Box<T>`; empty for non-generic
+    /// base spellings and for bindings constructed from usage spellings.
+    /// Generic-inheritance walks substitute the current type's parameters
+    /// with its concrete arguments into these spellings to compose the base
+    /// type's concrete arguments.
+    pub(crate) raw_generic_argument_spellings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -430,6 +437,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                     alias_name: None,
                     namespace_import_paths: Vec::new(),
                     generic_arguments: Vec::new(),
+                    raw_generic_argument_spellings: base_type.generic_argument_spellings.clone(),
                 },
             )
             .is_some()
@@ -1860,6 +1868,7 @@ pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interfa
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
                 generic_arguments: Vec::new(),
+                raw_generic_argument_spellings: Vec::new(),
             },
             source_namespace_path,
         ) else {
@@ -1907,6 +1916,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_declared_type_binding_for_ref
             alias_name: None,
             namespace_import_paths: Vec::new(),
             generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
         },
         source_namespace_path,
     ))
