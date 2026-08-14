@@ -60806,3 +60806,221 @@ class Caller {
         "unexpected persisted overlay failures caller"
     );
 }
+
+#[test]
+fn traces_csharp_constructed_receiver_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+    public Group() {}
+    public Group(int value) {}
+}
+class Outer {
+    public class Inner {
+        public Helper[] items = new Helper[2];
+    }
+}
+class Caller {
+    int fromConstructedReceiverCondMemberVarInit() {
+        var first = new Group().holder?.items[0];
+        return first.helper(1);
+    }
+    int fromConstructedReceiverCondMemberForeach() {
+        foreach (var item in new Group().holder?.items) {
+            item.helper(2);
+        }
+        return 0;
+    }
+    int fromConstructedReceiverArgsCondMemberVarInit() {
+        var first = new Group(1).holder?.items[0];
+        return first.helper(3);
+    }
+    int fromConstructedReceiverDirectCondMemberVarInit() {
+        var first = new Group()?.items[0];
+        return first.helper(4);
+    }
+    int fromConstructedReceiverNestedCondMemberVarInit() {
+        var first = new Group()?.holder?.items[0];
+        return first.helper(5);
+    }
+    int fromNestedConstructedReceiverCondMemberVarInit() {
+        var first = new Outer.Inner().items[0];
+        return first.helper(6);
+    }
+    int failures() {
+        var unknown = new Missing().holder?.items[0];
+        var missingMember = new Group().holder?.Missing[0];
+        foreach (var item in new Group().holder?.Missing) {
+            item.helper(1);
+        }
+        return unknown.helper(1) + missingMember.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access or collection rooted at a
+    // constructed receiver such as `new Group().holder?.items[0]` or
+    // `foreach (var item in new Group().holder?.items)` normalizes the
+    // constructed root (stripping the constructor argument list or
+    // object-initializer body and resolving nested dotted types such as
+    // `new Outer.Inner()`), resolves the constructed type, and walks any
+    // intermediate field hops and the terminal array member as an instance
+    // receiver; unknown constructed types, missing members, and non-array
+    // terminals fail closed.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromConstructedReceiverCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverCondMemberForeach",
+        "Demo::Caller::fromConstructedReceiverArgsCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverDirectCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverNestedCondMemberVarInit",
+        "Demo::Caller::fromNestedConstructedReceiverCondMemberVarInit",
+    ] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::fromConstructedReceiverCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverCondMemberForeach",
+        "Demo::Caller::fromConstructedReceiverArgsCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverDirectCondMemberVarInit",
+        "Demo::Caller::fromConstructedReceiverNestedCondMemberVarInit",
+        "Demo::Caller::fromNestedConstructedReceiverCondMemberVarInit",
+    ] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::failures"),
+        "unexpected persisted failures caller"
+    );
+}
+
+#[test]
+fn traces_csharp_constructed_receiver_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] items = new Helper[2];
+    public Group holder;
+}
+class Caller {
+    int run() {
+        var first = new Group().holder?.items[0];
+        return first.helper(1);
+    }
+    int runForeach() {
+        foreach (var item in new Group().holder?.items) {
+            item.helper(2);
+        }
+        return 0;
+    }
+    int fail() {
+        var first = new Missing().holder?.items[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::runForeach"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing overlay caller {caller}"
+        );
+    }
+    assert!(
+        !live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fail"),
+        "unexpected overlay failures caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::run", "Demo::Caller::runForeach"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted overlay caller {caller}"
+        );
+    }
+    assert!(
+        !persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::fail"),
+        "unexpected persisted overlay failures caller"
+    );
+}
