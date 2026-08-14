@@ -61477,3 +61477,151 @@ class Caller {
     .unwrap();
     assert_eq!(persisted.callers.len(), 2);
 }
+
+#[test]
+fn traces_csharp_parenthesized_conditional_member_element_access_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Group holder = new Group();
+    public Helper[] items = new Helper[1];
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Factories.cs"),
+        "namespace Demo.Factories;
+class Util2 {
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using Demo.Factories;
+namespace Demo;
+class Caller {
+    int FromParenthesizedStaticFactory() { var first = (Util.MakeGroup())?.items[0]; return first.Run(1); }
+    int FromParenthesizedImportedFactory() { var first = (Util2.MakeGroup())?.items[0]; return first.Run(1); }
+    int FromParenthesizedConstructed() { var first = (new Group()).holder?.items[0]; return first.Run(1); }
+    int FromParenthesizedBound() { Group group = new Group(); var first = (group)?.items[0]; return first.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A null-conditional member element access rooted at a parenthesized
+    // receiver such as `(Util.MakeGroup())?.items[0]`,
+    // `(Util2.MakeGroup())?.items[0]`, `(new Group()).holder?.items[0]`, or
+    // `(group)?.items[0]` unwraps the receiver to the same constructed,
+    // static type-qualified factory, and bound receiver dispatch shapes as
+    // its unparenthesized spelling, so the terminal array member's element
+    // component type pins the trailing member; unknown parenthesized roots
+    // fail closed.
+    let live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromParenthesizedBound",
+            "Demo::Caller::FromParenthesizedConstructed",
+            "Demo::Caller::FromParenthesizedImportedFactory",
+            "Demo::Caller::FromParenthesizedStaticFactory",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::FromParenthesizedBound",
+            "Demo::Caller::FromParenthesizedConstructed",
+            "Demo::Caller::FromParenthesizedImportedFactory",
+            "Demo::Caller::FromParenthesizedStaticFactory",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_parenthesized_conditional_member_element_access_receivers_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Group {
+    public Group holder = new Group();
+    public Helper[] items = new Helper[1];
+}
+class Util {
+    public static Group MakeGroup() => new Group();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int FromParenthesizedStaticFactory() { var first = (Util.MakeGroup())?.items[0]; return first.Run(1); }
+    int FromParenthesizedConstructed() { var first = (new Group()).holder?.items[0]; return first.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
