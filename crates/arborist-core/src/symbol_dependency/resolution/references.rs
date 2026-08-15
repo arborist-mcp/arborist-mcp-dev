@@ -2988,9 +2988,10 @@ fn csharp_constructed_type_spelling_with_generics(type_name: &str) -> Option<Str
 /// or `Group { Capacity = 2 }.GetItems` (the text after a `new ` prefix) into
 /// the dotted `Type().<chain>` shape the constructed-receiver resolver
 /// expects, stripping the constructor argument list or object-initializer
-/// body and normalizing generic type arguments to the raw type path. A
-/// spelling without a trailing member chain or with a malformed type or
-/// unbalanced argument list returns `None` and fails closed.
+/// body and keeping the concrete generic type-argument spellings attached to
+/// their segments so generic parameters substitute during member-chain
+/// resolution. A spelling without a trailing member chain or with a malformed
+/// type or unbalanced argument list returns `None` and fails closed.
 fn csharp_constructed_factory_call_spelling(factory_spelling: &str) -> Option<String> {
     let open_index = factory_spelling.find(['(', '{'])?;
     let type_name = factory_spelling[..open_index].trim();
@@ -3017,12 +3018,8 @@ fn csharp_constructed_factory_call_spelling(factory_spelling: &str) -> Option<St
     if member_chain.is_empty() {
         return None;
     }
-    let semantic_path = crate::language::csharp_generic_type_semantic_path(type_name)?;
-    Some(format!(
-        "{}().{}",
-        semantic_path.replace("::", "."),
-        member_chain
-    ))
+    let normalized_type = csharp_constructed_type_spelling_with_generics(type_name)?;
+    Some(format!("{}().{}", normalized_type, member_chain))
 }
 
 /// Resolves the factory call of a `var` initializer to a unique method
