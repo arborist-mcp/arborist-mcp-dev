@@ -5551,21 +5551,72 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 raw_symbols,
             ));
         }
-        let Some(member_bindings) = csharp_member_type_bindings_for_type(
-            &type_symbol.file_path,
-            type_symbol.byte_range,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
+        // A static member is inherited through the unique class/record
+        // ancestor chain, so `Plain.StaticNestedArray[0]` resolves a static
+        // member declared on `PlainBase` when `Plain : PlainBase`; the
+        // nearest declaration pins the declaring type and its declared type.
+        // Members that neither the resolved type nor any ancestor declares
+        // defer to a longer type prefix that may name a nested type.
+        let member_owner = {
+            let mut current_type_symbol = type_symbol;
+            let mut visited_type_paths = BTreeSet::new();
+            let mut found = None;
+            loop {
+                let Some(bindings) = csharp_member_type_bindings_for_type(
+                    &current_type_symbol.file_path,
+                    current_type_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                if bindings.contains(member_name) {
+                    found = Some((bindings, current_type_symbol));
+                    break;
+                }
+                if current_type_symbol.node_kind == "interface_declaration" {
+                    break;
+                }
+                let Some(base_binding) = csharp_base_type_binding_for_type(
+                    current_type_symbol,
+                    raw_symbols,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    break;
+                };
+                let Some(base_type_path) =
+                    csharp_base_type_path(current_type_symbol, raw_symbols, &base_binding)
+                else {
+                    break;
+                };
+                if !visited_type_paths.insert(base_type_path.clone()) {
+                    break;
+                }
+                let base_indexes = semantic_path_index
+                    .get(&base_type_path)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                    .collect::<Vec<_>>();
+                if base_indexes.len() != 1 {
+                    break;
+                }
+                current_type_symbol = &raw_symbols[base_indexes[0]];
+            }
+            found
         };
-        if !member_bindings.contains(member_name) {
-            // The member is not declared on this type; a longer type prefix
-            // may name a nested type that hosts the member.
+        let Some((member_bindings, declaring_type_symbol)) = member_owner else {
+            // The member is not declared on this type or any ancestor; a
+            // longer type prefix may name a nested type that hosts the member.
             continue;
-        }
+        };
         if !member_bindings.is_static_member(member_name) {
             // An instance member reached through a type name is invalid C#
             // and fails closed.
@@ -5581,11 +5632,11 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             return Ok(None);
         };
         let Some(member_binding) = resolve_csharp_receiver_type_binding(
-            type_symbol,
+            declaring_type_symbol,
             &member_type_name,
             raw_symbols,
             semantic_path_index,
-            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_source_namespace_path(declaring_type_symbol, raw_symbols).flatten(),
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -5596,13 +5647,13 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         };
         if hops.is_empty() {
             return Ok(canonicalize_csharp_type_binding(
-                type_symbol,
+                declaring_type_symbol,
                 &member_binding,
                 raw_symbols,
             ));
         }
         let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
-            type_symbol,
+            declaring_type_symbol,
             member_binding,
             hops,
             raw_symbols,
@@ -6977,8 +7028,12 @@ fn csharp_qualified_element_access_component_type_path(
     };
     if require_static_terminal {
         // A static type receiver requires the terminal array member to be
-        // declared static on the resolved type; the element component type
-        // resolves in the declaring type's own file and enclosing scope.
+        // declared static on the resolved type or a unique class/record
+        // ancestor (the nearest declaration pins the declaring type and its
+        // declared type); the element component type resolves in the
+        // declaring type's own file and enclosing scope. Unknown members,
+        // instance-member terminals, and unresolvable or cyclic base chains
+        // fail closed.
         let Some(type_path) = csharp_dispatchable_type_path(
             scope_source_symbol,
             raw_symbols,
@@ -6997,16 +7052,55 @@ fn csharp_qualified_element_access_component_type_path(
         if type_indexes.len() != 1 {
             return Ok(None);
         }
-        let type_symbol = &raw_symbols[type_indexes[0]];
-        let Some(member_bindings) = csharp_member_type_bindings_for_type(
-            &type_symbol.file_path,
-            type_symbol.byte_range,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
+        let mut type_symbol = &raw_symbols[type_indexes[0]];
+        let mut visited_type_paths = BTreeSet::new();
+        let member_bindings = loop {
+            let Some(bindings) = csharp_member_type_bindings_for_type(
+                &type_symbol.file_path,
+                type_symbol.byte_range,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            if bindings.contains(&terminal) {
+                break bindings;
+            }
+            if type_symbol.node_kind == "interface_declaration" {
+                return Ok(None);
+            }
+            let Some(base_binding) = csharp_base_type_binding_for_type(
+                type_symbol,
+                raw_symbols,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(base_type_path) =
+                csharp_base_type_path(type_symbol, raw_symbols, &base_binding)
+            else {
+                return Ok(None);
+            };
+            if !visited_type_paths.insert(base_type_path.clone()) {
+                return Ok(None);
+            }
+            let base_indexes = semantic_path_index
+                .get(&base_type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .collect::<Vec<_>>();
+            if base_indexes.len() != 1 {
+                return Ok(None);
+            }
+            type_symbol = &raw_symbols[base_indexes[0]];
         };
         if !member_bindings.is_static_member(&terminal) {
             return Ok(None);
