@@ -7512,6 +7512,8 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
             .collect::<Vec<_>>();
         if enclosing_candidates.len() == 1 {
             let mut ancestor_symbol = enclosing_candidates[0];
+            let mut current_generic_arguments = Vec::new();
+            let mut visited_type_paths = BTreeSet::new();
             for _ in 0..64 {
                 let Some(base_binding) = csharp_base_type_binding_for_type(
                     ancestor_symbol,
@@ -7532,6 +7534,9 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
                 ) else {
                     break;
                 };
+                if !visited_type_paths.insert(base_type_path.clone()) {
+                    break;
+                }
                 let base_indexes = semantic_path_index
                     .get(&base_type_path)
                     .into_iter()
@@ -7543,6 +7548,48 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
                     break;
                 }
                 let base_symbol = &raw_symbols[base_indexes[0]];
+                // Compose the constructed base binding's concrete arguments
+                // by substituting the current receiver's arguments into the
+                // base spelling's raw type-argument spellings, so a base such
+                // as `Base<T>` reached through `Caller : Base<Helper>` pins
+                // `T` to `Helper` (and a member declared as `T[,]` resolves
+                // its element component on `Helper`).
+                let parameters = csharp_type_parameter_names_for_type(
+                    &ancestor_symbol.file_path,
+                    ancestor_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                .unwrap_or_default();
+                let generic_arguments = base_binding
+                    .raw_generic_argument_spellings
+                    .iter()
+                    .map(|spelling| {
+                        substitute_csharp_type_parameters(
+                            spelling,
+                            &parameters,
+                            &current_generic_arguments,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let enclosing_generic_arguments = base_binding
+                    .raw_enclosing_generic_argument_spellings
+                    .iter()
+                    .map(|segment| {
+                        segment
+                            .iter()
+                            .map(|spelling| {
+                                substitute_csharp_type_parameters(
+                                    spelling,
+                                    &parameters,
+                                    &current_generic_arguments,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                current_generic_arguments = generic_arguments;
                 let Some(member_bindings) = csharp_member_type_bindings_for_type(
                     &base_symbol.file_path,
                     base_symbol.byte_range,
@@ -7557,6 +7604,37 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
                     let Some(declared_type) = member_bindings.type_for(member_name) else {
                         break;
                     };
+                    // A member declared on a generic base substitutes the
+                    // base's type parameters with the composed concrete
+                    // arguments before stripping the array component layers,
+                    // so `T[,]` on `Base<T>` reached through
+                    // `Caller : Base<Helper>` resolves its element component
+                    // on `Helper`; outer-parameter members substitute the
+                    // enclosing generic arguments.
+                    let mut declared_type = declared_type.to_string();
+                    if let Some(parameters) = csharp_type_parameter_names_for_type(
+                        &base_symbol.file_path,
+                        base_symbol.byte_range,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )? {
+                        declared_type = substitute_csharp_type_parameters(
+                            &declared_type,
+                            &parameters,
+                            &current_generic_arguments,
+                        );
+                    }
+                    let declared_type = substitute_csharp_enclosing_type_parameters(
+                        base_symbol,
+                        &enclosing_generic_arguments,
+                        &declared_type,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?;
                     let Some(component_type) =
                         csharp_array_component_spelling_at_depth(&declared_type, depth)
                     else {
