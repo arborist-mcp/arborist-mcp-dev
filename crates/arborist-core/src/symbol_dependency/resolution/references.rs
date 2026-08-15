@@ -6883,8 +6883,42 @@ fn csharp_factory_array_component_binding(
     // `T[]` return to `HelperA[]` and the element component to `HelperA`.
     // Other factory shapes keep the declared return type, failing closed
     // downstream when it names a type parameter.
-    let substituted_return_type = if let Some((chain, trailing_method)) =
-        factory_spelling.rsplit_once('.')
+    let substituted_return_type = if let Some((receiver_name, method_name)) =
+        factory_spelling.split_once('.')
+        && !receiver_name.is_empty()
+        && !method_name.is_empty()
+        && !method_name.contains(['(', ')', '.'])
+        && let Some(receiver_binding) = resolve_csharp_bound_factory_receiver_binding(
+            source_symbol,
+            receiver_name,
+            bindings,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(receiver_type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &receiver_binding,
+            csharp_is_type_declaration,
+        ) {
+        substitute_csharp_method_return_type(
+            method,
+            &receiver_binding,
+            &receiver_type_path,
+            return_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else if let Some((chain, trailing_method)) = factory_spelling.rsplit_once('.')
         && !chain.is_empty()
         && !trailing_method.is_empty()
         && !trailing_method.contains(['(', ')', '.'])
@@ -6909,7 +6943,8 @@ fn csharp_factory_array_component_binding(
             raw_symbols,
             &receiver_binding,
             csharp_is_type_declaration,
-        ) {
+        )
+    {
         substitute_csharp_method_return_type(
             method,
             &receiver_binding,
