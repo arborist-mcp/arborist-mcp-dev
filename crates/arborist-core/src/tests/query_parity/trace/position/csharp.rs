@@ -32790,3 +32790,138 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_factory_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public static U[] MakeStaticItems() => default;
+        public static Inner<U>[] MakeStaticArray() => default;
+        public static Inner<U> MakeStatic() => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static V[] StaticItems => default;
+            public static Inner<V> MakeStatic() => default;
+            public V[] Items => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int FactoryArrayElement() { var first = Outer<HelperA>.Inner<HelperB>.MakeStaticArray()[0].Items[0]; return first.RunB(1); }
+    int FactoryArrayElementOuter() { var first = Outer<HelperA>.Inner<HelperB>.MakeStaticArray()[0].OuterItems[0]; return first.RunA(2); }
+    int GlobalStaticFactory() { var first = global::Lib.Outer<HelperA>.Inner<HelperB>.MakeStaticItems()[0]; return first.RunB(3); }
+    int ThreeLevelStatic() { var first = Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticItems[0]; return first.RunC(4); }
+    int ThreeLevelStaticFactory() { var first = Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.MakeStatic().Items[0]; return first.RunC(5); }
+}
+",
+    )
+    .unwrap();
+
+    // A constructed static receiver whose static factory returns an array of
+    // the constructed nested type (`Outer<HelperA>.Inner<HelperB>
+    // .MakeStaticArray()[0]`) resolves the element component
+    // (`Inner<HelperB>`) through the declaring scope's nested-type rules and
+    // keeps the concrete generic arguments, so `U[] Items` resolves to
+    // `HelperB[]` and the outer-parameter member `T[] OuterItems` to
+    // `HelperA[]`; a `global::`-qualified static factory and constructed
+    // static receivers through two enclosing generic levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>`) resolve identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 1);
+    assert_eq!(
+        run_a_live.callers[0].symbol_id,
+        "Demo::Caller::FactoryArrayElementOuter"
+    );
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FactoryArrayElement",
+        "Demo::Caller::GlobalStaticFactory",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ThreeLevelStatic",
+        "Demo::Caller::ThreeLevelStaticFactory",
+    ] {
+        assert!(
+            run_c_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunC caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 1);
+    assert_eq!(
+        run_a_persisted.callers[0].symbol_id,
+        "Demo::Caller::FactoryArrayElementOuter"
+    );
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::FactoryArrayElement",
+        "Demo::Caller::GlobalStaticFactory",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ThreeLevelStatic",
+        "Demo::Caller::ThreeLevelStaticFactory",
+    ] {
+        assert!(
+            run_c_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunC caller {caller}"
+        );
+    }
+}
