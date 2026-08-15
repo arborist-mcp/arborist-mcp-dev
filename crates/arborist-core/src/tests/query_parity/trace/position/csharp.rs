@@ -38821,3 +38821,89 @@ class PrimitiveCaller : Outer<int>.Base {
         );
     }
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_inherited_field_initializer_var_receiver_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Outer<T> {
+    class Base {
+        protected T FIELD = default;
+    }
+}
+class Caller : Outer<Helper>.Base {
+    int VarField() { var v = FIELD; return v.entry.Run(1); }
+    int FailClosedMissing() { var v = MISSING; return v.entry.Run(1); }
+}
+class PrimitiveCaller : Outer<int>.Base {
+    int FailClosedPrimitive() { var v = FIELD; return v.entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare inherited field declared on a
+    // nested base of a constructed generic outer type (`class Caller :
+    // Outer<Helper>.Base` with `T FIELD` on `Outer<T>.Base`) substitutes the
+    // enclosing type's concrete argument for the member's outer type
+    // parameter, so `v.entry.Run(1)` dispatches on the substituted `Helper`
+    // receiver. A field the base chain does not declare (`MISSING`) and a
+    // primitive enclosing argument (`Outer<int>.Base`) fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 1);
+    assert!(
+        run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::VarField"),
+        "missing live Entry Run caller Demo::Caller::VarField"
+    );
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 1);
+    assert!(
+        run_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::VarField"),
+        "missing persisted Entry Run caller Demo::Caller::VarField"
+    );
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
