@@ -32464,3 +32464,117 @@ class Caller {
         "Demo::Caller::ThreeLevelElementVar"
     );
 }
+
+#[test]
+fn traces_csharp_qualified_global_constructed_generic_receiver_outer_parameter_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U> Next => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int ImportedElement() { var first = new Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0]; return first.RunB(1); }
+    int ImportedOuterElement() { var first = new Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems[0]; return first.RunA(2); }
+    int QualifiedElement() { var first = new Lib.Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0]; return first.RunB(3); }
+    int QualifiedOuterElement() { var first = new Lib.Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems[0]; return first.RunA(4); }
+    int GlobalElement() { var first = new global::Lib.Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0]; return first.RunB(5); }
+    int GlobalOuterElement() { var first = new global::Lib.Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems[0]; return first.RunA(6); }
+}
+",
+    )
+    .unwrap();
+
+    // An element-access initializer on a constructed nested generic receiver
+    // reached through a namespace-imported, namespace-qualified, or
+    // `global::`-qualified spelling keeps the receiver's concrete generic
+    // arguments aligned with the resolved type chain, so the method-call
+    // chain and terminal array member substitute the inner parameter
+    // (`U` -> `HelperB`) and an outer-parameter member (`T[] OuterItems`
+    // substitutes `T` -> `HelperA`) identically for every spelling.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedOuterElement",
+        "Demo::Caller::QualifiedOuterElement",
+        "Demo::Caller::GlobalOuterElement",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedElement",
+        "Demo::Caller::QualifiedElement",
+        "Demo::Caller::GlobalElement",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedOuterElement",
+        "Demo::Caller::QualifiedOuterElement",
+        "Demo::Caller::GlobalOuterElement",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ImportedElement",
+        "Demo::Caller::QualifiedElement",
+        "Demo::Caller::GlobalElement",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
