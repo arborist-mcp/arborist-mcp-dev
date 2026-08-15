@@ -32357,3 +32357,110 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_constructed_generic_receiver_method_call_chain_element_access_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U> Next => default;
+        public U[] MakeItems() => Items;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public V[] Items => default;
+            public Inner<V> MakeNext() => Next;
+            public Inner<V> Next => default;
+        }
+    }
+}
+class Caller {
+    int ElementVar() { var first = new Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0]; return first.RunB(1); }
+    int OuterItemsElementVar() { var first = new Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems[0]; return first.RunA(2); }
+    int ThreeLevelElementVar() { var first = new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().MakeNext().Items[0]; return first.RunC(3); }
+    int FactoryArrayVar() { var first = new Outer<HelperA>.Inner<HelperB>().MakeItems()[0]; return first.RunB(4); }
+}
+",
+    )
+    .unwrap();
+
+    // An element-access initializer on a constructed nested generic receiver
+    // (`var first = new Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0]`)
+    // keeps the concrete generic type-argument spellings on the constructed
+    // receiver root, so the method-call chain and terminal array member
+    // substitute the inner parameter (`U` -> `HelperB`), an outer-parameter
+    // member (`T[] OuterItems` substitutes `T` -> `HelperA`), the same
+    // initializer through two enclosing generic levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().MakeNext()`)
+    // substitutes `V` -> `HelperC`, and a factory-returned array
+    // (`MakeItems()[0]` -> `HelperB[]`) on the constructed receiver keeps
+    // resolving through the factory-array dispatch.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 1);
+    assert_eq!(
+        run_a_live.callers[0].symbol_id,
+        "Demo::Caller::OuterItemsElementVar"
+    );
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in ["Demo::Caller::ElementVar", "Demo::Caller::FactoryArrayVar"] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Demo::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 1);
+    assert_eq!(
+        run_c_live.callers[0].symbol_id,
+        "Demo::Caller::ThreeLevelElementVar"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 1);
+    assert_eq!(
+        run_a_persisted.callers[0].symbol_id,
+        "Demo::Caller::OuterItemsElementVar"
+    );
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::ElementVar", "Demo::Caller::FactoryArrayVar"] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 1);
+    assert_eq!(
+        run_c_persisted.callers[0].symbol_id,
+        "Demo::Caller::ThreeLevelElementVar"
+    );
+}
