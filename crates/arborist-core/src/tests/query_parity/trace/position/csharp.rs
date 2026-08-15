@@ -33594,3 +33594,111 @@ class Caller {
         "Demo::Caller::VarArrayThreeLevel"
     );
 }
+
+#[test]
+fn traces_csharp_static_member_bare_unbound_array_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder { public HelperB[] Items => default; }
+class Holder { public HelperB[] Items => default; }
+class CallerBase { protected HelperB[] baseItems = default!; }
+class Plain {
+    public static PlainHolder[] StaticNestedArray => default;
+    public static PlainHolder StaticNested => default;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    HelperB[] fieldItems = default!;
+    int EnclosingFieldVar() { var x = fieldItems; return x[0].RunB(41); }
+    int EnclosingFieldVarThis() { var x = this.fieldItems; return x[0].RunB(42); }
+}
+class StaticCaller {
+    int StaticImportVar() { var x = StaticNestedArray; return x[0].Items[0].RunB(43); }
+    int StaticImportVarDirect() { var x = StaticNestedArray; return x[0].Items[0].RunB(45); }
+    int StaticImportNonArrayVar() { var x = StaticNested.Items; return x[0].RunB(47); }
+    int LocalDirect() { var h = new Holder(); return h.Items[0].RunB(51); }
+}
+class InheritedCaller : CallerBase {
+    int InheritedBare() { var x = baseItems; return x[0].RunB(61); }
+    int InheritedBareThis() { var x = this.baseItems; return x[0].RunB(62); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Usings.cs"),
+        "global using static Lib.Plain;
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a bare member-chain initializer whose leading
+    // member is not a bound local or enclosing field resolves each element
+    // access through the same inherited-then-static-imported rules as
+    // bare-chain `var` initializers: a bare inherited base-class field
+    // (`var x = baseItems` in `x[0].RunB(...)`), a `this.`-rooted inherited
+    // field, and a static-imported array member root
+    // (`var x = StaticNestedArray` in `x[0].Items[0].RunB(...)` with
+    // `global using static Lib.Plain;`) all strip one array component layer
+    // per element-access depth and dispatch on the element type. Bound
+    // enclosing fields (`var x = fieldItems` and `var x = this.fieldItems`),
+    // a bound local receiver (`var h = new Holder(); h.Items[0]`), and a
+    // static-imported dotted member chain (`var x = StaticNested.Items`)
+    // bind through the same path.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::EnclosingFieldVar",
+        "Demo::Caller::EnclosingFieldVarThis",
+        "Demo::InheritedCaller::InheritedBare",
+        "Demo::InheritedCaller::InheritedBareThis",
+        "Demo::StaticCaller::LocalDirect",
+        "Demo::StaticCaller::StaticImportNonArrayVar",
+        "Demo::StaticCaller::StaticImportVar",
+        "Demo::StaticCaller::StaticImportVarDirect",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::EnclosingFieldVar",
+        "Demo::Caller::EnclosingFieldVarThis",
+        "Demo::InheritedCaller::InheritedBare",
+        "Demo::InheritedCaller::InheritedBareThis",
+        "Demo::StaticCaller::LocalDirect",
+        "Demo::StaticCaller::StaticImportNonArrayVar",
+        "Demo::StaticCaller::StaticImportVar",
+        "Demo::StaticCaller::StaticImportVarDirect",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
