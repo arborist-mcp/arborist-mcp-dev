@@ -31408,3 +31408,200 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_generic_method_call_type_argument_return_substitution_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Maker {
+    public T Make<T>() => default;
+    public T[] MakeArray<T>() => default;
+    public static T MakeStatic<T>() => default;
+}
+class Util { public static T MakeStatic<T>() => default; }
+class Pairer {
+    public U First<T, U>(T input) => default;
+}
+class Caller {
+    int VarMake() { var x = new Maker().Make<HelperA>(); return x.RunA(1); }
+    int DirectMake() { return new Maker().Make<HelperA>().RunA(2); }
+    int StaticMake() { return Maker.MakeStatic<HelperA>().RunA(3); }
+    int ImportedMake() { return Util.MakeStatic<HelperA>().RunA(4); }
+    int VarArray() { var arr = new Maker().MakeArray<HelperA>(); return arr[0].RunA(5); }
+    int DirectArray() { return new Maker().MakeArray<HelperA>()[0].RunA(6); }
+    int MultiMake() { var y = new Pairer().First<HelperA, HelperB>(default); return y.RunB(7); }
+    int VarMakeB() { var x = new Maker().Make<HelperB>(); return x.RunB(8); }
+    int StaticMakeB() { return Maker.MakeStatic<HelperB>().RunB(9); }
+    int VarArrayB() { var arr = new Maker().MakeArray<HelperB>(); return arr[0].RunB(10); }
+}
+",
+    )
+    .unwrap();
+
+    // An explicit generic method type-argument list at the call site, such as
+    // `Make<HelperA>()`, `new Maker().Make<HelperA>()`,
+    // `Maker.MakeStatic<HelperA>()`, or `new Maker().MakeArray<HelperA>()[0]`,
+    // substitutes the method's own type parameters (`T` in `T Make<T>()`,
+    // `T` in `T[] MakeArray<T>()`, or `T`/`U` in `U First<T, U>(T)`) into the
+    // declared return type, so the returned value binds to `HelperA`/`HelperB`
+    // and the final member call (`RunA`/`RunB`) traces through the same
+    // shapes as the constructed-receiver series: a `var` local
+    // (`var x = new Maker().Make<HelperA>()`), a direct constructed chain
+    // (`new Maker().Make<HelperA>().RunA(2)`), a static type-qualified chain
+    // (`Maker.MakeStatic<HelperA>().RunA(3)`), a factory-returned array held
+    // in a `var` local (`var arr = new Maker().MakeArray<HelperA>()` followed
+    // by `arr[0].RunA(5)`), and a direct array-element chain
+    // (`new Maker().MakeArray<HelperA>()[0].RunA(6)`).
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::VarMake",
+        "Demo::Caller::DirectMake",
+        "Demo::Caller::StaticMake",
+        "Demo::Caller::ImportedMake",
+        "Demo::Caller::VarArray",
+        "Demo::Caller::DirectArray",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::MultiMake",
+        "Demo::Caller::VarMakeB",
+        "Demo::Caller::StaticMakeB",
+        "Demo::Caller::VarArrayB",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let make_live = trace_symbol_graph(&dir, "Demo::Maker::Make", TraceDirection::Callers).unwrap();
+    assert_eq!(make_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::VarMake",
+        "Demo::Caller::DirectMake",
+        "Demo::Caller::VarMakeB",
+    ] {
+        assert!(
+            make_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let make_array_live =
+        trace_symbol_graph(&dir, "Demo::Maker::MakeArray", TraceDirection::Callers).unwrap();
+    assert_eq!(make_array_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::VarArray",
+        "Demo::Caller::DirectArray",
+        "Demo::Caller::VarArrayB",
+    ] {
+        assert!(
+            make_array_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let make_static_live =
+        trace_symbol_graph(&dir, "Demo::Maker::MakeStatic", TraceDirection::Callers).unwrap();
+    assert_eq!(make_static_live.callers.len(), 2);
+    for caller in ["Demo::Caller::StaticMake", "Demo::Caller::StaticMakeB"] {
+        assert!(
+            make_static_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let util_static_live =
+        trace_symbol_graph(&dir, "Demo::Util::MakeStatic", TraceDirection::Callers).unwrap();
+    assert_eq!(util_static_live.callers.len(), 1);
+    assert!(
+        util_static_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ImportedMake"),
+        "missing live caller ImportedMake"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::VarMake",
+        "Demo::Caller::DirectMake",
+        "Demo::Caller::StaticMake",
+        "Demo::Caller::ImportedMake",
+        "Demo::Caller::VarArray",
+        "Demo::Caller::DirectArray",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::MultiMake",
+        "Demo::Caller::VarMakeB",
+        "Demo::Caller::StaticMakeB",
+        "Demo::Caller::VarArrayB",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let make_array_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Maker::MakeArray", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(make_array_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::VarArray",
+        "Demo::Caller::DirectArray",
+        "Demo::Caller::VarArrayB",
+    ] {
+        assert!(
+            make_array_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
