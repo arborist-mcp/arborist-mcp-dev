@@ -31249,3 +31249,162 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_direct_constructed_receiver_factory_array_element_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Box<T> { public T[] GetItems() => default; }
+class Pair<T, U> { public int Capacity { get; set; } public U[] GetSeconds() => default; }
+class Caller {
+    int DirectBoxElement() { return new Box<HelperA>().GetItems()[0].RunA(1); }
+    int DirectPairElement() { return new Pair<HelperA, HelperB>().GetSeconds()[0].RunB(2); }
+    int DirectInitializedPairElement() { return new Pair<HelperA, HelperB> { Capacity = 2 }.GetSeconds()[0].RunB(3); }
+    int DirectBoxElementAgain() { return new Box<HelperA>().GetItems()[0].RunA(4); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct `new`-rooted constructed receiver chain whose factory call
+    // returns an array element, such as
+    // `new Box<HelperA>().GetItems()[0].RunA(1)` or
+    // `new Pair<HelperA, HelperB>().GetSeconds()[0].RunB(2)`, resolves the
+    // constructed type and substitutes each concrete type argument (`T` to
+    // `HelperA`, `U` to `HelperB`) before tracing the final member call,
+    // including when the comma-separated type-argument list carries a
+    // whitespace spelling (`Pair<HelperA, HelperB>`) and when the `new`
+    // expression also carries an object-initializer body.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectBoxElement",
+        "Demo::Caller::DirectBoxElementAgain",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectPairElement",
+        "Demo::Caller::DirectInitializedPairElement",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let items_live =
+        trace_symbol_graph(&dir, "Demo::Box::GetItems", TraceDirection::Callers).unwrap();
+    assert_eq!(items_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectBoxElement",
+        "Demo::Caller::DirectBoxElementAgain",
+    ] {
+        assert!(
+            items_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let seconds_live =
+        trace_symbol_graph(&dir, "Demo::Pair::GetSeconds", TraceDirection::Callers).unwrap();
+    assert_eq!(seconds_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectPairElement",
+        "Demo::Caller::DirectInitializedPairElement",
+    ] {
+        assert!(
+            seconds_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectBoxElement",
+        "Demo::Caller::DirectBoxElementAgain",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectPairElement",
+        "Demo::Caller::DirectInitializedPairElement",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let items_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Box::GetItems", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(items_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectBoxElement",
+        "Demo::Caller::DirectBoxElementAgain",
+    ] {
+        assert!(
+            items_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let seconds_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Pair::GetSeconds", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(seconds_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DirectPairElement",
+        "Demo::Caller::DirectInitializedPairElement",
+    ] {
+        assert!(
+            seconds_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
