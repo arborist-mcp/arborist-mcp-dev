@@ -5169,13 +5169,21 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         let member_element_hop = csharp_array_access_member_name(member).and_then(|member_name| {
             csharp_array_access_depth(member).map(|depth| (member_name.to_string(), depth))
         });
-        if matches!(member, "this" | "base")
-            || (!is_safe_csharp_identifier(member)
-                && method_call_hop.is_none()
-                && method_element_hop.is_none()
-                && member_element_hop.is_none())
-        {
+        if matches!(member, "this" | "base") {
             return Ok(None);
+        }
+        if !is_safe_csharp_identifier(member)
+            && method_call_hop.is_none()
+            && method_element_hop.is_none()
+            && member_element_hop.is_none()
+        {
+            // A non-identifier segment that is not a method call or element
+            // access may be a constructed generic type segment such as
+            // `Inner<HelperB>` in
+            // `Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0]`, so defer
+            // to a longer type prefix instead of failing closed and let the
+            // constructed-generic member branch resolve the root.
+            continue;
         }
         let type_path = match resolve_csharp_static_initializer_type_path(
             source_symbol,
