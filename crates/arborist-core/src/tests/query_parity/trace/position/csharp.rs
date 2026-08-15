@@ -32689,3 +32689,104 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_generic_substitution_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public static U[] StaticItems => default;
+        public static U[] MakeStaticItems() => default;
+        public static Inner<U> MakeStatic() => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int StaticField() { var first = Outer<HelperA>.Inner<HelperB>.StaticItems[0]; return first.RunB(1); }
+    int StaticFactory() { var first = Outer<HelperA>.Inner<HelperB>.MakeStaticItems()[0]; return first.RunB(2); }
+    int StaticNestedFactory() { var first = Outer<HelperA>.Inner<HelperB>.MakeStatic().Items[0]; return first.RunB(3); }
+    int StaticNestedFactoryOuter() { var first = Outer<HelperA>.Inner<HelperB>.MakeStatic().OuterItems[0]; return first.RunA(4); }
+    int GlobalStaticField() { var first = global::Lib.Outer<HelperA>.Inner<HelperB>.StaticItems[0]; return first.RunB(5); }
+}
+",
+    )
+    .unwrap();
+
+    // A constructed static receiver
+    // (`Outer<HelperA>.Inner<HelperB>.StaticItems[0]`) substitutes its
+    // concrete generic arguments into static member declared types and
+    // static factory return types before stripping the array component
+    // layers, so `U[] StaticItems` and `U[] MakeStaticItems()` resolve to
+    // `HelperB[]`, a static factory returning the nested constructed type
+    // (`MakeStatic() -> Inner<U>`) resolves the inner member `U[] Items` to
+    // `HelperB[]` and keeps the outer argument so `T[] OuterItems` resolves
+    // to `HelperA[]`, and a `global::`-qualified constructed static receiver
+    // resolves identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 1);
+    assert_eq!(
+        run_a_live.callers[0].symbol_id,
+        "Demo::Caller::StaticNestedFactoryOuter"
+    );
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::StaticField",
+        "Demo::Caller::StaticFactory",
+        "Demo::Caller::StaticNestedFactory",
+        "Demo::Caller::GlobalStaticField",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 1);
+    assert_eq!(
+        run_a_persisted.callers[0].symbol_id,
+        "Demo::Caller::StaticNestedFactoryOuter"
+    );
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::StaticField",
+        "Demo::Caller::StaticFactory",
+        "Demo::Caller::StaticNestedFactory",
+        "Demo::Caller::GlobalStaticField",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
