@@ -31771,3 +31771,88 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_constructed_generic_receiver_property_chain_var_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Box<T> {
+    public T[] Items => default;
+    public T[][] Matrix => default;
+}
+class Caller {
+    int VarItems() { var arr = new Box<HelperA>().Items; return arr[0].RunA(1); }
+    int TypedItems() { HelperA[] arr = new Box<HelperA>().Items; return arr[0].RunA(2); }
+    int VarMatrix() { var matrix = new Box<HelperA>().Matrix; return matrix[0][0].RunA(3); }
+    int DirectItems() { return new Box<HelperA>().Items[0].RunA(4); }
+    int VarItemsB() { var arr = new Box<HelperB>().Items; return arr[0].RunB(5); }
+}
+",
+    )
+    .unwrap();
+
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarItems",
+        "Demo::Caller::TypedItems",
+        "Demo::Caller::VarMatrix",
+        "Demo::Caller::DirectItems",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 1);
+    assert!(
+        run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::VarItemsB"),
+        "missing live caller VarItemsB"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarItems",
+        "Demo::Caller::TypedItems",
+        "Demo::Caller::VarMatrix",
+        "Demo::Caller::DirectItems",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 1);
+    assert!(
+        run_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::VarItemsB"),
+        "missing persisted caller VarItemsB"
+    );
+}
