@@ -2739,7 +2739,12 @@ fn resolve_csharp_factory_chain_receiver_binding(
 /// `Inner<HelperB>` and an outer-parameter member `T[] OuterItems` to
 /// `HelperA[]`), one array component layer is stripped per element-access
 /// depth, and the resulting component type resolves in the declaring type's
-/// own file and enclosing scope. Unknown, instance, non-array, or
+/// own file and enclosing scope. A member the resolved type does not declare
+/// is looked up through the unique class/record ancestor chain, composing the
+/// constructed base binding's concrete arguments from the derived receiver's
+/// arguments, so `GenericDerived<HelperB>.StaticNestedArray` resolves a
+/// member declared on `GenericBase<T>` when
+/// `GenericDerived<T> : GenericBase<T>`. Unknown, instance, non-array, or
 /// unresolvable members return `None` and fail closed.
 #[allow(
     clippy::too_many_arguments,
@@ -2775,74 +2780,171 @@ fn resolve_csharp_constructed_static_receiver_member_binding(
     if type_indexes.len() != 1 {
         return Ok(None);
     }
-    let type_symbol = &raw_symbols[type_indexes[0]];
-    let Some(member_bindings) = csharp_member_type_bindings_for_type(
-        &type_symbol.file_path,
-        type_symbol.byte_range,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    if !member_bindings.contains(member_name) || !member_bindings.is_static_member(member_name) {
-        return Ok(None);
+    // A static member may be inherited through the unique class/record
+    // ancestor chain, so `GenericDerived<HelperB>.StaticNestedArray[0]`
+    // resolves a static member declared on `GenericBase<T>` when
+    // `GenericDerived<T> : GenericBase<T>`; each base step composes the
+    // constructed base binding by substituting the current receiver's
+    // concrete arguments into the base spelling's raw type-argument
+    // spellings, so the member's declared type substitutes the base's type
+    // parameters (and any enclosing type parameters) with the derived
+    // receiver's concrete arguments. Unknown members, instance-member
+    // declarations, unresolvable or cyclic base chains, and non-array or
+    // primitive-array members fail closed.
+    let mut current_type_symbol = &raw_symbols[type_indexes[0]];
+    let mut current_receiver_binding = receiver_binding.clone();
+    let mut visited_type_paths = BTreeSet::new();
+    loop {
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &current_type_symbol.file_path,
+            current_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if member_bindings.contains(member_name) {
+            if !member_bindings.is_static_member(member_name) {
+                return Ok(None);
+            }
+            let Some(declared_type) = member_bindings.type_for(member_name) else {
+                return Ok(None);
+            };
+            let mut declared_type = declared_type.to_string();
+            if let Some(parameters) = csharp_type_parameter_names_for_type(
+                &current_type_symbol.file_path,
+                current_type_symbol.byte_range,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )? {
+                declared_type = substitute_csharp_type_parameters(
+                    &declared_type,
+                    &parameters,
+                    &current_receiver_binding.generic_arguments,
+                );
+            }
+            declared_type = substitute_csharp_enclosing_type_parameters(
+                current_type_symbol,
+                &current_receiver_binding.enclosing_generic_arguments,
+                &declared_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            let Some(component_type) =
+                csharp_array_component_spelling_at_depth(&declared_type, element_depth)
+            else {
+                return Ok(None);
+            };
+            let Some(binding) = resolve_csharp_member_hop_type_binding(
+                current_type_symbol,
+                &component_type,
+                &current_receiver_binding,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            // The component binding resolves in the declaring type's own file
+            // and enclosing scope; canonicalize it so callers in other
+            // namespaces dispatch on the canonical declared type.
+            return Ok(canonicalize_csharp_type_binding(
+                current_type_symbol,
+                &binding,
+                raw_symbols,
+            ));
+        }
+        if current_type_symbol.node_kind == "interface_declaration" {
+            return Ok(None);
+        }
+        let Some(base_binding) = csharp_base_type_binding_for_type(
+            current_type_symbol,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(base_type_path) =
+            csharp_base_type_path(current_type_symbol, raw_symbols, &base_binding)
+        else {
+            return Ok(None);
+        };
+        if !visited_type_paths.insert(base_type_path.clone()) {
+            return Ok(None);
+        }
+        let base_indexes = semantic_path_index
+            .get(&base_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if base_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let parameters = csharp_type_parameter_names_for_type(
+            &current_type_symbol.file_path,
+            current_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        .unwrap_or_default();
+        let generic_arguments = base_binding
+            .raw_generic_argument_spellings
+            .iter()
+            .map(|spelling| {
+                substitute_csharp_type_parameters(
+                    spelling,
+                    &parameters,
+                    &current_receiver_binding.generic_arguments,
+                )
+            })
+            .collect::<Vec<_>>();
+        let enclosing_generic_arguments = base_binding
+            .raw_enclosing_generic_argument_spellings
+            .iter()
+            .map(|segment| {
+                segment
+                    .iter()
+                    .map(|spelling| {
+                        substitute_csharp_type_parameters(
+                            spelling,
+                            &parameters,
+                            &current_receiver_binding.generic_arguments,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        current_receiver_binding = CSharpBaseTypeBinding {
+            semantic_type_path: base_type_path,
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+            generic_arguments,
+            raw_generic_argument_spellings: base_binding.raw_generic_argument_spellings.clone(),
+            enclosing_generic_arguments,
+            raw_enclosing_generic_argument_spellings: base_binding
+                .raw_enclosing_generic_argument_spellings
+                .clone(),
+        };
+        current_type_symbol = &raw_symbols[base_indexes[0]];
     }
-    let Some(declared_type) = member_bindings.type_for(member_name) else {
-        return Ok(None);
-    };
-    let mut declared_type = declared_type.to_string();
-    if let Some(parameters) = csharp_type_parameter_names_for_type(
-        &type_symbol.file_path,
-        type_symbol.byte_range,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )? {
-        declared_type = substitute_csharp_type_parameters(
-            &declared_type,
-            &parameters,
-            &receiver_binding.generic_arguments,
-        );
-    }
-    declared_type = substitute_csharp_enclosing_type_parameters(
-        type_symbol,
-        &receiver_binding.enclosing_generic_arguments,
-        &declared_type,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?;
-    let Some(component_type) =
-        csharp_array_component_spelling_at_depth(&declared_type, element_depth)
-    else {
-        return Ok(None);
-    };
-    let Some(binding) = resolve_csharp_member_hop_type_binding(
-        type_symbol,
-        &component_type,
-        receiver_binding,
-        raw_symbols,
-        semantic_path_index,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    // The component binding resolves in the declaring type's own file and
-    // enclosing scope; canonicalize it so callers in other namespaces
-    // dispatch on the canonical declared type.
-    Ok(canonicalize_csharp_type_binding(
-        type_symbol,
-        &binding,
-        raw_symbols,
-    ))
 }
 
 /// Parses a leading static member hop spelling such as `StaticNested` (a
@@ -5559,6 +5661,8 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         // defer to a longer type prefix that may name a nested type.
         let member_owner = {
             let mut current_type_symbol = type_symbol;
+            let mut current_generic_arguments = Vec::new();
+            let mut current_enclosing_generic_arguments = Vec::new();
             let mut visited_type_paths = BTreeSet::new();
             let mut found = None;
             loop {
@@ -5573,7 +5677,12 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                     return Ok(None);
                 };
                 if bindings.contains(member_name) {
-                    found = Some((bindings, current_type_symbol));
+                    found = Some((
+                        bindings,
+                        current_type_symbol,
+                        current_generic_arguments,
+                        current_enclosing_generic_arguments,
+                    ));
                     break;
                 }
                 if current_type_symbol.node_kind == "interface_declaration" {
@@ -5608,11 +5717,61 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 if base_indexes.len() != 1 {
                     break;
                 }
+                // Compose the constructed base binding's concrete arguments
+                // by substituting the current receiver's arguments into the
+                // base spelling's raw type-argument spellings, so a base
+                // such as `GenericBase<HelperB>` reached through a
+                // non-generic `FixedDerived : GenericBase<HelperB>` or a
+                // generic `Derived<T> : GenericBase<T>` pins the same
+                // concrete arguments for the member's declared type.
+                let parameters = csharp_type_parameter_names_for_type(
+                    &current_type_symbol.file_path,
+                    current_type_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                .unwrap_or_default();
+                let generic_arguments = base_binding
+                    .raw_generic_argument_spellings
+                    .iter()
+                    .map(|spelling| {
+                        substitute_csharp_type_parameters(
+                            spelling,
+                            &parameters,
+                            &current_generic_arguments,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let enclosing_generic_arguments = base_binding
+                    .raw_enclosing_generic_argument_spellings
+                    .iter()
+                    .map(|segment| {
+                        segment
+                            .iter()
+                            .map(|spelling| {
+                                substitute_csharp_type_parameters(
+                                    spelling,
+                                    &parameters,
+                                    &current_generic_arguments,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                current_generic_arguments = generic_arguments;
+                current_enclosing_generic_arguments = enclosing_generic_arguments;
                 current_type_symbol = &raw_symbols[base_indexes[0]];
             }
             found
         };
-        let Some((member_bindings, declaring_type_symbol)) = member_owner else {
+        let Some((
+            member_bindings,
+            declaring_type_symbol,
+            declaring_generic_arguments,
+            declaring_enclosing_generic_arguments,
+        )) = member_owner
+        else {
             // The member is not declared on this type or any ancestor; a
             // longer type prefix may name a nested type that hosts the member.
             continue;
@@ -5625,6 +5784,30 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         let Some(member_type_name) = member_bindings.type_for(member_name) else {
             return Ok(None);
         };
+        let mut member_type_name = member_type_name.to_string();
+        if let Some(parameters) = csharp_type_parameter_names_for_type(
+            &declaring_type_symbol.file_path,
+            declaring_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            member_type_name = substitute_csharp_type_parameters(
+                &member_type_name,
+                &parameters,
+                &declaring_generic_arguments,
+            );
+        }
+        member_type_name = substitute_csharp_enclosing_type_parameters(
+            declaring_type_symbol,
+            &declaring_enclosing_generic_arguments,
+            &member_type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
         let Some(member_type_name) = (match member_depth {
             Some(depth) => csharp_array_component_spelling_at_depth(&member_type_name, depth),
             None => Some(member_type_name),
@@ -7053,6 +7236,8 @@ fn csharp_qualified_element_access_component_type_path(
             return Ok(None);
         }
         let mut type_symbol = &raw_symbols[type_indexes[0]];
+        let mut current_generic_arguments = binding.generic_arguments.clone();
+        let mut current_enclosing_generic_arguments = binding.enclosing_generic_arguments.clone();
         let mut visited_type_paths = BTreeSet::new();
         let member_bindings = loop {
             let Some(bindings) = csharp_member_type_bindings_for_type(
@@ -7100,6 +7285,49 @@ fn csharp_qualified_element_access_component_type_path(
             if base_indexes.len() != 1 {
                 return Ok(None);
             }
+            // Compose the constructed base binding's concrete arguments by
+            // substituting the current receiver's arguments into the base
+            // spelling's raw type-argument spellings, so a base such as
+            // `GenericBase<HelperB>` reached through a non-generic
+            // `FixedDerived : GenericBase<HelperB>` pins the same concrete
+            // arguments for the static member's declared type.
+            let parameters = csharp_type_parameter_names_for_type(
+                &type_symbol.file_path,
+                type_symbol.byte_range,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            .unwrap_or_default();
+            let generic_arguments = base_binding
+                .raw_generic_argument_spellings
+                .iter()
+                .map(|spelling| {
+                    substitute_csharp_type_parameters(
+                        spelling,
+                        &parameters,
+                        &current_generic_arguments,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let enclosing_generic_arguments = base_binding
+                .raw_enclosing_generic_argument_spellings
+                .iter()
+                .map(|segment| {
+                    segment
+                        .iter()
+                        .map(|spelling| {
+                            substitute_csharp_type_parameters(
+                                spelling,
+                                &parameters,
+                                &current_generic_arguments,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            current_generic_arguments = generic_arguments;
+            current_enclosing_generic_arguments = enclosing_generic_arguments;
             type_symbol = &raw_symbols[base_indexes[0]];
         };
         if !member_bindings.is_static_member(&terminal) {
@@ -7113,7 +7341,10 @@ fn csharp_qualified_element_access_component_type_path(
         // receiver's concrete generic arguments into the static member's
         // declared type before stripping the array component layers, so
         // `U[] StaticItems` resolves to `HelperB[]` (and an
-        // outer-parameter member `T[]` resolves to `HelperA[]`).
+        // outer-parameter member `T[]` resolves to `HelperA[]`); the
+        // composed arguments follow the class/record ancestor chain so a
+        // member inherited from a constructed base substitutes the base's
+        // type parameters with the derived receiver's concrete arguments.
         let mut declared_type = declared_type.to_string();
         if let Some(parameters) = csharp_type_parameter_names_for_type(
             &type_symbol.file_path,
@@ -7125,12 +7356,12 @@ fn csharp_qualified_element_access_component_type_path(
             declared_type = substitute_csharp_type_parameters(
                 &declared_type,
                 &parameters,
-                &binding.generic_arguments,
+                &current_generic_arguments,
             );
         }
         declared_type = substitute_csharp_enclosing_type_parameters(
             type_symbol,
-            &binding.enclosing_generic_arguments,
+            &current_enclosing_generic_arguments,
             &declared_type,
             raw_symbols,
             semantic_path_index,
