@@ -34671,7 +34671,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_static_imported_inherited_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
  {
@@ -34787,7 +34786,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_static_imported_constructed_base_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
@@ -34907,7 +34905,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_constructed_base_inherited_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
  {
@@ -35017,7 +35014,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_direct_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
  {
@@ -35123,7 +35119,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_generic_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
@@ -35232,7 +35227,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_constructed_generic_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
  {
@@ -35334,7 +35328,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_null_conditional_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
@@ -35441,7 +35434,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_constructed_static_receiver_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
@@ -35552,7 +35544,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_constructed_static_receiver_static_member_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
  {
@@ -35649,7 +35640,6 @@ class Caller {
     }
 }
 
-
 #[test]
 fn traces_csharp_static_member_bare_unbound_array_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
  {
@@ -35699,7 +35689,10 @@ class Caller {
     let run_b_live =
         trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
     assert_eq!(run_b_live.callers.len(), 2);
-    for caller in ["Demo::Caller::StaticImportJaggedVar", "Demo::Caller::StaticImportMatrixVar"] {
+    for caller in [
+        "Demo::Caller::StaticImportJaggedVar",
+        "Demo::Caller::StaticImportMatrixVar",
+    ] {
         assert!(
             run_b_live
                 .callers
@@ -35726,7 +35719,10 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
             .unwrap();
     assert_eq!(run_b_persisted.callers.len(), 2);
-    for caller in ["Demo::Caller::StaticImportJaggedVar", "Demo::Caller::StaticImportMatrixVar"] {
+    for caller in [
+        "Demo::Caller::StaticImportJaggedVar",
+        "Demo::Caller::StaticImportMatrixVar",
+    ] {
         assert!(
             run_b_persisted
                 .callers
@@ -35748,7 +35744,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_constructed_static_receiver_static_member_multidimensional_foreach_element_in_live_workspace_and_persisted_index()
@@ -35797,7 +35792,10 @@ class Caller {
     let run_b_live =
         trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
     assert_eq!(run_b_live.callers.len(), 2);
-    for caller in ["Demo::Caller::ForeachJaggedRow", "Demo::Caller::ForeachMatrix"] {
+    for caller in [
+        "Demo::Caller::ForeachJaggedRow",
+        "Demo::Caller::ForeachMatrix",
+    ] {
         assert!(
             run_b_live
                 .callers
@@ -35824,7 +35822,10 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
             .unwrap();
     assert_eq!(run_b_persisted.callers.len(), 2);
-    for caller in ["Demo::Caller::ForeachJaggedRow", "Demo::Caller::ForeachMatrix"] {
+    for caller in [
+        "Demo::Caller::ForeachJaggedRow",
+        "Demo::Caller::ForeachMatrix",
+    ] {
         assert!(
             run_b_persisted
                 .callers
@@ -35846,7 +35847,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_constructed_static_receiver_static_member_multidimensional_chain_foreach_element_in_live_workspace_and_persisted_index()
@@ -35943,7 +35943,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_constructed_static_receiver_static_member_multidimensional_array_var_initializer_in_live_workspace_and_persisted_index()
@@ -36060,7 +36059,6 @@ class Caller {
         );
     }
 }
-
 
 #[test]
 fn traces_csharp_direct_static_field_member_chain_multidimensional_element_access_calls_in_live_workspace_and_persisted_index()
