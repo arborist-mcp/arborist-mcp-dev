@@ -35123,3 +35123,111 @@ class Caller {
         );
     }
 }
+
+
+#[test]
+fn traces_csharp_generic_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class GenericOwner<T> {
+    public static PlainHolder<T>[,] StaticMatrix => default;
+    public static PlainHolder<T>[][] StaticJagged => default;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int MatrixDirect() { return GenericOwner<HelperB>.StaticMatrix[0,0].Items[0].RunB(211); }
+    int JaggedDirect() { return GenericOwner<HelperB>.StaticJagged[0][0].Items[0].RunB(212); }
+    int MatrixVar() { var x = GenericOwner<HelperB>.StaticMatrix; return x[0,0].Items[0].RunB(213); }
+    int JaggedVar() { var y = GenericOwner<HelperB>.StaticJagged; return y[0][0].Items[0].RunB(214); }
+    int FailClosedMissingStatic() { return GenericOwner<HelperB>.MissingStaticArray[0,0].Items[0].RunB(215); }
+    int FailClosedInstanceOnElement() { return GenericOwner<HelperB>.StaticMatrix[0,0].RunB(216); }
+}
+",
+    )
+    .unwrap();
+
+    // A generic static member element access such as
+    // `GenericOwner<HelperB>.StaticMatrix[0,0].Items[0].RunB(...)` substitutes
+    // the receiver's type arguments (`T` -> `HelperB`) into the static
+    // member's declared type and strips one array component layer per
+    // element-access group, so the multi-dimensional (`[0,0]`) and jagged
+    // (`[0][0]`) forms both pin `PlainHolder<HelperB>` before the remaining
+    // instance hops walk; the direct chain and the `var`-initializer form
+    // resolve the same binding. A static member the type does not declare
+    // (`MissingStaticArray`) and a trailing member the element type does not
+    // declare (`StaticMatrix[0,0].RunB(...)` on a `PlainHolder<HelperB>`)
+    // fail closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::JaggedDirect",
+        "Demo::Caller::JaggedVar",
+        "Demo::Caller::MatrixDirect",
+        "Demo::Caller::MatrixVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::JaggedDirect",
+        "Demo::Caller::JaggedVar",
+        "Demo::Caller::MatrixDirect",
+        "Demo::Caller::MatrixVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
