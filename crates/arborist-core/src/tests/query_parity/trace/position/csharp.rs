@@ -33702,3 +33702,116 @@ class InheritedCaller : CallerBase {
         );
     }
 }
+
+#[test]
+fn traces_csharp_direct_static_member_element_access_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder { public HelperB[] Items => default; }
+class DeepHolder { public HelperB[] Deep => default; }
+class Holder { public HelperB[] Items => default; }
+class Plain {
+    public static PlainHolder[] StaticNestedArray => default;
+    public static PlainHolder StaticNested => default;
+    public static DeepHolder[] LevelA => default;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    HelperB[] fieldItems = default!;
+    int FieldDirect() { return fieldItems[0].RunB(71); }
+    int ThisFieldDirect() { return this.fieldItems[0].RunB(72); }
+    int ParamDirect(Holder holder) { return holder.Items[0].RunB(73); }
+    int LocalDirect() { var h = new Holder(); return h.Items[0].RunB(74); }
+    int ConstructedDirect() { return new Holder().Items[0].RunB(75); }
+    int TypeQualifiedDirect() { return Plain.StaticNestedArray[0].Items[0].RunB(76); }
+    int TypeQualifiedDottedDirect() { return Plain.StaticNested.Items[0].RunB(77); }
+    int TypeQualifiedGlobalDirect() { return global::Lib.Plain.StaticNestedArray[0].Items[0].RunB(78); }
+    int StaticImportDirect() { return StaticNestedArray[0].Items[0].RunB(79); }
+    int StaticImportDottedDirect() { return StaticNested.Items[0].RunB(80); }
+    int TypeQualifiedThreeLevel() { return Plain.LevelA[0].Deep[0].RunB(81); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Usings.cs"),
+        "global using static Lib.Plain;
+",
+    )
+    .unwrap();
+
+    // A direct member chain rooted at a static type-qualified or
+    // static-imported member with element-access hops, such as
+    // `Plain.StaticNestedArray[0].Items[0].RunB(...)`,
+    // `Plain.StaticNested.Items[0].RunB(...)`,
+    // `global::Lib.Plain.StaticNestedArray[0].Items[0].RunB(...)`, or
+    // `StaticNestedArray[0].Items[0].RunB(...)` (with
+    // `global using static Lib.Plain;`), records the full chain spelling and
+    // resolves the static member root, strips one array component layer per
+    // element-access depth, walks remaining instance hops, and dispatches the
+    // final member on the element type. Three-level chains
+    // (`Plain.LevelA[0].Deep[0].RunB(...)`) walk repeated element-access
+    // hops, and the bound-field/param/local/constructed instance forms keep
+    // the same chain shapes working alongside the static roots.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 11);
+    for caller in [
+        "Demo::Caller::ConstructedDirect",
+        "Demo::Caller::FieldDirect",
+        "Demo::Caller::LocalDirect",
+        "Demo::Caller::ParamDirect",
+        "Demo::Caller::StaticImportDirect",
+        "Demo::Caller::StaticImportDottedDirect",
+        "Demo::Caller::ThisFieldDirect",
+        "Demo::Caller::TypeQualifiedDirect",
+        "Demo::Caller::TypeQualifiedDottedDirect",
+        "Demo::Caller::TypeQualifiedGlobalDirect",
+        "Demo::Caller::TypeQualifiedThreeLevel",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 11);
+    for caller in [
+        "Demo::Caller::ConstructedDirect",
+        "Demo::Caller::FieldDirect",
+        "Demo::Caller::LocalDirect",
+        "Demo::Caller::ParamDirect",
+        "Demo::Caller::StaticImportDirect",
+        "Demo::Caller::StaticImportDottedDirect",
+        "Demo::Caller::ThisFieldDirect",
+        "Demo::Caller::TypeQualifiedDirect",
+        "Demo::Caller::TypeQualifiedDottedDirect",
+        "Demo::Caller::TypeQualifiedGlobalDirect",
+        "Demo::Caller::TypeQualifiedThreeLevel",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
