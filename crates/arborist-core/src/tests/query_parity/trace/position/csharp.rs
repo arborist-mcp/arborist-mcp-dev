@@ -33446,3 +33446,151 @@ class Caller {
         "Demo::Caller::ForeachThreeLevelStaticNested"
     );
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_array_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class PlainHolder { public HelperB[] Items => default; }
+class Plain {
+    public static PlainHolder[] StaticNestedArray => default;
+}
+class Outer<T> {
+    public class Inner<U> {
+        public static Inner<U>[] StaticNestedArray => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static Inner<V>[] StaticNestedArray => default;
+            public V[] Items => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int VarArrayPlain() { var x = Plain.StaticNestedArray; var first = x[0].Items[0]; return first.RunB(1); }
+    int VarArrayPlainDirect() { var x = Plain.StaticNestedArray; return x[0].Items[0].RunB(11); }
+    int VarArrayConstructed() { var x = Outer<HelperA>.Inner<HelperB>.StaticNestedArray; var first = x[0].Items[0]; return first.RunB(2); }
+    int VarArrayConstructedDirect() { var x = Outer<HelperA>.Inner<HelperB>.StaticNestedArray; return x[0].Items[0].RunB(12); }
+    int VarArrayConstructedOuter() { var x = Outer<HelperA>.Inner<HelperB>.StaticNestedArray; var first = x[0].OuterItems[0]; return first.RunA(3); }
+    int VarArrayConstructedOuterDirect() { var x = Outer<HelperA>.Inner<HelperB>.StaticNestedArray; return x[0].OuterItems[0].RunA(13); }
+    int VarArrayGlobal() { var x = global::Lib.Outer<HelperA>.Inner<HelperB>.StaticNestedArray; var first = x[0].Items[0]; return first.RunB(4); }
+    int VarArrayThreeLevel() { var x = Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticNestedArray; var first = x[0].Items[0]; return first.RunC(5); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a static member chain whose terminal member is
+    // an array (`var x = Plain.StaticNestedArray` over `PlainHolder[]`, or
+    // `var x = Outer<HelperA>.Inner<HelperB>.StaticNestedArray` over
+    // `Inner<HelperB>[]`) resolves each `x[0]` element access to the chain
+    // terminal's element component type through the receiver's concrete
+    // generic arguments, so `x[0].Items[0]` dispatches on `HelperB` and the
+    // outer-parameter member `T[] OuterItems` dispatches on `HelperA`. The
+    // element-access `var first = x[0].Items[0]` and a direct
+    // `x[0].Items[0].RunB(...)` chain bind identically, and a `global::`-
+    // qualified receiver and a three-level constructed receiver
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>`) bind through the same
+    // path.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarArrayConstructedOuter",
+        "Demo::Caller::VarArrayConstructedOuterDirect",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::VarArrayPlain",
+        "Demo::Caller::VarArrayPlainDirect",
+        "Demo::Caller::VarArrayConstructed",
+        "Demo::Caller::VarArrayConstructedDirect",
+        "Demo::Caller::VarArrayGlobal",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 1);
+    assert_eq!(
+        run_c_live.callers[0].symbol_id,
+        "Demo::Caller::VarArrayThreeLevel"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarArrayConstructedOuter",
+        "Demo::Caller::VarArrayConstructedOuterDirect",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::VarArrayPlain",
+        "Demo::Caller::VarArrayPlainDirect",
+        "Demo::Caller::VarArrayConstructed",
+        "Demo::Caller::VarArrayConstructedDirect",
+        "Demo::Caller::VarArrayGlobal",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 1);
+    assert_eq!(
+        run_c_persisted.callers[0].symbol_id,
+        "Demo::Caller::VarArrayThreeLevel"
+    );
+}
