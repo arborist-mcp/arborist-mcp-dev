@@ -34473,3 +34473,121 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_static_imported_constructed_base_static_member_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class GenericBase<T> {
+    public static PlainHolder<T>[] StaticNestedArray => default;
+    public static PlainHolder<T> StaticNested => default;
+}
+class FixedDerived : GenericBase<HelperB> { }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int StaticImportFixedDerivedDirect() { return StaticNestedArray[0].Items[0].RunB(151); }
+    int StaticImportFixedDerivedDottedDirect() { return StaticNested.Items[0].RunB(152); }
+    int StaticImportFixedDerivedVar() { var x = StaticNestedArray; return x[0].Items[0].RunB(153); }
+    int FixedDerivedDirect() { return FixedDerived.StaticNestedArray[0].Items[0].RunB(154); }
+    int FailClosedMissingStatic() { return MissingStaticArray[0].Items[0].RunB(155); }
+    int FailClosedInstanceOnElement() { return StaticNestedArray[0].RunB(156); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Usings.cs"),
+        "global using static Lib.FixedDerived;
+",
+    )
+    .unwrap();
+
+    // A `using static` import of a non-generic derived type brings in
+    // inherited static members through a constructed generic base too, so
+    // `global using static Lib.FixedDerived;` with
+    // `FixedDerived : GenericBase<HelperB>` imports `StaticNestedArray`
+    // declared on `GenericBase<T>`; the nearest class/record ancestor that
+    // declares the member pins the declaring type, and the composed
+    // constructed base arguments substitute `T` with `HelperB` in the
+    // member's declared type (`PlainHolder<T>[]` becomes
+    // `PlainHolder<HelperB>[]`) before the element component chain walks.
+    // The element-access chain, dotted non-array root, `var`-initializer
+    // form, and direct type-qualified spelling all resolve; a static member
+    // no imported type or ancestor declares (`MissingStaticArray`) and a
+    // trailing member the element type does not declare
+    // (`StaticNestedArray[0].RunB(...)` on a `PlainHolder<HelperB>`) fail
+    // closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FixedDerivedDirect",
+        "Demo::Caller::StaticImportFixedDerivedDirect",
+        "Demo::Caller::StaticImportFixedDerivedDottedDirect",
+        "Demo::Caller::StaticImportFixedDerivedVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::FixedDerivedDirect",
+        "Demo::Caller::StaticImportFixedDerivedDirect",
+        "Demo::Caller::StaticImportFixedDerivedDottedDirect",
+        "Demo::Caller::StaticImportFixedDerivedVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
