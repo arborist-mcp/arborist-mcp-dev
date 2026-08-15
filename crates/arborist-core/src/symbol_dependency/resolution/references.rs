@@ -4402,9 +4402,26 @@ fn resolve_csharp_initializer_chain_binding(
             deadline,
         );
     }
-    let Some((receiver_name, member_chain)) = chain.split_once('.') else {
+    let (receiver_name, member_chain) = if let Some((constructed_receiver, constructed_chain)) =
+        csharp_constructed_receiver_split(chain)
+        && csharp_receiver_is_constructed_type(
+            source_symbol,
+            &constructed_receiver,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        ) {
+        (constructed_receiver, constructed_chain)
+    } else if let Some((receiver, member)) = chain.split_once('.') {
+        (receiver.to_string(), member.to_string())
+    } else {
         return Ok(None);
     };
+    let (receiver_name, member_chain) = (receiver_name.as_str(), member_chain.as_str());
     if receiver_name.is_empty() || member_chain.is_empty() {
         return Ok(None);
     }
@@ -5658,6 +5675,102 @@ fn csharp_top_level_dot_split(spelling: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Splits a member-chain spelling at the first `()`-shaped constructed-type or
+/// factory-call marker segment when a member chain follows it, such as
+/// `Outer<HelperA>.Inner<HelperB>().Items` into `Outer<HelperA>.Inner<HelperB>()`
+/// and `Items`, or `makeGroup().GetItems().entry` into `makeGroup()` and
+/// `GetItems().entry`. Dots inside `<...>` type arguments never split a
+/// segment, so dotted constructed type paths stay together in the receiver.
+/// A spelling whose first call-shaped marker is the final segment (no member
+/// chain after it), with no call-shaped marker, or with unbalanced angle
+/// groups returns `None` and lets the caller fall back to the plain first-dot
+/// split.
+fn csharp_constructed_receiver_split(spelling: &str) -> Option<(String, String)> {
+    let mut segments = Vec::new();
+    let mut depth = 0usize;
+    let mut last_start = 0usize;
+    for (index, character) in spelling.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            '.' if depth == 0 => {
+                if index == last_start {
+                    return None;
+                }
+                segments.push(&spelling[last_start..index]);
+                last_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if last_start == spelling.len() {
+        return None;
+    }
+    segments.push(&spelling[last_start..]);
+    let marker_index = segments
+        .iter()
+        .position(|segment| segment.ends_with("()"))?;
+    if marker_index + 1 >= segments.len() {
+        return None;
+    }
+    Some((
+        segments[..=marker_index].join("."),
+        segments[marker_index + 1..].join("."),
+    ))
+}
+
+/// Returns whether a constructed-receiver spelling such as
+/// `Outer<HelperA>.Inner<HelperB>()` resolves as a declared type, so the
+/// constructed-receiver split is only preferred when the dotted prefix really
+/// is a constructed type path rather than a bound-receiver factory call such
+/// as `o.GetOuterBox()` or a bare factory call such as `makeGroup()`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# constructed-receiver type existence checks explicit"
+)]
+fn csharp_receiver_is_constructed_type(
+    source_symbol: &IndexedSymbol,
+    constructed_receiver: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> bool {
+    let Some(type_name) = constructed_receiver.strip_suffix("()") else {
+        return false;
+    };
+    if type_name.is_empty()
+        || type_name
+            .split('.')
+            .any(|segment| segment.is_empty() || segment.contains(['[', ']', '(', ')', '?']))
+    {
+        return false;
+    }
+    let Ok(Some(binding)) = resolve_csharp_receiver_type_binding(
+        source_symbol,
+        type_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    ) else {
+        return false;
+    };
+    csharp_dispatchable_type_path(
+        source_symbol,
+        raw_symbols,
+        &binding,
+        csharp_is_type_declaration,
+    )
+    .is_some()
+}
+
 /// Extends an element-access receiver such as `global::Demo` or `Sub` to the
 /// longest dotted prefix that resolves as a unique type, so a root such as
 /// `global::Demo.Util.holder?.items[0]` or `Sub.Util2.holder?.items[0]`
@@ -5808,9 +5921,26 @@ fn csharp_qualified_element_access_component_type_path(
             }
             (receiver.to_string(), chain.to_string(), true)
         } else {
-            let Some((receiver, chain)) = csharp_top_level_dot_split(base_reference) else {
+            let (receiver, chain) = if let Some((constructed_receiver, constructed_chain)) =
+                csharp_constructed_receiver_split(base_reference)
+                && csharp_receiver_is_constructed_type(
+                    source_symbol,
+                    &constructed_receiver,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                ) {
+                (constructed_receiver, constructed_chain)
+            } else if let Some((receiver, chain)) = csharp_top_level_dot_split(base_reference) {
+                (receiver.to_string(), chain.to_string())
+            } else {
                 return Ok(None);
             };
+            let (receiver, chain) = (receiver.as_str(), chain.as_str());
             if receiver.is_empty() || chain.is_empty() {
                 return Ok(None);
             }
