@@ -6176,6 +6176,10 @@ fn csharp_qualified_element_access_component_type_path(
         else {
             return Ok(None);
         };
+        let Some(binding) = canonicalize_csharp_type_binding(source_symbol, &binding, raw_symbols)
+        else {
+            return Ok(None);
+        };
         (binding, source_symbol, false)
     } else if constructed_root
         && let Some(type_name) = receiver.strip_suffix("()")
@@ -6210,6 +6214,10 @@ fn csharp_qualified_element_access_component_type_path(
         // as `makeGroup()` in `makeGroup().items[0]` falls through to the
         // bare factory-call interpretation instead of failing the whole
         // chain, and unknown constructed types fail closed.
+        let Some(binding) = canonicalize_csharp_type_binding(source_symbol, &binding, raw_symbols)
+        else {
+            return Ok(None);
+        };
         (binding, source_symbol, false)
     } else if let Some(mut leading_call) =
         csharp_outer_parenthesized_inner(receiver).or(Some(receiver))
@@ -7432,6 +7440,40 @@ fn resolve_csharp_member_hop_type_binding(
     let enclosing_count = candidate_type_segment_count.saturating_sub(1);
     let enclosing_generic_arguments = if scope_type_arguments.len() == type_segment_count {
         scope_type_arguments[..enclosing_count.min(scope_type_arguments.len())].to_vec()
+    } else if let Some(composed_enclosing) = csharp_compose_enclosing_generic_arguments_to_type(
+        &current_binding.semantic_type_path,
+        &current_binding.generic_arguments,
+        &current_binding.enclosing_generic_arguments,
+        scope_type_path,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        // A receiver that does not spell per-type-segment concrete arguments
+        // itself, such as `new Derived()` where `Derived` inherits from
+        // `Outer<HelperA>.Inner<HelperB>` or a `this`/`base`-rooted chain,
+        // composes the hop scope type's enclosing and own concrete arguments
+        // through the unique class/record ancestor chain so outer-parameter
+        // members still substitute; unresolvable or ambiguous chains keep
+        // empty entries and fail closed downstream.
+        let mut composed_arguments = composed_enclosing;
+        if let Some(own_arguments) = csharp_compose_generic_arguments_to_type(
+            &current_binding.semantic_type_path,
+            &current_binding.generic_arguments,
+            scope_type_path,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            composed_arguments.push(own_arguments);
+        }
+        composed_arguments[..enclosing_count.min(composed_arguments.len())].to_vec()
     } else {
         vec![Vec::new(); enclosing_count]
     };
