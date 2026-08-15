@@ -35289,15 +35289,13 @@ class Caller {
             "missing live RunB caller {caller}"
         );
     }
-    for caller in ["Demo::Caller::GenericNestedMissingDirect"] {
-        assert!(
-            !run_b_live
-                .callers
-                .iter()
-                .any(|candidate| candidate.symbol_id == caller),
-            "unexpected live RunB caller for missing member {caller}"
-        );
-    }
+    assert!(
+        !run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericNestedMissingDirect"),
+        "unexpected live RunB caller for missing member Demo::Caller::GenericNestedMissingDirect"
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let run_b_persisted =
@@ -35318,15 +35316,13 @@ class Caller {
             "missing persisted RunB caller {caller}"
         );
     }
-    for caller in ["Demo::Caller::GenericNestedMissingDirect"] {
-        assert!(
-            !run_b_persisted
-                .callers
-                .iter()
-                .any(|candidate| candidate.symbol_id == caller),
-            "unexpected persisted RunB caller for missing member {caller}"
-        );
-    }
+    assert!(
+        !run_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericNestedMissingDirect"),
+        "unexpected persisted RunB caller for missing member Demo::Caller::GenericNestedMissingDirect"
+    );
 }
 
 #[test]
