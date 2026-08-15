@@ -2696,6 +2696,140 @@ fn resolve_csharp_factory_chain_receiver_binding(
     Ok(None)
 }
 
+/// Resolves the declared-type binding of a leading static member on a
+/// constructed static receiver such as `StaticNested` in
+/// `Outer<HelperA>.Inner<HelperB>.StaticNested.Items[0]` or
+/// `StaticNestedArray[0]` in
+/// `Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items[0]`. The
+/// receiver binding pins the declaring type, and the member must be declared
+/// static with a usable declared type; the receiver's concrete generic
+/// arguments substitute into the declared type (so `Inner<U>` resolves to
+/// `Inner<HelperB>` and an outer-parameter member `T[] OuterItems` to
+/// `HelperA[]`), one array component layer is stripped per element-access
+/// depth, and the resulting component type resolves in the declaring type's
+/// own file and enclosing scope. Unknown, instance, non-array, or
+/// unresolvable members return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# constructed static receiver member binding inputs explicit"
+)]
+fn resolve_csharp_constructed_static_receiver_member_binding(
+    source_symbol: &IndexedSymbol,
+    receiver_binding: &CSharpBaseTypeBinding,
+    member_name: &str,
+    element_depth: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let Some(type_path) = csharp_dispatchable_type_path(
+        source_symbol,
+        raw_symbols,
+        receiver_binding,
+        csharp_is_type_declaration,
+    ) else {
+        return Ok(None);
+    };
+    let type_indexes = semantic_path_index
+        .get(&type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        .collect::<Vec<_>>();
+    if type_indexes.len() != 1 {
+        return Ok(None);
+    }
+    let type_symbol = &raw_symbols[type_indexes[0]];
+    let Some(member_bindings) = csharp_member_type_bindings_for_type(
+        &type_symbol.file_path,
+        type_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if !member_bindings.contains(member_name) || !member_bindings.is_static_member(member_name) {
+        return Ok(None);
+    }
+    let Some(declared_type) = member_bindings.type_for(member_name) else {
+        return Ok(None);
+    };
+    let mut declared_type = declared_type.to_string();
+    if let Some(parameters) = csharp_type_parameter_names_for_type(
+        &type_symbol.file_path,
+        type_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        declared_type = substitute_csharp_type_parameters(
+            &declared_type,
+            &parameters,
+            &receiver_binding.generic_arguments,
+        );
+    }
+    declared_type = substitute_csharp_enclosing_type_parameters(
+        type_symbol,
+        &receiver_binding.enclosing_generic_arguments,
+        &declared_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    let Some(component_type) =
+        csharp_array_component_spelling_at_depth(&declared_type, element_depth)
+    else {
+        return Ok(None);
+    };
+    let Some(binding) = resolve_csharp_member_hop_type_binding(
+        type_symbol,
+        &component_type,
+        receiver_binding,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    // The component binding resolves in the declaring type's own file and
+    // enclosing scope; canonicalize it so callers in other namespaces
+    // dispatch on the canonical declared type.
+    Ok(canonicalize_csharp_type_binding(
+        type_symbol,
+        &binding,
+        raw_symbols,
+    ))
+}
+
+/// Parses a leading static member hop spelling such as `StaticNested` (a
+/// plain member) or `StaticNestedArray[0]` (an element-access member) into
+/// the member name and element-access depth. Method-call spellings return
+/// `None` so they fall through to the factory-call branches, and malformed
+/// or non-identifier spellings fail closed.
+fn csharp_static_member_element_access_spelling(hop: &str) -> Option<(String, usize)> {
+    if hop.contains(['(', ')']) {
+        return None;
+    }
+    let member = csharp_array_access_member_name(hop).unwrap_or(hop);
+    if !is_safe_csharp_identifier(member) {
+        return None;
+    }
+    let depth = csharp_array_access_depth(hop).unwrap_or(0);
+    Some((member.to_string(), depth))
+}
+
 /// Resolves the receiver type binding for a `var` local initialized from a
 /// factory call such as `var helper = MakeHelper()` or
 /// `var helper = holder.MakeHelper()`. The factory call resolves as an
@@ -6480,6 +6614,47 @@ fn csharp_qualified_element_access_component_type_path(
         else {
             return Ok(None);
         };
+        hops.remove(0);
+        (leading_binding, source_symbol, false)
+    } else if let Some(leading_hop) = hops.first()
+        && let Some((leading_member, leading_element_depth)) =
+            csharp_static_member_element_access_spelling(leading_hop)
+        && receiver.contains('<')
+        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            receiver,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(leading_binding) = resolve_csharp_constructed_static_receiver_member_binding(
+            source_symbol,
+            &receiver_binding,
+            &leading_member,
+            leading_element_depth,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        // A leading static member on a constructed static receiver such as
+        // `StaticNested` in `Outer<HelperA>.Inner<HelperB>.StaticNested
+        // .Items[0]` or `StaticNestedArray[0]` in
+        // `Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items[0]`
+        // resolves the member's declared type through the receiver's
+        // concrete generic arguments (so `Inner<U> StaticNested` pins
+        // `Inner<HelperB>` and `Inner<U>[] StaticNestedArray[0]` pins the
+        // same component), strips one array component layer per
+        // element-access depth, consumes the leading hop, and walks the
+        // remaining chain and terminal array member as an instance receiver;
+        // unknown, instance, non-array, or unresolvable members fail closed.
         hops.remove(0);
         (leading_binding, source_symbol, false)
     } else if let Some(leading_field) = hops.first()
