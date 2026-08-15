@@ -4621,7 +4621,38 @@ fn resolve_csharp_initializer_chain_binding(
         ) {
         (constructed_receiver, constructed_chain)
     } else if let Some((receiver, member)) = chain.split_once('.') {
-        (receiver.to_string(), member.to_string())
+        // A constructed-type leading segment such as `Outer<HelperA>` in
+        // `Outer<HelperA>.Inner<HelperB>.StaticNested` (or a
+        // `global::`-qualified type root such as `global::Lib` in
+        // `global::Lib.Outer<HelperA>.Inner<HelperB>.StaticNested`) absorbs
+        // any following type segments through the same namespace-imported
+        // and alias dotted type rules as qualified element-access receivers,
+        // so the whole constructed receiver pins the static member; plain
+        // receivers keep the first-segment split.
+        let (receiver_name, absorbed) =
+            if receiver.contains('<') || receiver.starts_with("global::") {
+                csharp_qualified_element_access_receiver(
+                    source_symbol,
+                    receiver,
+                    member,
+                    bindings,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                (receiver.to_string(), 0)
+            };
+        let member_chain = member
+            .split('.')
+            .skip(absorbed)
+            .collect::<Vec<_>>()
+            .join(".");
+        (receiver_name, member_chain)
     } else {
         return Ok(None);
     };
@@ -4938,6 +4969,64 @@ fn resolve_csharp_initializer_chain_binding(
             source_symbol,
             binding,
             &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
+    }
+    // A chain whose leading receiver is a constructed static type such as
+    // `Outer<HelperA>.Inner<HelperB>.StaticNested` in
+    // `var nested = Outer<HelperA>.Inner<HelperB>.StaticNested` resolves the
+    // first member as a static field, property, or element-access member on
+    // the receiver's concrete generic arguments, then walks any remaining
+    // hops through the same member-chain rules; unknown, instance, non-array,
+    // or unresolvable members fail closed.
+    if receiver_name.contains('<')
+        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            receiver_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(first) = hops.first()
+        && let Some((leading_member, leading_element_depth)) =
+            csharp_static_member_element_access_spelling(first)
+        && let Some(leading_binding) = resolve_csharp_constructed_static_receiver_member_binding(
+            source_symbol,
+            &receiver_binding,
+            &leading_member,
+            leading_element_depth,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        if hops.len() == 1 {
+            return Ok(Some(leading_binding));
+        }
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            leading_binding,
+            &hops[1..],
             raw_symbols,
             semantic_path_index,
             csharp_global_import_context,

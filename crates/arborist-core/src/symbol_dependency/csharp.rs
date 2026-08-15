@@ -1311,6 +1311,19 @@ fn csharp_initializer_chain_spelling(
                 segments.push(spelling);
                 break;
             }
+            "generic_name" => {
+                // A constructed-type root such as `Outer<HelperA>` in
+                // `Outer<HelperA>.Inner<HelperB>.StaticNested` records the
+                // generic spelling as the leading segment; the resolver
+                // dispatches the remaining members on the constructed type.
+                // Malformed or empty spellings fail closed.
+                let spelling = node_text(current, source)?.trim();
+                if spelling.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(spelling.to_string());
+                break;
+            }
             "parenthesized_expression" => {
                 // A parenthesized segment such as `(MakeFactory())` in
                 // `(MakeFactory()).entry` or `(group).inner().helper` unwraps

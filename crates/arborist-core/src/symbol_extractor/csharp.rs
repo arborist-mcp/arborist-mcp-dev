@@ -397,6 +397,24 @@ fn csharp_instance_member_chain_spelling(
                 segments.push(spelling);
                 break;
             }
+            "generic_name" => {
+                // A constructed-type root such as `Outer<HelperA>` in
+                // `Outer<HelperA>.Inner<HelperB>.StaticNested` records the
+                // generic spelling as the leading segment; the resolver
+                // dispatches the remaining members on the constructed type.
+                // Only kept when static type-qualified roots are allowed;
+                // otherwise the caller falls through to the static type-call
+                // handling.
+                if !keep_static_type_roots {
+                    return Ok(None);
+                }
+                let spelling = crate::language::node_text(current, source)?.trim();
+                if spelling.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(spelling.to_string());
+                break;
+            }
             "element_access_expression" => {
                 // An element-access hop such as `items[0]` or
                 // `this.fieldItems[0]` records the bracket on the accessed
