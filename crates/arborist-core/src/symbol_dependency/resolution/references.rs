@@ -2612,6 +2612,33 @@ fn resolve_csharp_factory_chain_receiver_binding(
             deadline,
         );
     }
+    // A dotted receiver that resolves as a plain or constructed type path
+    // (such as `Outer<HelperA>.Inner<HelperB>` in
+    // `Outer<HelperA>.Inner<HelperB>.MakeStaticItems()`) pins the receiver
+    // to the type binding, keeping its concrete generic arguments so the
+    // trailing factory's declared return type substitutes them.
+    if chain.contains('.')
+        && let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            chain,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        )
+        .is_some()
+    {
+        return Ok(Some(binding));
+    }
     if chain.contains('.') {
         return resolve_csharp_initializer_chain_binding(
             source_symbol,
@@ -4137,6 +4164,17 @@ fn resolve_csharp_factory_static_method<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<&'a IndexedSymbol>> {
+    // A constructed type-qualified static factory such as
+    // `Outer<HelperA>.Inner<HelperB>.MakeStatic` strips its generic
+    // type-argument lists before semantic dispatch (type declarations are
+    // indexed without type arguments), so the static method resolves on the
+    // constructed nested type like its plain spelling. Malformed angle lists
+    // fail closed.
+    let factory_name = match csharp_strip_generic_type_argument_lists(factory_name) {
+        Some(factory_name) => factory_name,
+        None => return Ok(None),
+    };
+    let factory_name = factory_name.as_str();
     let symbol_id = if let Some(target_path) =
         csharp_global_qualified_static_target_path(factory_name)
     {
@@ -6280,6 +6318,23 @@ fn csharp_qualified_element_access_component_type_path(
         && let Some((leading_hop_name, leading_hop_arity, leading_hop_depth)) =
             csharp_method_call_element_access_spelling(leading_hop)
         && let Some(method_type_arguments) = csharp_method_type_arguments(leading_hop)
+        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            receiver,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(receiver_type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &receiver_binding,
+            csharp_is_type_declaration,
+        )
         && let Some(leading_factory) = resolve_csharp_var_factory_method(
             source_symbol,
             &format!("{receiver}.{leading_hop_name}"),
@@ -6295,10 +6350,22 @@ fn csharp_qualified_element_access_component_type_path(
         )?
         && let Some(leading_return) = leading_factory.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_return_type(
+            leading_factory,
+            &receiver_binding,
+            &receiver_type_path,
+            leading_return,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
         && let Ok(leading_return) = substitute_csharp_method_type_parameters(
             leading_factory,
             &method_type_arguments,
-            leading_return,
+            &leading_return,
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
@@ -6337,6 +6404,23 @@ fn csharp_qualified_element_access_component_type_path(
         && let Some((leading_hop_name, leading_hop_arity)) =
             csharp_method_call_hop_spelling(leading_hop)
         && let Some(method_type_arguments) = csharp_method_type_arguments(leading_hop)
+        && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            receiver,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(receiver_type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &receiver_binding,
+            csharp_is_type_declaration,
+        )
         && let Some(leading_factory) = resolve_csharp_var_factory_method(
             source_symbol,
             &format!("{receiver}.{leading_hop_name}"),
@@ -6352,20 +6436,32 @@ fn csharp_qualified_element_access_component_type_path(
         )?
         && let Some(leading_return) = leading_factory.return_type.as_deref()
         && !leading_return.is_empty()
-        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+        && let Ok(leading_return) = substitute_csharp_method_return_type(
             leading_factory,
-            &method_type_arguments,
+            &receiver_binding,
+            &receiver_type_path,
             leading_return,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
         )
-        && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_factory,
+            &method_type_arguments,
+            &leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
+        && let Some(leading_binding) = resolve_csharp_member_hop_type_binding(
             leading_factory,
             &leading_return,
+            &receiver_binding,
             raw_symbols,
             semantic_path_index,
-            csharp_source_namespace_path(leading_factory, raw_symbols).flatten(),
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -6532,11 +6628,41 @@ fn csharp_qualified_element_access_component_type_path(
         let Some(declared_type) = member_bindings.type_for(&terminal) else {
             return Ok(None);
         };
+        // A constructed static receiver such as
+        // `Outer<HelperA>.Inner<HelperB>.StaticItems` substitutes the
+        // receiver's concrete generic arguments into the static member's
+        // declared type before stripping the array component layers, so
+        // `U[] StaticItems` resolves to `HelperB[]` (and an
+        // outer-parameter member `T[]` resolves to `HelperA[]`).
+        let mut declared_type = declared_type.to_string();
+        if let Some(parameters) = csharp_type_parameter_names_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            declared_type = substitute_csharp_type_parameters(
+                &declared_type,
+                &parameters,
+                &binding.generic_arguments,
+            );
+        }
+        declared_type = substitute_csharp_enclosing_type_parameters(
+            type_symbol,
+            &binding.enclosing_generic_arguments,
+            &declared_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
         let Some(component_type) = csharp_array_component_spelling_at_depth(&declared_type, depth)
         else {
             return Ok(None);
         };
-        resolve_csharp_receiver_type_binding(
+        let Some(result) = resolve_csharp_receiver_type_binding(
             type_symbol,
             &component_type,
             raw_symbols,
@@ -6546,7 +6672,18 @@ fn csharp_qualified_element_access_component_type_path(
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
-        )
+        )?
+        else {
+            return Ok(None);
+        };
+        // The element component binding resolves in the declaring type's own
+        // file and enclosing scope; canonicalize it so callers in other
+        // namespaces dispatch on the canonical declared type.
+        Ok(canonicalize_csharp_type_binding(
+            type_symbol,
+            &result,
+            raw_symbols,
+        ))
     } else {
         // The terminal hop is the accessed array member; mark it as one
         // element-access hop per depth so the member-chain walk requires an
@@ -11111,6 +11248,25 @@ fn is_production_go_source_file(file_path: &str) -> bool {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .is_some_and(|stem| stem.ends_with("_test"))
+}
+
+/// Strips generic type-argument lists from a dotted type spelling such as
+/// `Outer<HelperA>.Inner<HelperB>` -> `Outer.Inner`, preserving dots and the
+/// `global::` prefix, so static-member dispatch on constructed nested types
+/// builds the same semantic path as the plain type declaration. Malformed or
+/// unbalanced angle lists return `None` and fail closed.
+fn csharp_strip_generic_type_argument_lists(reference_name: &str) -> Option<String> {
+    let mut normalized = String::with_capacity(reference_name.len());
+    let mut depth = 0usize;
+    for character in reference_name.chars() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            _ if depth == 0 => normalized.push(character),
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(normalized)
 }
 
 fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<String> {
