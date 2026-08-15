@@ -36464,3 +36464,134 @@ class Util {
         );
     }
 }
+#[test]
+fn traces_csharp_direct_bare_factory_member_chain_multidimensional_element_access_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Caller {
+    Helper[,] makeMatrix() => new Helper[2,2];
+    Helper[][] makeJagged() => new Helper[2][];
+    int MatrixChain() { return makeMatrix()[0,0].entry.Run(1); }
+    int JaggedChain() { return makeJagged()[0][0].entry.Run(1); }
+    int MatrixDirect() { return makeMatrix()[0,0].Run(1); }
+    int JaggedDirect() { return makeJagged()[0][0].Run(1); }
+    int FailClosedMissingMember() { return makeMatrix()[0,0].Missing(1); }
+    int FailClosedTooDeep() { return makeMatrix()[0,0][0].entry.Run(1); }
+    int FailClosedShallow() { return makeJagged()[0].entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct call chain rooted at a bare factory method call with a
+    // multi-dimensional element-access suffix such as
+    // `makeMatrix()[0,0].entry.Run(1)` or `makeJagged()[0][0].entry.Run(1)`
+    // resolves the leading arity-matched factory on the enclosing type,
+    // strips one return-array component layer per element-access group, and
+    // pins the receiver to the element component type, so a
+    // multi-dimensional return array (`Helper[,]` indexed once with `[0,0]`)
+    // and a jagged return array (`Helper[][]` indexed twice with `[0][0]`)
+    // both dispatch the remaining instance hops and the final member on the
+    // canonical declared type. A trailing member the element type does not
+    // declare (`makeMatrix()[0,0].Missing(...)` on a `Helper`), element
+    // access deeper than the return array's layers
+    // (`makeMatrix()[0,0][0]` on a `Helper[,]`), and a shallow index that
+    // leaves an array component without the member (`makeJagged()[0].entry`
+    // on a `Helper[]`) fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in ["Demo::Caller::JaggedChain", "Demo::Caller::MatrixChain"] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    let helper_live =
+        trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 2);
+    for caller in ["Demo::Caller::JaggedDirect", "Demo::Caller::MatrixDirect"] {
+        assert!(
+            helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Helper Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissingMember",
+        "Demo::Caller::FailClosedShallow",
+        "Demo::Caller::FailClosedTooDeep",
+    ] {
+        assert!(
+            !helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_live
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::JaggedChain", "Demo::Caller::MatrixChain"] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    let helper_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::JaggedDirect", "Demo::Caller::MatrixDirect"] {
+        assert!(
+            helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Helper Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissingMember",
+        "Demo::Caller::FailClosedShallow",
+        "Demo::Caller::FailClosedTooDeep",
+    ] {
+        assert!(
+            !helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_persisted
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
