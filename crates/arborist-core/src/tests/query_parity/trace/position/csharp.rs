@@ -34229,3 +34229,131 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_constructed_base_inherited_static_member_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class GenericBase<T> {
+    public static PlainHolder<T>[] StaticNestedArray => default;
+    public static PlainHolder<T> StaticNested => default;
+}
+class GenericDerived<T> : GenericBase<T> { }
+class FixedDerived : GenericBase<HelperB> { }
+class Mid<T> : GenericBase<T> { }
+class Top : Mid<HelperB> { }
+class Reordered<T> : GenericBase<HelperB> { }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int InheritedGenericDirect() { return GenericDerived<HelperB>.StaticNestedArray[0].Items[0].RunB(131); }
+    int InheritedGenericDottedDirect() { return GenericDerived<HelperB>.StaticNested.Items[0].RunB(132); }
+    int InheritedGenericVar() { var x = GenericDerived<HelperB>.StaticNestedArray; return x[0].Items[0].RunB(133); }
+    int InheritedGenericBaseDirect() { return GenericBase<HelperB>.StaticNestedArray[0].Items[0].RunB(134); }
+    int InheritedGenericGlobalDirect() { return global::Lib.GenericDerived<HelperB>.StaticNestedArray[0].Items[0].RunB(135); }
+    int FixedDerivedDirect() { return FixedDerived.StaticNestedArray[0].Items[0].RunB(136); }
+    int TopTwoLevelDirect() { return Top.StaticNestedArray[0].Items[0].RunB(137); }
+    int ReorderedDirect() { return Reordered<HelperB>.StaticNestedArray[0].Items[0].RunB(138); }
+    int FailClosedMissingStatic() { return GenericDerived<HelperB>.MissingStaticArray[0].Items[0].RunB(139); }
+    int FailClosedFixedMissingStatic() { return FixedDerived.MissingStaticArray[0].Items[0].RunB(140); }
+}
+",
+    )
+    .unwrap();
+
+    // A static member element access inherited through a constructed generic
+    // base resolves the member on the nearest class/record ancestor that
+    // declares it, composing the constructed base binding's concrete
+    // arguments from the derived receiver's arguments. That covers a
+    // constructed derived receiver (`GenericDerived<HelperB>.StaticNestedArray`
+    // with `GenericDerived<T> : GenericBase<T>`), a non-generic derived
+    // receiver with a constructed base (`FixedDerived : GenericBase<HelperB>`),
+    // a two-level generic chain (`Top : Mid<HelperB>` with `Mid<T> :
+    // GenericBase<T>`), a derived type that pins its base arguments
+    // independently of its own parameter (`Reordered<T> :
+    // GenericBase<HelperB>`), the direct base spelling
+    // (`GenericBase<HelperB>.StaticNestedArray`), the `global::`-qualified
+    // spelling, and the `var`-initializer form. A static member no ancestor
+    // declares (`GenericDerived<HelperB>.MissingStaticArray` or
+    // `FixedDerived.MissingStaticArray`) fails closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::FixedDerivedDirect",
+        "Demo::Caller::InheritedGenericBaseDirect",
+        "Demo::Caller::InheritedGenericDirect",
+        "Demo::Caller::InheritedGenericDottedDirect",
+        "Demo::Caller::InheritedGenericGlobalDirect",
+        "Demo::Caller::InheritedGenericVar",
+        "Demo::Caller::ReorderedDirect",
+        "Demo::Caller::TopTwoLevelDirect",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedFixedMissingStatic",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::FixedDerivedDirect",
+        "Demo::Caller::InheritedGenericBaseDirect",
+        "Demo::Caller::InheritedGenericDirect",
+        "Demo::Caller::InheritedGenericDottedDirect",
+        "Demo::Caller::InheritedGenericGlobalDirect",
+        "Demo::Caller::InheritedGenericVar",
+        "Demo::Caller::ReorderedDirect",
+        "Demo::Caller::TopTwoLevelDirect",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedFixedMissingStatic",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
