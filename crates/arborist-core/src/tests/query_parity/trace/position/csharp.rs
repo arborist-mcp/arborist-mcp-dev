@@ -34787,3 +34787,122 @@ class Caller {
         );
     }
 }
+
+
+#[test]
+fn traces_csharp_static_imported_constructed_base_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class GenericBase<T> {
+    public static PlainHolder<T>[,] StaticMatrix => default;
+    public static PlainHolder<T>[][] StaticJagged => default;
+}
+class FixedDerived : GenericBase<HelperB> { }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int StaticImportFixedDerivedMatrixDirect() { return StaticMatrix[0,0].Items[0].RunB(181); }
+    int StaticImportFixedDerivedJaggedDirect() { return StaticJagged[0][0].Items[0].RunB(182); }
+    int StaticImportFixedDerivedMatrixVar() { var x = StaticMatrix; return x[0,0].Items[0].RunB(183); }
+    int StaticImportFixedDerivedJaggedVar() { var y = StaticJagged; return y[0][0].Items[0].RunB(184); }
+    int FailClosedMissingStatic() { return MissingStaticArray[0,0].Items[0].RunB(185); }
+    int FailClosedInstanceOnElement() { return StaticMatrix[0,0].RunB(186); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Usings.cs"),
+        "global using static Lib.FixedDerived;
+",
+    )
+    .unwrap();
+
+    // A `using static` import of a non-generic derived type brings in
+    // inherited static members through a constructed generic base too, so
+    // `global using static Lib.FixedDerived;` with
+    // `FixedDerived : GenericBase<HelperB>` imports `StaticMatrix` and
+    // `StaticJagged` declared on `GenericBase<T>`; the nearest class/record
+    // ancestor that declares the member pins the declaring type, and the
+    // composed constructed base arguments substitute `T` with `HelperB` in
+    // the member's declared type before each element-access group strips one
+    // array component layer, so the multi-dimensional (`[0,0]`) and jagged
+    // (`[0][0]`) forms both pin `PlainHolder<HelperB>` before the remaining
+    // instance hops walk. The direct chain and the `var`-initializer form
+    // resolve the same static-imported binding; a static member no imported
+    // type or ancestor declares (`MissingStaticArray`) and a trailing member
+    // the element type does not declare (`StaticMatrix[0,0].RunB(...)` on a
+    // `PlainHolder<HelperB>`) fail closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::StaticImportFixedDerivedJaggedDirect",
+        "Demo::Caller::StaticImportFixedDerivedJaggedVar",
+        "Demo::Caller::StaticImportFixedDerivedMatrixDirect",
+        "Demo::Caller::StaticImportFixedDerivedMatrixVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::StaticImportFixedDerivedJaggedDirect",
+        "Demo::Caller::StaticImportFixedDerivedJaggedVar",
+        "Demo::Caller::StaticImportFixedDerivedMatrixDirect",
+        "Demo::Caller::StaticImportFixedDerivedMatrixVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
