@@ -35551,3 +35551,100 @@ class Caller {
         );
     }
 }
+
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class Outer<T> {
+    public class Inner<U> {
+        public static PlainHolder<U>[,] StaticMatrix => default;
+        public static PlainHolder<U>[][] StaticJagged => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int VarMatrix() { var x = Outer<HelperB>.Inner<HelperB>.StaticMatrix; var first = x[0,0].Items[0]; return first.RunB(251); }
+    int VarJagged() { var y = Outer<HelperB>.Inner<HelperB>.StaticJagged; var first = y[0][0].Items[0]; return first.RunB(252); }
+    int VarFailClosedMissingStatic() { var z = Outer<HelperB>.Inner<HelperB>.MissingMatrix; var first = z[0,0].Items[0]; return first.RunB(253); }
+    int VarFailClosedInstanceOnElement() { var x = Outer<HelperB>.Inner<HelperB>.StaticMatrix; return x[0,0].RunB(254); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static member on a constructed static
+    // receiver (`var x = Outer<HelperB>.Inner<HelperB>.StaticMatrix`) binds
+    // the receiver's concrete generic arguments, so `PlainHolder<U>[,]`
+    // pins `PlainHolder<HelperB>` after the multi-dimensional element access
+    // strips one array component layer, and the jagged form
+    // (`PlainHolder<U>[][]` indexed twice) pins the same component; the
+    // element access on the bound local then dispatches on the substituted
+    // member. A static member the receiver does not declare
+    // (`MissingMatrix`) and a trailing member the element type does not
+    // declare (`x[0,0].RunB(...)` on a `PlainHolder<HelperB>`) fail closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::VarFailClosedInstanceOnElement",
+        "Demo::Caller::VarFailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::VarFailClosedInstanceOnElement",
+        "Demo::Caller::VarFailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
