@@ -6926,12 +6926,12 @@ fn csharp_qualified_element_access_component_type_path(
         else {
             return Ok(None);
         };
-        let Some(result) = resolve_csharp_receiver_type_binding(
+        let Some(result) = resolve_csharp_member_hop_type_binding(
             type_symbol,
             &component_type,
+            &binding,
             raw_symbols,
             semantic_path_index,
-            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
