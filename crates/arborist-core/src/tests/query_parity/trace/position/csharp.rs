@@ -37014,7 +37014,10 @@ class Caller {
     // declare (`item.Missing(...)` on a `Helper`) fail closed.
     let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
     assert_eq!(run_live.callers.len(), 2);
-    for caller in ["Demo::Caller::ForeachJaggedRow", "Demo::Caller::ForeachMatrix"] {
+    for caller in [
+        "Demo::Caller::ForeachJaggedRow",
+        "Demo::Caller::ForeachMatrix",
+    ] {
         assert!(
             run_live
                 .callers
@@ -37023,7 +37026,10 @@ class Caller {
             "missing live Entry Run caller {caller}"
         );
     }
-    for caller in ["Demo::Caller::FailClosedMissing", "Demo::Caller::FailClosedOnElement"] {
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+    ] {
         assert!(
             !run_live
                 .callers
@@ -37038,7 +37044,10 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
             .unwrap();
     assert_eq!(run_persisted.callers.len(), 2);
-    for caller in ["Demo::Caller::ForeachJaggedRow", "Demo::Caller::ForeachMatrix"] {
+    for caller in [
+        "Demo::Caller::ForeachJaggedRow",
+        "Demo::Caller::ForeachMatrix",
+    ] {
         assert!(
             run_persisted
                 .callers
@@ -37047,7 +37056,10 @@ class Caller {
             "missing persisted Entry Run caller {caller}"
         );
     }
-    for caller in ["Demo::Caller::FailClosedMissing", "Demo::Caller::FailClosedOnElement"] {
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+    ] {
         assert!(
             !run_persisted
                 .callers
