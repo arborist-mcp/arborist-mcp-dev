@@ -1979,28 +1979,44 @@ fn resolve_csharp_instance_receiver_call(
                     deadline,
                 )?
             } else {
-                let Some(declared_type) = bindings.raw_for(chain) else {
-                    return Ok(CSharpInstanceReceiverResolution::Blocked);
-                };
-                if declared_type.is_empty() || declared_type.starts_with('@') {
+                if let Some(declared_type) = bindings.raw_for(chain) {
+                    if declared_type.is_empty() || declared_type.starts_with('@') {
+                        return Ok(CSharpInstanceReceiverResolution::Blocked);
+                    }
+                    let Some(component_type) =
+                        csharp_array_component_spelling_at_depth(declared_type, element_depth)
+                    else {
+                        return Ok(CSharpInstanceReceiverResolution::Blocked);
+                    };
+                    resolve_csharp_receiver_type_binding(
+                        source_symbol,
+                        &component_type,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
+                } else if let Some(binding) =
+                    resolve_csharp_unbound_bare_member_array_component_binding(
+                        source_symbol,
+                        chain,
+                        element_depth,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
+                {
+                    Some(binding)
+                } else {
                     return Ok(CSharpInstanceReceiverResolution::Blocked);
                 }
-                let Some(component_type) =
-                    csharp_array_component_spelling_at_depth(declared_type, element_depth)
-                else {
-                    return Ok(CSharpInstanceReceiverResolution::Blocked);
-                };
-                resolve_csharp_receiver_type_binding(
-                    source_symbol,
-                    &component_type,
-                    raw_symbols,
-                    semantic_path_index,
-                    source_namespace_path,
-                    csharp_global_import_context,
-                    file_overrides,
-                    csharp_import_contexts_by_file,
-                    deadline,
-                )?
             }
         } else {
             return Ok(CSharpInstanceReceiverResolution::Blocked);
@@ -2223,28 +2239,44 @@ fn resolve_csharp_instance_receiver_call(
                         // or parameter whose declared array type pins the
                         // element component type; a marker-bound or untyped
                         // chain member fails closed.
-                        let Some(declared_type) = bindings.raw_for(chain) else {
-                            return Ok(CSharpInstanceReceiverResolution::Blocked);
-                        };
-                        if declared_type.is_empty() || declared_type.starts_with('@') {
+                        if let Some(declared_type) = bindings.raw_for(chain) {
+                            if declared_type.is_empty() || declared_type.starts_with('@') {
+                                return Ok(CSharpInstanceReceiverResolution::Blocked);
+                            }
+                            let Some(component_type) =
+                                csharp_array_component_spelling_at_depth(declared_type, base_depth)
+                            else {
+                                return Ok(CSharpInstanceReceiverResolution::Blocked);
+                            };
+                            resolve_csharp_receiver_type_binding(
+                                source_symbol,
+                                &component_type,
+                                raw_symbols,
+                                semantic_path_index,
+                                source_namespace_path,
+                                csharp_global_import_context,
+                                file_overrides,
+                                csharp_import_contexts_by_file,
+                                deadline,
+                            )?
+                        } else if let Some(binding) =
+                            resolve_csharp_unbound_bare_member_array_component_binding(
+                                source_symbol,
+                                chain,
+                                base_depth,
+                                raw_symbols,
+                                semantic_path_index,
+                                source_namespace_path,
+                                csharp_global_import_context,
+                                file_overrides,
+                                csharp_import_contexts_by_file,
+                                deadline,
+                            )?
+                        {
+                            Some(binding)
+                        } else {
                             return Ok(CSharpInstanceReceiverResolution::Blocked);
                         }
-                        let Some(component_type) =
-                            csharp_array_component_spelling_at_depth(declared_type, base_depth)
-                        else {
-                            return Ok(CSharpInstanceReceiverResolution::Blocked);
-                        };
-                        resolve_csharp_receiver_type_binding(
-                            source_symbol,
-                            &component_type,
-                            raw_symbols,
-                            semantic_path_index,
-                            source_namespace_path,
-                            csharp_global_import_context,
-                            file_overrides,
-                            csharp_import_contexts_by_file,
-                            deadline,
-                        )?
                     }
                 } else {
                     None
@@ -6981,6 +7013,206 @@ fn csharp_qualified_element_access_component_type_path(
     }
 }
 
+/// Resolves the element component binding for a bare `var` initializer
+/// chain whose leading member is not a bound local or enclosing field, such
+/// as `var items = StaticNestedArray` followed by `items[0]` with
+/// `using static Lib.Plain;` (a static-imported array member) or
+/// `var items = baseItems` followed by `items[0]` on a bare inherited
+/// base-class field. The member's declared array type resolves in its
+/// declaring type's own file and enclosing scope, stripping one component
+/// layer per element-access depth; unknown, instance, ambiguous, non-array,
+/// and primitive-array members fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# bare unbound member array component resolution inputs explicit"
+)]
+fn resolve_csharp_unbound_bare_member_array_component_binding(
+    source_symbol: &IndexedSymbol,
+    member_name: &str,
+    depth: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    if member_name.is_empty()
+        || member_name.contains('.')
+        || !is_safe_csharp_identifier(member_name)
+    {
+        return Ok(None);
+    }
+    // A bare inherited base-class field or property root resolves first,
+    // walking the unique base-type chain from the nearest ancestor outward;
+    // the first ancestor that declares the member pins the receiver.
+    if let Some(scope_path) = source_symbol.scope_path.as_deref() {
+        let enclosing_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if enclosing_candidates.len() == 1 {
+            let mut ancestor_symbol = enclosing_candidates[0];
+            for _ in 0..64 {
+                let Some(base_binding) = csharp_base_type_binding_for_type(
+                    ancestor_symbol,
+                    raw_symbols,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    break;
+                };
+                let Some(base_type_path) = csharp_dispatchable_type_path(
+                    ancestor_symbol,
+                    raw_symbols,
+                    &base_binding,
+                    csharp_is_type_declaration,
+                ) else {
+                    break;
+                };
+                let base_indexes = semantic_path_index
+                    .get(&base_type_path)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                    .collect::<Vec<_>>();
+                if base_indexes.len() != 1 {
+                    break;
+                }
+                let base_symbol = &raw_symbols[base_indexes[0]];
+                let Some(member_bindings) = csharp_member_type_bindings_for_type(
+                    &base_symbol.file_path,
+                    base_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    break;
+                };
+                if member_bindings.contains(member_name) {
+                    let Some(declared_type) = member_bindings.type_for(member_name) else {
+                        break;
+                    };
+                    let Some(component_type) =
+                        csharp_array_component_spelling_at_depth(&declared_type, depth)
+                    else {
+                        break;
+                    };
+                    let Some(binding) = resolve_csharp_receiver_type_binding(
+                        base_symbol,
+                        &component_type,
+                        raw_symbols,
+                        semantic_path_index,
+                        csharp_source_namespace_path(base_symbol, raw_symbols).flatten(),
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
+                    else {
+                        break;
+                    };
+                    return Ok(canonicalize_csharp_type_binding(
+                        base_symbol,
+                        &binding,
+                        raw_symbols,
+                    ));
+                }
+                ancestor_symbol = base_symbol;
+            }
+        }
+    }
+    // A static-imported member root such as `StaticNestedArray` in
+    // `var items = StaticNestedArray` with `using static Lib.Plain;` resolves
+    // the member on the uniquely imported type, requiring a static field or
+    // property whose declared array type pins the element component.
+    let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
+        &source_symbol.file_path,
+        member_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    if let Some(csharp_global_import_context) = csharp_global_import_context {
+        static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
+            member_name,
+            csharp_global_import_context,
+        ));
+    }
+    if static_type_imports.is_empty() {
+        return Ok(None);
+    }
+    let mut candidates = Vec::new();
+    for import in &static_type_imports {
+        let type_indexes = semantic_path_index
+            .get(&import.semantic_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            continue;
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if !member_bindings.contains(member_name) || !member_bindings.is_static_member(member_name)
+        {
+            continue;
+        }
+        let Some(declared_type) = member_bindings.type_for(member_name) else {
+            continue;
+        };
+        let Some(component_type) = csharp_array_component_spelling_at_depth(&declared_type, depth)
+        else {
+            continue;
+        };
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            type_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if let Some(canonical) =
+            canonicalize_csharp_type_binding(type_symbol, &binding, raw_symbols)
+        {
+            candidates.push(canonical);
+        }
+    }
+    Ok(match candidates.as_slice() {
+        [_] => candidates.pop(),
+        _ => None,
+    })
+}
+
 /// Resolves the element component binding for an element-access base
 /// spelling at a given array depth, whether the base is a bound local with
 /// a directly declared array type (`items` in `items[0].GetOuterItem()`), a
@@ -7209,7 +7441,23 @@ fn csharp_array_element_component_binding(
             );
         }
         let Some(declared_type) = bindings.raw_for(chain) else {
-            return Ok(None);
+            // An unbound bare chain names a static-imported member root or
+            // an inherited base-class field/property; its declared array type
+            // resolves through the same inherited-then-static-imported rules
+            // as bare-chain `var` initializers, stripping one component layer
+            // per element-access depth.
+            return resolve_csharp_unbound_bare_member_array_component_binding(
+                source_symbol,
+                chain,
+                depth,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         };
         if declared_type.is_empty() || declared_type.starts_with('@') {
             return Ok(None);
