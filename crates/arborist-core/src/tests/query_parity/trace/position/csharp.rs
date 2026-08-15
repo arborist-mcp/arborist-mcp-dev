@@ -31953,3 +31953,135 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_constructed_generic_receiver_member_chain_var_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public U[] MakeItems() => Items;
+        public Inner<U> Next => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U>[] NextArray => default;
+    }
+}
+class PlainOuter {
+    public class PlainInner {
+        public HelperA[] Items => default;
+        public PlainInner Next => default;
+        public PlainInner MakeNext() => Next;
+    }
+}
+class Caller {
+    int DirectPropChain() { return new Outer<HelperA>.Inner<HelperB>().Next.Items[0].RunB(1); }
+    int DirectMethodChain() { return new Outer<HelperA>.Inner<HelperB>().MakeNext().Items[0].RunB(2); }
+    int DirectMethodOuter() { return new Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems[0].RunA(3); }
+    int VarPropChain() { var arr = new Outer<HelperA>.Inner<HelperB>().Next.Items; return arr[0].RunB(4); }
+    int VarMethodChain() { var arr = new Outer<HelperA>.Inner<HelperB>().MakeNext().Items; return arr[0].RunB(5); }
+    int VarMethodOuter() { var arr = new Outer<HelperA>.Inner<HelperB>().MakeNext().OuterItems; return arr[0].RunA(6); }
+    int VarNextArray() { var arr = new Outer<HelperA>.Inner<HelperB>().NextArray; return arr[0].MakeNext().Items[0].RunB(7); }
+    int PlainDirectProp() { return new PlainOuter.PlainInner().Next.Items[0].RunA(8); }
+    int PlainVarProp() { var arr = new PlainOuter.PlainInner().Next.Items; return arr[0].RunA(9); }
+    int PlainDirectMethod() { return new PlainOuter.PlainInner().MakeNext().Items[0].RunA(10); }
+}
+",
+    )
+    .unwrap();
+
+    // A nested constructed generic receiver such as
+    // `new Outer<HelperA>.Inner<HelperB>().MakeNext().Items` keeps the dotted
+    // type path together in the `@init:` chain and resolves intermediate
+    // property (`Next`) and method-call (`MakeNext()`) hops on the
+    // constructed nested type, so a `var` local bound from the chain
+    // dispatches element access on the substituted inner type parameter
+    // (`U` -> `HelperB`), an outer-parameter member (`T[] OuterItems`)
+    // substitutes the outer argument (`T` -> `HelperA`), and array-typed
+    // hops (`Inner<U>[] NextArray`) continue through element access; the
+    // same chains resolve non-generic nested types (`PlainOuter.PlainInner`)
+    // and direct chains identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::DirectMethodOuter",
+        "Demo::Caller::VarMethodOuter",
+        "Demo::Caller::PlainDirectProp",
+        "Demo::Caller::PlainVarProp",
+        "Demo::Caller::PlainDirectMethod",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::DirectPropChain",
+        "Demo::Caller::DirectMethodChain",
+        "Demo::Caller::VarPropChain",
+        "Demo::Caller::VarMethodChain",
+        "Demo::Caller::VarNextArray",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::DirectMethodOuter",
+        "Demo::Caller::VarMethodOuter",
+        "Demo::Caller::PlainDirectProp",
+        "Demo::Caller::PlainVarProp",
+        "Demo::Caller::PlainDirectMethod",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 5);
+    for caller in [
+        "Demo::Caller::DirectPropChain",
+        "Demo::Caller::DirectMethodChain",
+        "Demo::Caller::VarPropChain",
+        "Demo::Caller::VarMethodChain",
+        "Demo::Caller::VarNextArray",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
