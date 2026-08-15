@@ -508,7 +508,11 @@ fn csharp_direct_invocation_name(
         // static-imported type; a factory-call root with an element-access
         // suffix such as `makeItems()[0].Run(1)` keeps the same chain
         // spelling so the resolver can dispatch the trailing member on the
-        // factory return array's element component type. Bare-call roots are
+        // factory return array's element component type. A static
+        // type-qualified chain whose trailing receiver is an element access
+        // such as `Plain.StaticNestedArray[0].Items[0].Run(1)` keeps the same
+        // chain spelling so the resolver can dispatch the leading static
+        // member root before walking the remaining hops. Bare-call roots are
         // only kept when static type-qualified roots are allowed.
         if matches!(
             receiver.kind(),
@@ -518,7 +522,7 @@ fn csharp_direct_invocation_name(
                 | "conditional_access_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, true)?
-            && spelling.contains('(')
+            && (spelling.contains('(') || spelling.contains('['))
         {
             return Ok(Some(spelling));
         }
@@ -580,16 +584,18 @@ fn csharp_direct_invocation_name(
             }
             // A static type-qualified chain that includes a method-call hop
             // such as `Util.MakeHelper().entry.Run(1)` or
-            // `STATIC_HELPER.inner().entry.Run(1)` cannot be spelled as a
-            // plain dotted type path (the receiver text contains `()`), so
-            // keep the full chain spelling with static type-qualified roots
-            // allowed; the resolver dispatches the leading static factory
-            // method or static-imported member root before walking the
-            // remaining hops. Chains without a method-call hop are already
-            // covered by the dotted type-path spellings above.
+            // `STATIC_HELPER.inner().entry.Run(1)`, or an element-access hop
+            // such as `Plain.StaticNestedArray[0].Items[0].Run(1)`, cannot be
+            // spelled as a plain dotted type path (the receiver text contains
+            // `()` or `[...]`), so keep the full chain spelling with static
+            // type-qualified roots allowed; the resolver dispatches the
+            // leading static factory method or static-imported member root
+            // before walking the remaining hops. Chains without a method-call
+            // or element-access hop are already covered by the dotted
+            // type-path spellings above.
             if let Some(spelling) =
                 csharp_instance_member_chain_spelling(node, source, bindings, true)?
-                && spelling.contains('(')
+                && (spelling.contains('(') || spelling.contains('['))
             {
                 return Ok(Some(spelling));
             }

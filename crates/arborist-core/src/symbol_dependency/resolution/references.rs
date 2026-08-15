@@ -5166,10 +5166,14 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         let hops = &segments[split + 1..];
         let method_call_hop = csharp_method_call_hop_spelling(member);
         let method_element_hop = csharp_method_call_element_access_spelling(member);
+        let member_element_hop = csharp_array_access_member_name(member).and_then(|member_name| {
+            csharp_array_access_depth(member).map(|depth| (member_name.to_string(), depth))
+        });
         if matches!(member, "this" | "base")
             || (!is_safe_csharp_identifier(member)
                 && method_call_hop.is_none()
-                && method_element_hop.is_none())
+                && method_element_hop.is_none()
+                && member_element_hop.is_none())
         {
             return Ok(None);
         }
@@ -5474,6 +5478,16 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 raw_symbols,
             ));
         }
+        // A member hop with an element-access suffix such as
+        // `StaticNestedArray[0]` or `Nested[0][0]` resolves the named static
+        // field/property's declared type and strips one array component layer
+        // per element access before continuing the chain; non-array or
+        // primitive-array members and element access deeper than the declared
+        // array fail closed.
+        let (member_name, member_depth) = match &member_element_hop {
+            Some((member_name, depth)) => (member_name.as_str(), Some(*depth)),
+            None => (member, None),
+        };
         let Some(member_bindings) = csharp_member_type_bindings_for_type(
             &type_symbol.file_path,
             type_symbol.byte_range,
@@ -5484,17 +5498,23 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         else {
             return Ok(None);
         };
-        if !member_bindings.contains(member) {
+        if !member_bindings.contains(member_name) {
             // The member is not declared on this type; a longer type prefix
             // may name a nested type that hosts the member.
             continue;
         }
-        if !member_bindings.is_static_member(member) {
+        if !member_bindings.is_static_member(member_name) {
             // An instance member reached through a type name is invalid C#
             // and fails closed.
             return Ok(None);
         }
-        let Some(member_type_name) = member_bindings.type_for(member) else {
+        let Some(member_type_name) = member_bindings.type_for(member_name) else {
+            return Ok(None);
+        };
+        let Some(member_type_name) = (match member_depth {
+            Some(depth) => csharp_array_component_spelling_at_depth(&member_type_name, depth),
+            None => Some(member_type_name),
+        }) else {
             return Ok(None);
         };
         let Some(member_binding) = resolve_csharp_receiver_type_binding(
@@ -5677,7 +5697,14 @@ fn resolve_csharp_static_imported_member_chain_call(
         Some((root, hops)) => (root, hops.split('.').collect::<Vec<_>>()),
         None => (chain_prefix, Vec::new()),
     };
-    if !is_safe_csharp_identifier(root_member) || hops.iter().any(|hop| hop.is_empty()) {
+    // A root with an element-access suffix such as `StaticNestedArray[0]`
+    // strips the brackets in the binding helper below; any other malformed
+    // root fails closed.
+    if hops.iter().any(|hop| hop.is_empty())
+        || (!is_safe_csharp_identifier(root_member)
+            && (csharp_array_access_member_name(root_member).is_none()
+                || csharp_array_access_depth(root_member).is_none()))
+    {
         return Ok(None);
     }
     // The chain prefix names a static-imported member root followed by zero
@@ -7760,16 +7787,27 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
-    if member_name.is_empty()
-        || member_name.contains('.')
-        || !is_safe_csharp_identifier(member_name)
+    // A root with an element-access suffix such as `StaticNestedArray[0]`
+    // strips the brackets so the named static member resolves and one array
+    // component layer per element access is stripped from its declared type;
+    // plain roots keep depth zero.
+    let (root_name, root_depth) = match (
+        csharp_array_access_member_name(member_name),
+        csharp_array_access_depth(member_name),
+    ) {
+        (Some(base), Some(depth)) => (base, depth),
+        _ => (member_name, 0),
+    };
+    if root_name.is_empty()
+        || root_name.contains('.')
+        || !is_safe_csharp_identifier(root_name)
         || hops.iter().any(|hop| hop.is_empty())
     {
         return Ok(None);
     }
     let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
         &source_symbol.file_path,
-        member_name,
+        root_name,
         source_namespace_path,
         file_overrides,
         csharp_import_contexts_by_file,
@@ -7777,7 +7815,7 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
     )?;
     if let Some(csharp_global_import_context) = csharp_global_import_context {
         static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
-            member_name,
+            root_name,
             csharp_global_import_context,
         ));
     }
@@ -7811,11 +7849,16 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
         else {
             continue;
         };
-        if !member_bindings.contains(member_name) || !member_bindings.is_static_member(member_name)
-        {
+        if !member_bindings.contains(root_name) || !member_bindings.is_static_member(root_name) {
             continue;
         }
-        let Some(member_type_name) = member_bindings.type_for(member_name) else {
+        let Some(member_type_name) = member_bindings.type_for(root_name) else {
+            continue;
+        };
+        let Some(member_type_name) = (match root_depth {
+            0 => Some(member_type_name),
+            depth => csharp_array_component_spelling_at_depth(&member_type_name, depth),
+        }) else {
             continue;
         };
         let Some(member_binding) = resolve_csharp_receiver_type_binding(
