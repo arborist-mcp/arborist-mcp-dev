@@ -37928,3 +37928,98 @@ class PrimitiveCaller : Base<int> {
         );
     }
 }
+
+#[test]
+fn traces_csharp_generic_inherited_field_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Base<T> {
+    protected T[,] MATRIX = default;
+    protected T[][] JAGGED = default;
+}
+class Caller : Base<Helper> {
+    int VarMatrix() { var items = MATRIX; return items[0,0].entry.Run(1); }
+    int VarJagged() { var items = JAGGED; return items[0][0].entry.Run(1); }
+    int FailClosedMissing() { var items = MISSING; return items[0,0].entry.Run(1); }
+    int FailClosedOnElement() { var items = MATRIX; return items[0,0].Missing(1); }
+}
+class PrimitiveCaller : Base<int> {
+    int FailClosedPrimitive() { var items = MATRIX; return items[0,0].entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare inherited generic instance array
+    // field (reached through `class Caller : Base<Helper>` without
+    // qualification) substitutes the base's type parameters with the composed
+    // concrete arguments, so `T[,]` on `Base<T>` indexed once with
+    // `items[0,0]` and `T[][]` indexed twice with `items[0][0]` both dispatch
+    // the remaining instance hops on the substituted element type. A field
+    // the base chain does not declare (`MISSING`), a trailing member the
+    // element type does not declare (`items[0,0].Missing(...)` on a
+    // `Helper`), and a primitive element type (`Base<int>`) all fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
