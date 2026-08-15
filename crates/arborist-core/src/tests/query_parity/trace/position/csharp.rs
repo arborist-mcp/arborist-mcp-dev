@@ -38907,3 +38907,98 @@ class PrimitiveCaller : Outer<int>.Base {
         );
     }
 }
+
+#[test]
+fn traces_csharp_cross_file_namespace_inherited_field_multidimensional_foreach_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Base {
+    protected Helper[,] MATRIX = new Helper[2,2];
+    protected Helper[][] JAGGED = new Helper[2][];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller : Lib.Base {
+    int ForeachMatrix() { foreach (var item in MATRIX) { return item.entry.Run(1); } return 0; }
+    int ForeachJagged() { foreach (var row in JAGGED) { return row[0].entry.Run(1); } return 0; }
+    int FailClosedMissing() { foreach (var item in MISSING) { return item.entry.Run(1); } return 0; }
+    int FailClosedOnElement() { foreach (var item in MATRIX) { return item.Missing(1); } return 0; }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` over a bare inherited array field declared on a base in a
+    // different file and namespace (`class Caller : Lib.Base` from
+    // `namespace Demo`) binds the loop variable to the base member's element
+    // component type, so `Helper[,]` yields `Helper` elements and `Helper[][]`
+    // yields `Helper[]` rows whose `entry.Run(1)` hops trace across files. A
+    // field the base chain does not declare (`MISSING`) and a trailing member
+    // the element type does not declare (`item.Missing(...)` on a `Helper`)
+    // fail closed.
+    let run_live = trace_symbol_graph(&dir, "Lib::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in ["Demo::Caller::ForeachJagged", "Demo::Caller::ForeachMatrix"] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::ForeachJagged", "Demo::Caller::ForeachMatrix"] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
