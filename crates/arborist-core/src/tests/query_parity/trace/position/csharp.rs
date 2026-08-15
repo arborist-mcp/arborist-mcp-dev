@@ -33815,3 +33815,102 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_generic_static_member_element_access_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class DeepHolder<T> { public T[] Deep => default; }
+class Plain<T> {
+    public static PlainHolder<T>[] StaticNestedArray => default;
+    public static PlainHolder<T> StaticNested => default;
+    public static DeepHolder<T>[] LevelA => default;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int GenericStaticDirect() { return Plain<HelperB>.StaticNestedArray[0].Items[0].RunB(91); }
+    int GenericStaticDottedDirect() { return Plain<HelperB>.StaticNested.Items[0].RunB(92); }
+    int GenericStaticVar() { var x = Plain<HelperB>.StaticNestedArray; return x[0].Items[0].RunB(93); }
+    int GenericStaticThreeLevel() { return Plain<HelperB>.LevelA[0].Deep[0].RunB(94); }
+    int GenericMissingMemberDirect() { return Plain<HelperB>.StaticNestedArray[0].RunB(96); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct member chain rooted at a constructed generic static type such
+    // as `Plain<HelperB>.StaticNestedArray[0].Items[0].RunB(...)` resolves
+    // the leading static member on the type's concrete generic arguments, so
+    // a declared type such as `PlainHolder<T>[]` substitutes `T = HelperB`
+    // before one array component layer per element-access depth is stripped
+    // and the remaining instance hops (`Items[0]`) walk the same member-chain
+    // rules. Dotted non-array roots (`Plain<HelperB>.StaticNested.Items[0]`),
+    // three-level chains (`Plain<HelperB>.LevelA[0].Deep[0]`), and the
+    // `var`-initializer form (`var x = Plain<HelperB>.StaticNestedArray`)
+    // resolve through the same substituted binding, while a trailing member
+    // the element type does not declare
+    // (`Plain<HelperB>.StaticNestedArray[0].RunB(...)` on a
+    // `PlainHolder<HelperB>`) fails closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::GenericStaticDirect",
+        "Demo::Caller::GenericStaticDottedDirect",
+        "Demo::Caller::GenericStaticThreeLevel",
+        "Demo::Caller::GenericStaticVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    assert!(
+        !run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericMissingMemberDirect"),
+        "unexpected live RunB caller for missing member"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::GenericStaticDirect",
+        "Demo::Caller::GenericStaticDottedDirect",
+        "Demo::Caller::GenericStaticThreeLevel",
+        "Demo::Caller::GenericStaticVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    assert!(
+        !run_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericMissingMemberDirect"),
+        "unexpected persisted RunB caller for missing member"
+    );
+}
