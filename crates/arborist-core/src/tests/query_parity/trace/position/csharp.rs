@@ -32085,3 +32085,161 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_constructed_generic_receiver_method_call_chain_var_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U> Next => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public V[] Items => default;
+            public T[] OuterItems => default;
+            public Inner<V> MakeNext() => Next;
+            public Inner<V> Next => default;
+        }
+    }
+}
+class PlainOuter {
+    public class PlainInner {
+        public HelperA[] Items => default;
+        public PlainInner Next => default;
+        public PlainInner MakeNext() => Next;
+    }
+}
+class Caller {
+    int Chained() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.Items; return arr[0].RunB(1); }
+    int ChainedOuter() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.OuterItems; return arr[0].RunA(2); }
+    int ChainedDirect() { var a = new Outer<HelperA>.Inner<HelperB>(); var arr = a.Items; return arr[0].RunB(3); }
+    int ThreeLevelChain() { var a = new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().MakeNext(); var arr = a.Items; return arr[0].RunC(4); }
+    int ThreeLevelChainOuter() { var a = new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().MakeNext(); var arr = a.OuterItems; return arr[0].RunA(5); }
+    int ThreeLevel() { var arr = new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().Items; return arr[0].RunC(6); }
+    int ThreeLevelOuter() { var arr = new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().OuterItems; return arr[0].RunA(7); }
+    int ThreeLevelDirect() { return new Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().Items[0].RunC(8); }
+    int PlainChain() { var a = new PlainOuter.PlainInner().MakeNext(); var arr = a.Items; return arr[0].RunA(9); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a method-call chain on a constructed nested
+    // generic receiver such as `var a = new Outer<HelperA>.Inner<HelperB>()
+    // .MakeNext()` keeps the receiver's concrete generic arguments on the
+    // factory marker, so a later member access on the local (`a.Items` or
+    // `a.OuterItems` in a separate statement) substitutes the inner type
+    // parameter (`U` -> `HelperB`) and an outer-parameter member
+    // (`T[] OuterItems` substitutes `T` -> `HelperA`); the same chain
+    // through two enclosing generic levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>().MakeNext()`)
+    // substitutes `V` -> `HelperC` and `T` -> `HelperA`, direct
+    // constructed-receiver chains keep resolving, and non-generic nested
+    // chains (`new PlainOuter.PlainInner().MakeNext()`) resolve identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ChainedOuter",
+        "Demo::Caller::ThreeLevelChainOuter",
+        "Demo::Caller::ThreeLevelOuter",
+        "Demo::Caller::PlainChain",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in ["Demo::Caller::Chained", "Demo::Caller::ChainedDirect"] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Demo::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ThreeLevelChain",
+        "Demo::Caller::ThreeLevel",
+        "Demo::Caller::ThreeLevelDirect",
+    ] {
+        assert!(
+            run_c_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunC caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ChainedOuter",
+        "Demo::Caller::ThreeLevelChainOuter",
+        "Demo::Caller::ThreeLevelOuter",
+        "Demo::Caller::PlainChain",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::Chained", "Demo::Caller::ChainedDirect"] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::ThreeLevelChain",
+        "Demo::Caller::ThreeLevel",
+        "Demo::Caller::ThreeLevelDirect",
+    ] {
+        assert!(
+            run_c_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunC caller {caller}"
+        );
+    }
+}
