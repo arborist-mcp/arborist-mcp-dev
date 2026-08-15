@@ -571,16 +571,23 @@ fn collect_csharp_member_type_bindings_by_range(
 }
 
 /// Collects the ordered type-parameter names of each generic type
-/// declaration (such as `T` in `class Box<T>`) keyed by the declaration's
-/// byte range, so member-chain resolution can substitute a constructed
-/// receiver's type arguments for the type parameters in member declared
-/// types. Non-generic type declarations record an empty name list.
+/// declaration (such as `T` in `class Box<T>`) and generic method (such as
+/// `T` in `T Make<T>()` or a local function's own `<T>`) keyed by the
+/// declaration's byte range, so member-chain resolution can substitute a
+/// constructed receiver's type arguments or an explicit method type-argument
+/// list for the type parameters in member declared types. Non-generic type
+/// declarations and methods record an empty name list.
 fn collect_csharp_type_parameter_names_by_range(
     node: tree_sitter::Node<'_>,
     source: &str,
     names_by_range: &mut BTreeMap<(usize, usize), Vec<String>>,
 ) -> Result<()> {
-    if is_csharp_type_declaration(node) {
+    if is_csharp_type_declaration(node)
+        || matches!(
+            node.kind(),
+            "method_declaration" | "local_function_statement"
+        )
+    {
         let mut names = Vec::new();
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {

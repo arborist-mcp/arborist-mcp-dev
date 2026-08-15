@@ -2616,6 +2616,7 @@ fn resolve_csharp_factory_chain_receiver_binding(
     // A bare leading call such as `MakeNested()` resolves as a factory and
     // pins the receiver to its declared return type.
     if let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(chain)
+        && let Some(method_type_arguments) = csharp_method_type_arguments(chain)
         && let Some(leading_method) = resolve_csharp_var_factory_method(
             source_symbol,
             &leading_name,
@@ -2631,10 +2632,18 @@ fn resolve_csharp_factory_chain_receiver_binding(
         )?
         && let Some(leading_return) = leading_method.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_method,
+            &method_type_arguments,
+            leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
     {
         return resolve_csharp_receiver_type_binding(
             leading_method,
-            leading_return,
+            &leading_return,
             raw_symbols,
             semantic_path_index,
             csharp_source_namespace_path(leading_method, raw_symbols).flatten(),
@@ -2787,6 +2796,25 @@ fn resolve_csharp_factory_receiver_binding(
     } else {
         return_type.to_string()
     };
+    // An explicit generic method type-argument list at the call site such as
+    // `Make<HelperA>()` or `new Maker().Make<HelperA>()` substitutes the
+    // method's own type parameters (`T` in `T Make<T>()`) into the declared
+    // return type, so `var x = new Maker().Make<HelperA>()` binds `x` to
+    // `HelperA`. Non-generic calls, arity mismatches, and methods without
+    // their own type parameters keep the substituted return type and fail
+    // closed downstream when it names a type parameter.
+    let Some(method_type_arguments) = csharp_factory_method_type_arguments(&factory_spelling)
+    else {
+        return Ok(None);
+    };
+    let substituted_return_type = substitute_csharp_method_type_parameters(
+        method,
+        &method_type_arguments,
+        &substituted_return_type,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
     // Resolve the factory's declared return type in the factory's own scope
     // and canonicalize it to the global-qualified semantic path, so a caller
     // in another namespace dispatches the final member on the canonical
@@ -3301,10 +3329,15 @@ fn resolve_csharp_var_factory_method<'a>(
         && remainder.starts_with('[')
         && let Some(element_suffix_len) = csharp_element_access_suffix_len(remainder)
         && let Some(depth) = csharp_element_access_suffix_depth(&remainder[..element_suffix_len])
-        && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some((_, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some(leading_reference) = leading_call
+            .find('(')
+            .map(|open| &leading_call[..open])
+            .filter(|name| !name.is_empty())
+            .or(Some(leading_call))
         && let Some(element_binding) = csharp_factory_array_component_binding(
             source_symbol,
-            &leading_name,
+            leading_reference,
             leading_arity,
             depth,
             bindings,
@@ -3637,6 +3670,7 @@ fn resolve_csharp_var_factory_method<'a>(
             true
         }
         && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some(method_type_arguments) = csharp_method_type_arguments(leading_call)
         && let Some(leading_method) = resolve_csharp_var_factory_method(
             source_symbol,
             &leading_name,
@@ -3652,9 +3686,17 @@ fn resolve_csharp_var_factory_method<'a>(
         )?
         && let Some(leading_return) = leading_method.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_method,
+            &method_type_arguments,
+            leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
         && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
             leading_method,
-            leading_return,
+            &leading_return,
             raw_symbols,
             semantic_path_index,
             csharp_source_namespace_path(leading_method, raw_symbols).flatten(),
@@ -4521,6 +4563,7 @@ fn resolve_csharp_initializer_chain_binding(
             candidate_bindings.push(candidate);
         }
         if let Some((method_name, call_arity)) = csharp_method_call_hop_spelling(receiver_name)
+            && let Some(method_type_arguments) = csharp_method_type_arguments(receiver_name)
             && let Some(method) = resolve_csharp_var_factory_method(
                 source_symbol,
                 &method_name,
@@ -4536,9 +4579,17 @@ fn resolve_csharp_initializer_chain_binding(
             )?
             && let Some(return_type) = method.return_type.as_deref()
             && !return_type.is_empty()
+            && let Ok(return_type) = substitute_csharp_method_type_parameters(
+                method,
+                &method_type_arguments,
+                return_type,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )
             && let Some(factory_binding) = resolve_csharp_receiver_type_binding(
                 method,
-                return_type,
+                &return_type,
                 raw_symbols,
                 semantic_path_index,
                 csharp_source_namespace_path(method, raw_symbols).flatten(),
@@ -4872,7 +4923,13 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             // declared return type pins the receiver and remaining hops walk
             // the same member-chain rules. A type with no such method defers
             // to a longer type prefix; a type with a same-named method that
-            // is not a matching static factory fails closed.
+            // is not a matching static factory fails closed. An explicit
+            // generic method type-argument list at the call site such as
+            // `Maker.MakeStatic<HelperA>()` substitutes the method's own
+            // type parameters into its declared return type.
+            let Some(method_type_arguments) = csharp_method_type_arguments(member) else {
+                return Ok(None);
+            };
             let method_path = format!("{type_path}::{method_name}");
             let method_indexes = semantic_path_index
                 .get(&method_path)
@@ -4908,9 +4965,17 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             let Some(return_type) = method_symbol.return_type.as_deref() else {
                 return Ok(None);
             };
+            let return_type = substitute_csharp_method_type_parameters(
+                method_symbol,
+                &method_type_arguments,
+                return_type,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
             let Some(factory_binding) = resolve_csharp_receiver_type_binding(
                 method_symbol,
-                return_type,
+                &return_type,
                 raw_symbols,
                 semantic_path_index,
                 csharp_source_namespace_path(method_symbol, raw_symbols).flatten(),
@@ -4999,8 +5064,19 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             if return_type.is_empty() {
                 return Ok(None);
             }
+            let Some(method_type_arguments) = csharp_method_type_arguments(member) else {
+                return Ok(None);
+            };
+            let return_type = substitute_csharp_method_type_parameters(
+                method_symbol,
+                &method_type_arguments,
+                return_type,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
             let Some(component_name) =
-                csharp_array_component_spelling_at_depth(return_type, element_depth)
+                csharp_array_component_spelling_at_depth(&return_type, element_depth)
             else {
                 return Ok(None);
             };
@@ -5320,7 +5396,7 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
     {
         return Ok(None);
     }
-    let (root_member, root_arity, hops) = match chain_prefix.split_once('.') {
+    let (root_member, root_arity, root_spelling, hops) = match chain_prefix.split_once('.') {
         Some((root, rest)) => {
             let Some((method_name, arity)) = csharp_method_call_hop_spelling(root) else {
                 return Ok(None);
@@ -5329,13 +5405,13 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
             if hops.iter().any(|hop| hop.is_empty()) {
                 return Ok(None);
             }
-            (method_name, arity, hops)
+            (method_name, arity, root, hops)
         }
         None => {
             let Some((method_name, arity)) = csharp_method_call_hop_spelling(chain_prefix) else {
                 return Ok(None);
             };
-            (method_name, arity, Vec::new())
+            (method_name, arity, chain_prefix, Vec::new())
         }
     };
     // A bare root dispatches as a unique arity-matched factory method on the
@@ -5363,9 +5439,20 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
     if return_type.is_empty() {
         return Ok(None);
     }
+    let Some(method_type_arguments) = csharp_method_type_arguments(root_spelling) else {
+        return Ok(None);
+    };
+    let return_type = substitute_csharp_method_type_parameters(
+        method,
+        &method_type_arguments,
+        return_type,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
     let Some(factory_binding) = resolve_csharp_receiver_type_binding(
         method,
-        return_type,
+        &return_type,
         raw_symbols,
         semantic_path_index,
         csharp_source_namespace_path(method, raw_symbols).flatten(),
@@ -5469,7 +5556,19 @@ fn resolve_csharp_bare_factory_array_member_chain(
     let Some(return_type) = method.return_type.as_deref() else {
         return Ok(None);
     };
-    let Some(component_name) = csharp_array_component_spelling_at_depth(return_type, element_depth)
+    let Some(method_type_arguments) = csharp_method_type_arguments(root_spelling) else {
+        return Ok(None);
+    };
+    let return_type = substitute_csharp_method_type_parameters(
+        method,
+        &method_type_arguments,
+        return_type,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    let Some(component_name) =
+        csharp_array_component_spelling_at_depth(&return_type, element_depth)
     else {
         return Ok(None);
     };
@@ -5935,6 +6034,7 @@ fn csharp_qualified_element_access_component_type_path(
             true
         }
         && let Some((leading_name, leading_arity)) = csharp_method_call_hop_spelling(leading_call)
+        && let Some(method_type_arguments) = csharp_method_type_arguments(leading_call)
         && let Some(leading_method) = resolve_csharp_var_factory_method(
             source_symbol,
             &leading_name,
@@ -5950,9 +6050,17 @@ fn csharp_qualified_element_access_component_type_path(
         )?
         && let Some(leading_return) = leading_method.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_method,
+            &method_type_arguments,
+            leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
         && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
             leading_method,
-            leading_return,
+            &leading_return,
             raw_symbols,
             semantic_path_index,
             csharp_source_namespace_path(leading_method, raw_symbols).flatten(),
@@ -5974,9 +6082,10 @@ fn csharp_qualified_element_access_component_type_path(
             return Ok(None);
         };
         (leading_binding, source_symbol, false)
-    } else if let Some((leading_hop_name, leading_hop_arity, leading_hop_depth)) = hops
-        .first()
-        .and_then(|hop| csharp_method_call_element_access_spelling(hop))
+    } else if let Some(leading_hop) = hops.first()
+        && let Some((leading_hop_name, leading_hop_arity, leading_hop_depth)) =
+            csharp_method_call_element_access_spelling(leading_hop)
+        && let Some(method_type_arguments) = csharp_method_type_arguments(leading_hop)
         && let Some(leading_factory) = resolve_csharp_var_factory_method(
             source_symbol,
             &format!("{receiver}.{leading_hop_name}"),
@@ -5992,8 +6101,16 @@ fn csharp_qualified_element_access_component_type_path(
         )?
         && let Some(leading_return) = leading_factory.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_factory,
+            &method_type_arguments,
+            leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
         && let Some(leading_component) =
-            csharp_array_component_spelling_at_depth(leading_return, leading_hop_depth)
+            csharp_array_component_spelling_at_depth(&leading_return, leading_hop_depth)
         && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
             leading_factory,
             &leading_component,
@@ -6022,9 +6139,10 @@ fn csharp_qualified_element_access_component_type_path(
         };
         hops.remove(0);
         (leading_binding, source_symbol, false)
-    } else if let Some((leading_hop_name, leading_hop_arity)) = hops
-        .first()
-        .and_then(|hop| csharp_method_call_hop_spelling(hop))
+    } else if let Some(leading_hop) = hops.first()
+        && let Some((leading_hop_name, leading_hop_arity)) =
+            csharp_method_call_hop_spelling(leading_hop)
+        && let Some(method_type_arguments) = csharp_method_type_arguments(leading_hop)
         && let Some(leading_factory) = resolve_csharp_var_factory_method(
             source_symbol,
             &format!("{receiver}.{leading_hop_name}"),
@@ -6040,9 +6158,17 @@ fn csharp_qualified_element_access_component_type_path(
         )?
         && let Some(leading_return) = leading_factory.return_type.as_deref()
         && !leading_return.is_empty()
+        && let Ok(leading_return) = substitute_csharp_method_type_parameters(
+            leading_factory,
+            &method_type_arguments,
+            leading_return,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
         && let Some(leading_binding) = resolve_csharp_receiver_type_binding(
             leading_factory,
-            leading_return,
+            &leading_return,
             raw_symbols,
             semantic_path_index,
             csharp_source_namespace_path(leading_factory, raw_symbols).flatten(),
@@ -6525,9 +6651,20 @@ fn csharp_factory_array_component_binding(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
+    // An explicit generic method type-argument list at the call site such as
+    // `MakeItems<HelperA>()` or `Factory.MakeNestedArray<HelperA>()` keeps
+    // the trailing type-argument spellings for return-type substitution and
+    // dispatches the factory method on the bare trailing name.
+    let Some(method_type_arguments) = csharp_factory_method_type_arguments(factory_reference)
+    else {
+        return Ok(None);
+    };
+    let Some(factory_name) = csharp_factory_method_dispatch_name(factory_reference) else {
+        return Ok(None);
+    };
     let Some(method) = resolve_csharp_var_factory_method(
         source_symbol,
-        factory_reference,
+        &factory_name,
         factory_arity,
         bindings,
         raw_symbols,
@@ -6599,6 +6736,14 @@ fn csharp_factory_array_component_binding(
     } else {
         return_type.to_string()
     };
+    let substituted_return_type = substitute_csharp_method_type_parameters(
+        method,
+        &method_type_arguments,
+        &substituted_return_type,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
     let Some(component_name) =
         csharp_array_component_spelling_at_depth(&substituted_return_type, depth)
     else {
@@ -6987,11 +7132,15 @@ fn resolve_csharp_member_chain_binding<'a>(
         let array_member_name = csharp_array_access_member_name(hop);
         let member_name = array_member_name.unwrap_or(hop);
         if let Some((method_name, hop_arity)) = csharp_method_call_hop_spelling(hop) {
+            let Some(method_type_arguments) = csharp_method_type_arguments(hop) else {
+                return Ok(None);
+            };
             let Some((next_binding, method_symbol)) = resolve_csharp_method_call_hop_binding(
                 type_symbol,
                 &binding,
                 &method_name,
                 hop_arity,
+                &method_type_arguments,
                 raw_symbols,
                 semantic_path_index,
                 csharp_global_import_context,
@@ -7017,6 +7166,10 @@ fn resolve_csharp_member_chain_binding<'a>(
                 csharp_method_call_hop_spelling(array_member_name)
             && let Some(depth) = csharp_array_access_depth(hop)
         {
+            let Some(method_type_arguments) = csharp_method_type_arguments(array_member_name)
+            else {
+                return Ok(None);
+            };
             let Some(symbol_id) = resolve_csharp_instance_method_on_binding(
                 type_symbol,
                 &binding,
@@ -7052,6 +7205,14 @@ fn resolve_csharp_member_chain_binding<'a>(
                 raw_symbols,
                 semantic_path_index,
                 csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            let return_type = substitute_csharp_method_type_parameters(
+                method_symbol,
+                &method_type_arguments,
+                &return_type,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -7745,6 +7906,45 @@ fn substitute_csharp_method_return_type(
     }
 }
 
+/// Substitutes a generic method's own type parameters with the explicit
+/// type-argument spellings from its call site, so `T Make<T>()` called as
+/// `Make<HelperA>()` resolves its declared return type `T` to `HelperA`.
+/// The method's type-parameter names come from its declaration (such as `T`
+/// in `T Make<T>()`), and a parameter/argument arity mismatch or a method
+/// without its own type parameters leaves the return type unchanged and
+/// fails closed downstream.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# generic method return type substitution inputs explicit"
+)]
+fn substitute_csharp_method_type_parameters(
+    method: &IndexedSymbol,
+    method_type_arguments: &[String],
+    return_type: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<String> {
+    if method_type_arguments.is_empty() {
+        return Ok(return_type.to_string());
+    }
+    let Some(parameters) = csharp_type_parameter_names_for_type(
+        &method.file_path,
+        method.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(return_type.to_string());
+    };
+    Ok(substitute_csharp_type_parameters(
+        return_type,
+        &parameters,
+        method_type_arguments,
+    ))
+}
+
 /// Splits a factory-chain spelling such as `makeGroup().GetItems`,
 /// `makeGroup(2).GetItems`, or `Util.MakeGroup().GetItems` into the leading
 /// call segment (scanned up to its balanced argument list) and the remaining
@@ -7813,9 +8013,112 @@ fn csharp_factory_chain_leading_call(factory_name: &str) -> Option<(&str, &str)>
 /// extractor. Field, property, and event hops, malformed spellings, and
 /// non-numeric argument lists return `None` so they fall through to member
 /// resolution and fail closed when no such member exists.
+/// Strips a trailing well-formed generic type-argument list from a method
+/// call spelling such as `Make<HelperA>` or `Make<HelperA, HelperB>` (the
+/// name portion before the call's argument list), leaving the bare method
+/// name `Make` for dispatch. Non-generic spellings return the spelling
+/// unchanged; malformed or unbalanced argument lists return `None` and fail
+/// closed.
+fn strip_csharp_method_type_arguments(name: &str) -> Option<&str> {
+    let Some(open) = name.find('<') else {
+        return Some(name);
+    };
+    let mut generic_depth = 0usize;
+    for (offset, character) in name[open..].char_indices() {
+        match character {
+            '<' => generic_depth += 1,
+            '>' => {
+                generic_depth = generic_depth.checked_sub(1)?;
+                if generic_depth == 0 {
+                    let after = &name[open + offset + 1..];
+                    return after.is_empty().then_some(&name[..open]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extracts the explicit type-argument spellings of a generic method-call
+/// spelling such as `Make<HelperA>()` or `Make<HelperA, HelperB>()` into
+/// `["HelperA"]` or `["HelperA", "HelperB"]`, so call-site type arguments can
+/// substitute the method's own type parameters in its declared return type.
+/// Non-generic spellings return an empty list; malformed or unbalanced
+/// argument lists return `None` and fail closed.
+fn csharp_method_type_arguments(spelling: &str) -> Option<Vec<String>> {
+    let name = spelling.split('(').next().unwrap_or(spelling);
+    if !name.contains('<') {
+        return Some(Vec::new());
+    }
+    crate::language::csharp_generic_type_arguments(name)
+}
+
+/// Returns the trailing dotted member of a factory spelling, splitting on
+/// `.` outside any generic argument list so `new Maker().Make<HelperA>`
+/// yields `Make<HelperA>`, `Factory.MakeNestedArray<HelperA>` yields
+/// `MakeNestedArray<HelperA>`, and `new Box<Outer<Helper>.Inner<Helper>>`
+/// yields `Box<Outer<Helper>.Inner<Helper>>`. Empty spellings and unbalanced
+/// angle lists return `None` and fail closed.
+fn csharp_factory_trailing_member(spelling: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut last_start = 0usize;
+    for (index, character) in spelling.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            '.' if depth == 0 => last_start = index + 1,
+            _ => {}
+        }
+    }
+    if last_start == spelling.len() {
+        return None;
+    }
+    Some(&spelling[last_start..])
+}
+
+/// Extracts the explicit type-argument spellings of the trailing method call
+/// in a factory spelling such as `Make<HelperA>`,
+/// `holder.MakeHelper<HelperA>`, or `new Maker().Make<HelperA>` into
+/// `["HelperA"]`, so call-site type arguments can substitute the method's own
+/// type parameters in its declared return type. A spelling whose trailing
+/// member is not a generic method call (no type-argument list, a plain
+/// member, or a constructed receiver without a trailing method) returns an
+/// empty list; malformed or unbalanced argument lists return `None` and fail
+/// closed.
+fn csharp_factory_method_type_arguments(spelling: &str) -> Option<Vec<String>> {
+    let trailing = csharp_factory_trailing_member(spelling)?;
+    let mut name = trailing;
+    if let Some(open) = trailing.find('[') {
+        name = &trailing[..open];
+    }
+    csharp_method_type_arguments(name)
+}
+
+/// Strips the trailing method-call segment's explicit type-argument list from
+/// a factory spelling such as `MakeItems<HelperA>`,
+/// `Factory.MakeNestedArray<HelperA>`, or `new Maker().MakeArray<HelperA>` to
+/// the bare trailing method name, keeping the receiver-chain prefix for
+/// dispatch. A spelling whose trailing member is not a generic method call
+/// (no type-argument list) keeps the spelling unchanged; malformed or
+/// unbalanced angle lists return `None` and fail closed.
+fn csharp_factory_method_dispatch_name(spelling: &str) -> Option<String> {
+    let trailing = csharp_factory_trailing_member(spelling)?;
+    if !trailing.contains('<') {
+        return Some(spelling.to_string());
+    }
+    let stripped = strip_csharp_method_type_arguments(trailing)?;
+    let prefix_len = spelling.len() - trailing.len();
+    Some(format!("{}{}", &spelling[..prefix_len], stripped))
+}
+
+/// Parses a method-call hop such as `inner()`, `inner(1)`, or
+/// `Make<HelperA>()` into the bare method name (generic type-argument lists
+/// stripped) and the call arity.
 fn csharp_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
     let open = hop.find('(')?;
     let (method_name, arguments) = hop.split_at(open);
+    let method_name = strip_csharp_method_type_arguments(method_name)?;
     if method_name.is_empty() {
         return None;
     }
@@ -7974,6 +8277,7 @@ fn resolve_csharp_method_call_hop_binding<'a>(
     binding: &CSharpBaseTypeBinding,
     method_name: &str,
     hop_arity: usize,
+    method_type_arguments: &[String],
     raw_symbols: &'a [IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
@@ -8016,6 +8320,14 @@ fn resolve_csharp_method_call_hop_binding<'a>(
         raw_symbols,
         semantic_path_index,
         csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    let return_type = substitute_csharp_method_type_parameters(
+        method,
+        method_type_arguments,
+        &return_type,
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
@@ -8451,6 +8763,13 @@ fn resolve_csharp_constructor_receiver_call(
         let Some(final_member) = hops.last() else {
             return Ok(CSharpConstructorReceiverResolution::Blocked);
         };
+        // A var-marker factory chain keeps the call-site generic type-argument
+        // list on the final member (`new Maker().Make<HelperA>()` spells
+        // `Make<HelperA>`), so dispatch strips it to the bare method name;
+        // direct references already strip type arguments at extraction.
+        let Some(final_member) = strip_csharp_method_type_arguments(final_member) else {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        };
         let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
             source_symbol,
             binding,
@@ -8481,12 +8800,19 @@ fn resolve_csharp_constructor_receiver_call(
             None => Ok(CSharpConstructorReceiverResolution::Blocked),
         }
     } else {
+        // A var-marker factory chain keeps the call-site generic type-argument
+        // list on the final member (`new Maker().Make<HelperA>()` spells
+        // `Make<HelperA>`), so dispatch strips it to the bare method name;
+        // direct references already strip type arguments at extraction.
+        let Some(member_name) = strip_csharp_method_type_arguments(&member_chain) else {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        };
         // A struct-typed receiver dispatches on the struct's own method
         // declaration; structs have no ancestor chain.
         if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
             source_symbol,
             &binding,
-            &member_chain,
+            member_name,
             raw_symbols,
             semantic_path_index,
             call_arity,
@@ -8501,7 +8827,7 @@ fn resolve_csharp_constructor_receiver_call(
             raw_symbols,
             semantic_path_index,
             &binding,
-            &member_chain,
+            member_name,
             call_arity,
             csharp_global_import_context,
             file_overrides,
