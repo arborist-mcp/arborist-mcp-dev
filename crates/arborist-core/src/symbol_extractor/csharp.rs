@@ -1384,7 +1384,7 @@ fn csharp_factory_marker_from_initializer(
         return Ok(None);
     };
     let spelling = match function.kind() {
-        "identifier" => crate::language::node_text(function, source)?
+        "identifier" | "generic_name" => crate::language::node_text(function, source)?
             .trim()
             .to_string(),
         "member_access_expression" | "conditional_access_expression" => {

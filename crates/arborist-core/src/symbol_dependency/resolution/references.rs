@@ -3016,10 +3016,21 @@ fn resolve_csharp_var_factory_method<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<&'a IndexedSymbol>> {
+    // A var-marker factory chain keeps the call-site generic type-argument
+    // list on the trailing method call (such as `m.Make<HelperA>` or
+    // `Maker.MakeStatic<HelperA>`), so dispatch normalizes the spelling to
+    // the bare trailing method name (`m.Make` or `Maker.MakeStatic`) while
+    // the caller still reads the type-argument spellings off the original
+    // factory spelling for return-type substitution. Non-generic spellings
+    // keep the spelling unchanged; malformed or unbalanced angle lists fail
+    // closed.
+    let Some(factory_name) = csharp_factory_method_dispatch_name(factory_name) else {
+        return Ok(None);
+    };
     // A parenthesized constructed-receiver factory root such as
     // `(new Group()).GetItems` unwraps to the same shape as the
     // unparenthesized form before dispatch.
-    if let Some(unwrapped) = csharp_parenthesized_constructed_factory_spelling(factory_name) {
+    if let Some(unwrapped) = csharp_parenthesized_constructed_factory_spelling(&factory_name) {
         return resolve_csharp_var_factory_method(
             source_symbol,
             &unwrapped,
@@ -3325,7 +3336,7 @@ fn resolve_csharp_var_factory_method<'a>(
     // Unresolvable or arity-mismatched leading factories, primitive or
     // multi-dimensional return arrays, and missing, static, or
     // arity-mismatched trailing factories fail closed.
-    if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(factory_name)
+    if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(&factory_name)
         && remainder.starts_with('[')
         && let Some(element_suffix_len) = csharp_element_access_suffix_len(remainder)
         && let Some(depth) = csharp_element_access_suffix_depth(&remainder[..element_suffix_len])
@@ -3660,7 +3671,7 @@ fn resolve_csharp_var_factory_method<'a>(
     // factory method on the resulting type. Unknown or ambiguous leading
     // factories, unknown or primitive hops, and missing, static, or
     // arity-mismatched trailing factories fail closed.
-    if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(factory_name)
+    if let Some((leading_call, remainder)) = csharp_factory_chain_leading_call(&factory_name)
         && let Some(mut leading_call) =
             csharp_outer_parenthesized_inner(leading_call).or(Some(leading_call))
         && {
@@ -3896,7 +3907,7 @@ fn resolve_csharp_var_factory_method<'a>(
     if factory_name.contains('.') {
         return resolve_csharp_factory_static_method(
             source_symbol,
-            factory_name,
+            &factory_name,
             factory_arity,
             raw_symbols,
             semantic_path_index,
@@ -3956,7 +3967,7 @@ fn resolve_csharp_var_factory_method<'a>(
             raw_symbols,
             semantic_path_index,
             &base_type_binding,
-            factory_name,
+            &factory_name,
             factory_arity,
             csharp_global_import_context,
             file_overrides,
@@ -3985,7 +3996,7 @@ fn resolve_csharp_var_factory_method<'a>(
     }
     let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
         &source_symbol.file_path,
-        factory_name,
+        &factory_name,
         source_namespace_path,
         file_overrides,
         csharp_import_contexts_by_file,
@@ -3993,7 +4004,7 @@ fn resolve_csharp_var_factory_method<'a>(
     )?;
     if let Some(csharp_global_import_context) = csharp_global_import_context {
         static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
-            factory_name,
+            &factory_name,
             csharp_global_import_context,
         ));
     }
@@ -4001,7 +4012,7 @@ fn resolve_csharp_var_factory_method<'a>(
         raw_symbols,
         semantic_path_index,
         &static_type_imports,
-        factory_name,
+        &factory_name,
         factory_arity,
     )
     .and_then(|symbol_id| {

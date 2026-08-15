@@ -1405,7 +1405,7 @@ fn csharp_factory_marker_from_initializer(
         return Ok(None);
     };
     let spelling = match function.kind() {
-        "identifier" => node_text(function, source)?.trim().to_string(),
+        "identifier" | "generic_name" => node_text(function, source)?.trim().to_string(),
         "member_access_expression" | "conditional_access_expression" => {
             let Some((expression, name)) = csharp_chain_member_hop_parts(function) else {
                 return Ok(None);
