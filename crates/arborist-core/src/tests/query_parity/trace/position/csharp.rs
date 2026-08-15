@@ -33914,3 +33914,117 @@ class Caller {
         "unexpected persisted RunB caller for missing member"
     );
 }
+
+#[test]
+fn traces_csharp_constructed_generic_static_member_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class Outer<T> {
+    public class Inner<U> {
+        public static PlainHolder<U>[] StaticNestedArray => default;
+        public static PlainHolder<U> StaticNested => default;
+        public static PlainHolder<T>[] OuterNestedArray => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static PlainHolder<V>[] DeepArray => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int GenericNestedDirect() { return Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0].Items[0].RunB(101); }
+    int GenericNestedDottedDirect() { return Outer<HelperB>.Inner<HelperB>.StaticNested.Items[0].RunB(102); }
+    int GenericNestedVar() { var x = Outer<HelperB>.Inner<HelperB>.StaticNestedArray; return x[0].Items[0].RunB(103); }
+    int GenericNestedOuterDirect() { return Outer<HelperB>.Inner<HelperB>.OuterNestedArray[0].Items[0].RunB(104); }
+    int GenericNestedGlobalDirect() { return global::Lib.Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0].Items[0].RunB(105); }
+    int GenericNestedThreeLevel() { return Outer<HelperB>.Middle<HelperB>.Inner<HelperB>.DeepArray[0].Items[0].RunB(106); }
+    int GenericNestedMissingDirect() { return Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0].RunB(107); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct member chain rooted at a multi-segment constructed generic
+    // static type such as `Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0]`
+    // absorbs the consecutive generic type segments, resolves the leading
+    // static member on the concrete generic arguments of both the inner and
+    // outer segments, and strips one array component layer per element-access
+    // depth before walking the remaining instance hops
+    // (`Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0].Items[0].RunB(...)`
+    // pins `PlainHolder<U>` with `U = HelperB`, while
+    // `OuterNestedArray` declared as `PlainHolder<T>[]` substitutes the outer
+    // `T = HelperB`). Dotted non-array roots, `global::`-qualified spellings,
+    // three-level chains (`Outer<HelperB>.Middle<HelperB>.Inner<HelperB>`),
+    // and the `var`-initializer form resolve through the same substituted
+    // binding, while a trailing member the element type does not declare
+    // (`Outer<HelperB>.Inner<HelperB>.StaticNestedArray[0].RunB(...)` on a
+    // `PlainHolder<HelperB>`) fails closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::GenericNestedDirect",
+        "Demo::Caller::GenericNestedDottedDirect",
+        "Demo::Caller::GenericNestedGlobalDirect",
+        "Demo::Caller::GenericNestedOuterDirect",
+        "Demo::Caller::GenericNestedThreeLevel",
+        "Demo::Caller::GenericNestedVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    assert!(
+        !run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericNestedMissingDirect"),
+        "unexpected live RunB caller for missing member"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::GenericNestedDirect",
+        "Demo::Caller::GenericNestedDottedDirect",
+        "Demo::Caller::GenericNestedGlobalDirect",
+        "Demo::Caller::GenericNestedOuterDirect",
+        "Demo::Caller::GenericNestedThreeLevel",
+        "Demo::Caller::GenericNestedVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    assert!(
+        !run_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::GenericNestedMissingDirect"),
+        "unexpected persisted RunB caller for missing member"
+    );
+}
