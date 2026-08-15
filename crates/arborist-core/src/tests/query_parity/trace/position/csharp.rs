@@ -32243,3 +32243,117 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_nested_constructed_generic_receiver_method_call_chain_var_factory_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U> MakeNext2() => MakeNext();
+        public Inner<U> Next => default;
+        public U[] MakeItems() => Items;
+    }
+}
+class Caller {
+    int ChainVarMethodHop() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.MakeItems(); return arr[0].RunB(1); }
+    int ChainVarMethodHopOuter() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.MakeNext().OuterItems; return arr[0].RunA(2); }
+    int ChainVarThenHop() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.Next.Items; return arr[0].RunB(3); }
+    int ChainVarThenHopOuter() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.Next.OuterItems; return arr[0].RunA(4); }
+    int DoubleChain() { var a = new Outer<HelperA>.Inner<HelperB>().MakeNext().MakeNext2(); var arr = a.Items; return arr[0].RunB(5); }
+    int TypedVarMethodHop() { Outer<HelperA>.Inner<HelperB> a = new Outer<HelperA>.Inner<HelperB>().MakeNext(); var arr = a.MakeItems(); return arr[0].RunB(6); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from a method-call chain on a constructed nested
+    // generic receiver (`var a = new Outer<HelperA>.Inner<HelperB>()
+    // .MakeNext()`) pins the substituted type, so a later statement can
+    // dispatch a factory call returning the inner parameter array
+    // (`a.MakeItems()` -> `HelperB[]`), walk a property hop (`a.Next.Items`)
+    // or an additional method hop (`a.MakeNext().OuterItems`), continue a
+    // double method-call chain in the initializer
+    // (`new ...().MakeNext().MakeNext2()`), and the same factory-array
+    // element access resolves for a directly typed generic receiver var
+    // (`Outer<HelperA>.Inner<HelperB> a`). Each path substitutes the inner
+    // parameter (`U` -> `HelperB`) and an outer-parameter member
+    // (`T[] OuterItems` substitutes `T` -> `HelperA`).
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainVarMethodHopOuter",
+        "Demo::Caller::ChainVarThenHopOuter",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ChainVarMethodHop",
+        "Demo::Caller::ChainVarThenHop",
+        "Demo::Caller::DoubleChain",
+        "Demo::Caller::TypedVarMethodHop",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ChainVarMethodHopOuter",
+        "Demo::Caller::ChainVarThenHopOuter",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ChainVarMethodHop",
+        "Demo::Caller::ChainVarThenHop",
+        "Demo::Caller::DoubleChain",
+        "Demo::Caller::TypedVarMethodHop",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
