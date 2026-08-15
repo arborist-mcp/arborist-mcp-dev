@@ -5488,6 +5488,61 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             Some((member_name, depth)) => (member_name.as_str(), Some(*depth)),
             None => (member, None),
         };
+        // A constructed generic type prefix such as `Plain<HelperB>` in
+        // `Plain<HelperB>.StaticNestedArray[0].Items[0].RunB(...)` resolves
+        // the leading static member on the type's concrete generic arguments
+        // so the member's declared type substitutes its type parameters
+        // before any element-access layers are stripped and the remaining
+        // hops walk the same member-chain rules; unknown, instance,
+        // non-array, or unresolvable members fail closed.
+        if type_name.contains('<')
+            && let Some(receiver_binding) = resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                semantic_path_index,
+                csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            && let Some(member_binding) = resolve_csharp_constructed_static_receiver_member_binding(
+                source_symbol,
+                &receiver_binding,
+                member_name,
+                member_depth.unwrap_or(0),
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            if hops.is_empty() {
+                return Ok(Some(member_binding));
+            }
+            let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+                type_symbol,
+                member_binding,
+                hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(canonicalize_csharp_type_binding(
+                scope_source_symbol,
+                &binding,
+                raw_symbols,
+            ));
+        }
         let Some(member_bindings) = csharp_member_type_bindings_for_type(
             &type_symbol.file_path,
             type_symbol.byte_range,
