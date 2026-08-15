@@ -7588,6 +7588,8 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
         // type and its declared type.
         let member_owner = {
             let mut current_type_symbol = type_symbol;
+            let mut current_generic_arguments = Vec::new();
+            let mut current_enclosing_generic_arguments = Vec::new();
             let mut visited_type_paths = BTreeSet::new();
             let mut found = None;
             loop {
@@ -7602,7 +7604,12 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
                     break;
                 };
                 if bindings.contains(member_name) {
-                    found = Some((bindings, current_type_symbol));
+                    found = Some((
+                        bindings,
+                        current_type_symbol,
+                        current_generic_arguments,
+                        current_enclosing_generic_arguments,
+                    ));
                     break;
                 }
                 if current_type_symbol.node_kind == "interface_declaration" {
@@ -7637,11 +7644,60 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
                 if base_indexes.len() != 1 {
                     break;
                 }
+                // Compose the constructed base binding's concrete arguments
+                // by substituting the current receiver's arguments into the
+                // base spelling's raw type-argument spellings, so a base such
+                // as `GenericBase<HelperB>` reached through a non-generic
+                // `FixedDerived : GenericBase<HelperB>` pins the same
+                // concrete arguments for the member's declared type.
+                let parameters = csharp_type_parameter_names_for_type(
+                    &current_type_symbol.file_path,
+                    current_type_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                .unwrap_or_default();
+                let generic_arguments = base_binding
+                    .raw_generic_argument_spellings
+                    .iter()
+                    .map(|spelling| {
+                        substitute_csharp_type_parameters(
+                            spelling,
+                            &parameters,
+                            &current_generic_arguments,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let enclosing_generic_arguments = base_binding
+                    .raw_enclosing_generic_argument_spellings
+                    .iter()
+                    .map(|segment| {
+                        segment
+                            .iter()
+                            .map(|spelling| {
+                                substitute_csharp_type_parameters(
+                                    spelling,
+                                    &parameters,
+                                    &current_generic_arguments,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                current_generic_arguments = generic_arguments;
+                current_enclosing_generic_arguments = enclosing_generic_arguments;
                 current_type_symbol = &raw_symbols[base_indexes[0]];
             }
             found
         };
-        let Some((member_bindings, member_type_symbol)) = member_owner else {
+        let Some((
+            member_bindings,
+            member_type_symbol,
+            member_generic_arguments,
+            member_enclosing_generic_arguments,
+        )) = member_owner
+        else {
             continue;
         };
         if !member_bindings.is_static_member(member_name) {
@@ -7650,6 +7706,30 @@ fn resolve_csharp_unbound_bare_member_array_component_binding(
         let Some(declared_type) = member_bindings.type_for(member_name) else {
             continue;
         };
+        let mut declared_type = declared_type.to_string();
+        if let Some(parameters) = csharp_type_parameter_names_for_type(
+            &member_type_symbol.file_path,
+            member_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            declared_type = substitute_csharp_type_parameters(
+                &declared_type,
+                &parameters,
+                &member_generic_arguments,
+            );
+        }
+        declared_type = substitute_csharp_enclosing_type_parameters(
+            member_type_symbol,
+            &member_enclosing_generic_arguments,
+            &declared_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
         let Some(component_type) = csharp_array_component_spelling_at_depth(&declared_type, depth)
         else {
             continue;
@@ -8286,6 +8366,8 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
         // type and its declared type.
         let member_owner = {
             let mut current_type_symbol = type_symbol;
+            let mut current_generic_arguments = Vec::new();
+            let mut current_enclosing_generic_arguments = Vec::new();
             let mut visited_type_paths = BTreeSet::new();
             let mut found = None;
             loop {
@@ -8300,7 +8382,12 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
                     break;
                 };
                 if bindings.contains(root_name) {
-                    found = Some((bindings, current_type_symbol));
+                    found = Some((
+                        bindings,
+                        current_type_symbol,
+                        current_generic_arguments,
+                        current_enclosing_generic_arguments,
+                    ));
                     break;
                 }
                 if current_type_symbol.node_kind == "interface_declaration" {
@@ -8335,11 +8422,60 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
                 if base_indexes.len() != 1 {
                     break;
                 }
+                // Compose the constructed base binding's concrete arguments
+                // by substituting the current receiver's arguments into the
+                // base spelling's raw type-argument spellings, so a base such
+                // as `GenericBase<HelperB>` reached through a non-generic
+                // `FixedDerived : GenericBase<HelperB>` pins the same
+                // concrete arguments for the member's declared type.
+                let parameters = csharp_type_parameter_names_for_type(
+                    &current_type_symbol.file_path,
+                    current_type_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                .unwrap_or_default();
+                let generic_arguments = base_binding
+                    .raw_generic_argument_spellings
+                    .iter()
+                    .map(|spelling| {
+                        substitute_csharp_type_parameters(
+                            spelling,
+                            &parameters,
+                            &current_generic_arguments,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let enclosing_generic_arguments = base_binding
+                    .raw_enclosing_generic_argument_spellings
+                    .iter()
+                    .map(|segment| {
+                        segment
+                            .iter()
+                            .map(|spelling| {
+                                substitute_csharp_type_parameters(
+                                    spelling,
+                                    &parameters,
+                                    &current_generic_arguments,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                current_generic_arguments = generic_arguments;
+                current_enclosing_generic_arguments = enclosing_generic_arguments;
                 current_type_symbol = &raw_symbols[base_indexes[0]];
             }
             found
         };
-        let Some((member_bindings, member_type_symbol)) = member_owner else {
+        let Some((
+            member_bindings,
+            member_type_symbol,
+            member_generic_arguments,
+            member_enclosing_generic_arguments,
+        )) = member_owner
+        else {
             continue;
         };
         if !member_bindings.is_static_member(root_name) {
@@ -8348,6 +8484,30 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
         let Some(member_type_name) = member_bindings.type_for(root_name) else {
             continue;
         };
+        let mut member_type_name = member_type_name.to_string();
+        if let Some(parameters) = csharp_type_parameter_names_for_type(
+            &member_type_symbol.file_path,
+            member_type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            member_type_name = substitute_csharp_type_parameters(
+                &member_type_name,
+                &parameters,
+                &member_generic_arguments,
+            );
+        }
+        member_type_name = substitute_csharp_enclosing_type_parameters(
+            member_type_symbol,
+            &member_enclosing_generic_arguments,
+            &member_type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
         let Some(member_type_name) = (match root_depth {
             0 => Some(member_type_name),
             depth => csharp_array_component_spelling_at_depth(&member_type_name, depth),
