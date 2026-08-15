@@ -34028,3 +34028,204 @@ class Caller {
         "unexpected persisted RunB caller for missing member"
     );
 }
+
+#[test]
+fn traces_csharp_null_conditional_static_member_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder { public HelperB[] Items => default; }
+class Plain {
+    public static PlainHolder[] StaticNestedArray => default;
+    public static PlainHolder StaticNested => default;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int ConditionalDirect() { return Plain.StaticNestedArray?[0]?.Items?[0]?.RunB(111); }
+    int ConditionalDottedDirect() { return Plain.StaticNested?.Items?[0]?.RunB(112); }
+    int PlainDirect() { return Plain.StaticNestedArray[0].Items[0].RunB(113); }
+    int StaticImportConditional() { return StaticNestedArray?[0]?.Items?[0]?.RunB(114); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Usings.cs"),
+        "global using static Lib.Plain;
+",
+    )
+    .unwrap();
+
+    // A null-conditional static member chain such as
+    // `Plain.StaticNestedArray?[0]?.Items?[0]?.RunB(...)` normalizes the
+    // conditional-access hops to the same element-access chain as the plain
+    // spelling, so the direct type-qualified root, the dotted non-array root,
+    // and the `global using static` root all dispatch on the static member's
+    // declared array type and its element component chain; the plain
+    // non-conditional form keeps resolving alongside them.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ConditionalDirect",
+        "Demo::Caller::ConditionalDottedDirect",
+        "Demo::Caller::PlainDirect",
+        "Demo::Caller::StaticImportConditional",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ConditionalDirect",
+        "Demo::Caller::ConditionalDottedDirect",
+        "Demo::Caller::PlainDirect",
+        "Demo::Caller::StaticImportConditional",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_inherited_static_member_element_access_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder { public HelperB[] Items => default; }
+class GrandBase {
+    public static PlainHolder[] StaticNestedArray => default;
+}
+class Base : GrandBase { }
+class PlainBase : Base {
+    public static PlainHolder StaticNested => default;
+}
+class Plain : PlainBase { }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int InheritedStaticDirect() { return Plain.StaticNestedArray[0].Items[0].RunB(121); }
+    int InheritedStaticDottedDirect() { return Plain.StaticNested.Items[0].RunB(122); }
+    int InheritedStaticVar() { var x = Plain.StaticNestedArray; return x[0].Items[0].RunB(123); }
+    int InheritedStaticBaseDirect() { return PlainBase.StaticNestedArray[0].Items[0].RunB(124); }
+    int ThreeLevelDirect() { return Plain.StaticNestedArray[0].Items[0].RunB(125); }
+    int GlobalQualifiedDirect() { return global::Lib.Plain.StaticNestedArray[0].Items[0].RunB(126); }
+    int FailClosedMissingStatic() { return Plain.MissingStaticArray[0].Items[0].RunB(127); }
+    int FailClosedInstanceOnElement() { return Plain.StaticNestedArray[0].RunB(128); }
+}
+",
+    )
+    .unwrap();
+
+    // A static member element access rooted at a derived type name such as
+    // `Plain.StaticNestedArray[0].Items[0].RunB(...)` resolves the static
+    // member through the unique class/record ancestor chain when the member
+    // is declared on a base type (`GrandBase` declares `StaticNestedArray`
+    // and `PlainBase` declares `StaticNested`), so the direct chain, the
+    // dotted non-array root, the `var`-initializer form, the base-qualified
+    // spelling, a three-level inherited chain, and the
+    // `global::`-qualified spelling all dispatch on the declaring type's
+    // declared array type and its element component chain. A static member
+    // no ancestor declares (`Plain.MissingStaticArray`) and a trailing
+    // member the element type does not declare
+    // (`Plain.StaticNestedArray[0].RunB(...)` on a `PlainHolder`) fail
+    // closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::GlobalQualifiedDirect",
+        "Demo::Caller::InheritedStaticBaseDirect",
+        "Demo::Caller::InheritedStaticDirect",
+        "Demo::Caller::InheritedStaticDottedDirect",
+        "Demo::Caller::InheritedStaticVar",
+        "Demo::Caller::ThreeLevelDirect",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 6);
+    for caller in [
+        "Demo::Caller::GlobalQualifiedDirect",
+        "Demo::Caller::InheritedStaticBaseDirect",
+        "Demo::Caller::InheritedStaticDirect",
+        "Demo::Caller::InheritedStaticDottedDirect",
+        "Demo::Caller::InheritedStaticVar",
+        "Demo::Caller::ThreeLevelDirect",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
