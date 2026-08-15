@@ -35846,3 +35846,100 @@ class Caller {
         );
     }
 }
+
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_multidimensional_chain_foreach_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class Outer<T> {
+    public class Inner<U> {
+        public static PlainHolder<U>[,] StaticMatrix => default;
+        public static PlainHolder<U>[][] StaticJagged => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int ForeachMatrix() { foreach (var item in Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0].Items) { return item.RunB(281); } return 0; }
+    int ForeachJagged() { foreach (var item in Outer<HelperB>.Inner<HelperB>.StaticJagged[0][0].Items) { return item.RunB(282); } return 0; }
+    int FailClosedMissingStatic() { foreach (var item in Outer<HelperB>.Inner<HelperB>.MissingMatrix[0,0].Items) { return item.RunB(283); } return 0; }
+    int FailClosedInstanceOnElement() { foreach (var item in Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0].Items) { return item.Missing(284); } return 0; }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` collection that resolves through a leading static member
+    // with a multi-dimensional element-access suffix on a constructed static
+    // receiver (`Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0].Items`)
+    // pins the collection element type through the receiver's concrete
+    // generic arguments and strips one array component layer per element
+    // access, so the multi-dimensional (`[0,0]`) and jagged (`[0][0]`) forms
+    // both reach `PlainHolder<HelperB>` and its `T[] Items` yields `HelperB`
+    // elements. A static member the receiver does not declare
+    // (`MissingMatrix`) and a missing member on the element type
+    // (`item.Missing(...)`) fail closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in ["Demo::Caller::ForeachJagged", "Demo::Caller::ForeachMatrix"] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::ForeachJagged", "Demo::Caller::ForeachMatrix"] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedInstanceOnElement",
+        "Demo::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
