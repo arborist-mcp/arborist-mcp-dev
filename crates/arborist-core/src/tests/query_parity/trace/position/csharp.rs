@@ -36732,3 +36732,113 @@ class Util {
         );
     }
 }
+#[test]
+fn traces_csharp_direct_static_field_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper[,] STATIC_MATRIX = new Helper[2,2];
+    public static Helper[][] STATIC_JAGGED = new Helper[2][];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int MatrixVar() { var first = Util.STATIC_MATRIX[0,0]; return first.Run(1); }
+        int JaggedVar() { var first = Util.STATIC_JAGGED[0][0]; return first.Run(1); }
+        int MatrixChainVar() { var first = Util.STATIC_MATRIX[0,0]; return first.entry.Run(1); }
+        int FailClosedMissing() { var first = Util.MISSING_MATRIX[0,0]; return first.Run(1); }
+        int FailClosedDeep() { var first = Util.STATIC_MATRIX[0,0][0]; return first.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static type-qualified field with a
+    // multi-dimensional element-access suffix such as
+    // `var first = Util.STATIC_MATRIX[0,0]` strips one array component layer
+    // per element-access group and pins the local to the element component
+    // type, so a multi-dimensional array field (`Helper[,]` indexed once with
+    // `[0,0]`) and a jagged array field (`Helper[][]` indexed twice with
+    // `[0][0]`) both dispatch later calls on the canonical declared type,
+    // including further instance hops from the local. A static field the type
+    // does not declare (`MISSING_MATRIX`) and element access deeper than the
+    // declared array (`STATIC_MATRIX[0,0][0]` on a `Helper[,]`) fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 1);
+    assert_eq!(run_live.callers[0].symbol_id, "Other::Caller::MatrixChainVar");
+    let helper_live =
+        trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedVar", "Other::Caller::MatrixVar"] {
+        assert!(
+            helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Helper Run caller {caller}"
+        );
+    }
+    for caller in ["Other::Caller::FailClosedDeep", "Other::Caller::FailClosedMissing"] {
+        assert!(
+            !helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_live
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 1);
+    assert_eq!(run_persisted.callers[0].symbol_id, "Other::Caller::MatrixChainVar");
+    let helper_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedVar", "Other::Caller::MatrixVar"] {
+        assert!(
+            helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Helper Run caller {caller}"
+        );
+    }
+    for caller in ["Other::Caller::FailClosedDeep", "Other::Caller::FailClosedMissing"] {
+        assert!(
+            !helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_persisted
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
