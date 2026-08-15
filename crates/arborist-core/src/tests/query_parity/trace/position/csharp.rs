@@ -31605,3 +31605,169 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_generic_method_call_type_argument_return_substitution_receivers_on_var_bound_typed_and_constructed_returns_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Maker {
+    public T Make<T>() => default;
+    public Box<T> MakeBox<T>() => default;
+    public static T MakeStatic<T>() => default;
+}
+class Holder { public Maker Inner { get; set; } }
+class Box<T> { public T Item => default; }
+class Util { public static T MakeStatic<T>() => default; }
+class Caller {
+    HelperA InstanceMake<T>() => default;
+    HelperA LocalMake<T>() => default;
+    int VarBoundMake() { var m = new Maker(); var x = m.Make<HelperA>(); return x.RunA(1); }
+    int TypedMake() { Maker m = new Maker(); return m.Make<HelperA>().RunA(2); }
+    int PropertyChain() { return new Holder().Inner.Make<HelperA>().RunA(3); }
+    int NestedBox() { var box = new Maker().MakeBox<HelperA>(); return box.Item.RunA(4); }
+    int StaticVarMake() { var x = Maker.MakeStatic<HelperA>(); return x.RunA(5); }
+    int ImportedStaticVarMake() { var x = Util.MakeStatic<HelperA>(); return x.RunA(6); }
+    int BareVarMake() { var x = LocalMake<HelperA>(); return x.RunA(7); }
+    int ThisVarMake() { var x = this.InstanceMake<HelperA>(); return x.RunA(8); }
+    int VarBoundMakeB() { var m = new Maker(); var x = m.Make<HelperB>(); return x.RunB(9); }
+}
+",
+    )
+    .unwrap();
+
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::VarBoundMake",
+        "Demo::Caller::TypedMake",
+        "Demo::Caller::PropertyChain",
+        "Demo::Caller::NestedBox",
+        "Demo::Caller::StaticVarMake",
+        "Demo::Caller::ImportedStaticVarMake",
+        "Demo::Caller::BareVarMake",
+        "Demo::Caller::ThisVarMake",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 1);
+    assert!(
+        run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::VarBoundMakeB"),
+        "missing live caller VarBoundMakeB"
+    );
+    let make_live = trace_symbol_graph(&dir, "Demo::Maker::Make", TraceDirection::Callers).unwrap();
+    assert_eq!(make_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarBoundMake",
+        "Demo::Caller::TypedMake",
+        "Demo::Caller::PropertyChain",
+        "Demo::Caller::VarBoundMakeB",
+    ] {
+        assert!(
+            make_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let make_static_live =
+        trace_symbol_graph(&dir, "Demo::Maker::MakeStatic", TraceDirection::Callers).unwrap();
+    assert_eq!(make_static_live.callers.len(), 1);
+    assert!(
+        make_static_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::StaticVarMake"),
+        "missing live caller StaticVarMake"
+    );
+    let util_static_live =
+        trace_symbol_graph(&dir, "Demo::Util::MakeStatic", TraceDirection::Callers).unwrap();
+    assert_eq!(util_static_live.callers.len(), 1);
+    assert!(
+        util_static_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ImportedStaticVarMake"),
+        "missing live caller ImportedStaticVarMake"
+    );
+    let local_make_live =
+        trace_symbol_graph(&dir, "Demo::Caller::LocalMake", TraceDirection::Callers).unwrap();
+    assert_eq!(local_make_live.callers.len(), 1);
+    assert!(
+        local_make_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::BareVarMake"),
+        "missing live caller BareVarMake"
+    );
+    let instance_make_live =
+        trace_symbol_graph(&dir, "Demo::Caller::InstanceMake", TraceDirection::Callers).unwrap();
+    assert_eq!(instance_make_live.callers.len(), 1);
+    assert!(
+        instance_make_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::ThisVarMake"),
+        "missing live caller ThisVarMake"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 8);
+    for caller in [
+        "Demo::Caller::VarBoundMake",
+        "Demo::Caller::TypedMake",
+        "Demo::Caller::PropertyChain",
+        "Demo::Caller::NestedBox",
+        "Demo::Caller::StaticVarMake",
+        "Demo::Caller::ImportedStaticVarMake",
+        "Demo::Caller::BareVarMake",
+        "Demo::Caller::ThisVarMake",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let make_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Maker::Make", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(make_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::VarBoundMake",
+        "Demo::Caller::TypedMake",
+        "Demo::Caller::PropertyChain",
+        "Demo::Caller::VarBoundMakeB",
+    ] {
+        assert!(
+            make_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
