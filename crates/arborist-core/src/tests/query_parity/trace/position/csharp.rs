@@ -38723,3 +38723,101 @@ class PrimitiveCaller : Outer<int>.Base {
         );
     }
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_inherited_field_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Outer<T> {
+    class Base {
+        protected T[,] MATRIX = default;
+        protected T[][] JAGGED = default;
+    }
+}
+class Caller : Outer<Helper>.Base {
+    int VarMatrix() { var items = MATRIX; return items[0,0].entry.Run(1); }
+    int VarJagged() { var items = JAGGED; return items[0][0].entry.Run(1); }
+    int FailClosedMissing() { var items = MISSING; return items[0,0].entry.Run(1); }
+    int FailClosedOnElement() { var items = MATRIX; return items[0,0].Missing(1); }
+}
+class PrimitiveCaller : Outer<int>.Base {
+    int FailClosedPrimitive() { var items = MATRIX; return items[0,0].entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare inherited array field declared on
+    // a nested base of a constructed generic outer type (`class Caller :
+    // Outer<Helper>.Base` with `T[,] MATRIX` and `T[][] JAGGED` on
+    // `Outer<T>.Base`) substitutes the enclosing type's concrete argument for
+    // the member's outer type parameter, so `items[0,0]` and `items[0][0]`
+    // dispatch the remaining instance hops on the substituted element type.
+    // A field the base chain does not declare (`MISSING`), a trailing member
+    // the element type does not declare (`items[0,0].Missing(...)` on a
+    // `Helper`), and a primitive enclosing argument (`Outer<int>.Base`) all
+    // fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::VarJagged", "Demo::Caller::VarMatrix"] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::Caller::FailClosedOnElement",
+        "Demo::PrimitiveCaller::FailClosedPrimitive",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
