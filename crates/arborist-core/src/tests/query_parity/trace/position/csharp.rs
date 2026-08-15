@@ -32578,3 +32578,114 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_derived_constructed_generic_base_outer_parameter_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+        public Inner<U> MakeNext() => Next;
+        public Inner<U> Next => default;
+    }
+}
+class Derived : Outer<HelperA>.Inner<HelperB> {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int DerivedItems() { var first = new Derived().Items[0]; return first.RunB(1); }
+    int DerivedChainItems() { var first = new Derived().MakeNext().Items[0]; return first.RunB(2); }
+    int DerivedBaseOuter() { var first = new Derived().MakeNext().OuterItems[0]; return first.RunA(3); }
+    int DerivedTypedVar() { Derived d = new Derived(); var first = d.MakeNext().OuterItems[0]; return first.RunA(4); }
+}
+",
+    )
+    .unwrap();
+
+    // A constructed receiver that inherits from a constructed generic base
+    // (`class Derived : Outer<HelperA>.Inner<HelperB>`) dispatches inherited
+    // members on the base: an element-access initializer (`new Derived()
+    // .MakeNext().Items[0]`) and a directly typed local
+    // (`Derived d = new Derived(); d.MakeNext().OuterItems[0]`) substitute
+    // the inner parameter (`U` -> `HelperB`) and, through the unique
+    // class/record ancestor chain, the outer parameter (`T` -> `HelperA`)
+    // for `T[] OuterItems`.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DerivedBaseOuter",
+        "Demo::Caller::DerivedTypedVar",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DerivedItems",
+        "Demo::Caller::DerivedChainItems",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DerivedBaseOuter",
+        "Demo::Caller::DerivedTypedVar",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::DerivedItems",
+        "Demo::Caller::DerivedChainItems",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+}
