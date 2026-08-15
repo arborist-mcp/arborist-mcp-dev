@@ -7230,6 +7230,164 @@ fn resolve_csharp_inherited_field_initializer_binding<'a>(
     Ok(None)
 }
 
+/// Resolves a member-hop declared type (`hop_type_name`) into a receiver
+/// binding. Dotted and `global::` spellings, array suffixes, and simple names
+/// that already resolve to a dispatchable type through the namespace/import
+/// rules keep their existing behavior; a simple name that would otherwise
+/// fail (such as a hop on `Outer<T>.Inner<U>` whose declared type is the
+/// nested `Inner<U>` or a sibling nested type) resolves relative to the
+/// declaring type's own scope chain, producing a fully qualified binding that
+/// keeps the enclosing generic arguments so outer-parameter members such as
+/// `T[] OuterItems` still substitute `T` with the outer concrete argument.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# member-hop type binding inputs explicit"
+)]
+fn resolve_csharp_member_hop_type_binding(
+    scope_symbol: &IndexedSymbol,
+    hop_type_name: &str,
+    current_binding: &CSharpBaseTypeBinding,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let mut resolve_with_existing_rules = || {
+        resolve_csharp_receiver_type_binding(
+            scope_symbol,
+            hop_type_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(scope_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
+    };
+    // Dotted and fully-qualified spellings already resolve nested paths
+    // through the existing rules; keep them unchanged.
+    if hop_type_name.contains('.') || hop_type_name.starts_with("global::") {
+        return resolve_with_existing_rules();
+    }
+    // A simple name keeps the existing namespace/import resolution whenever
+    // it already produces a dispatchable type path; the nested-type fallback
+    // only fills the gap for names that otherwise fail.
+    if let Some(binding) = resolve_with_existing_rules()?
+        && csharp_dispatchable_type_path(
+            scope_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        )
+        .is_some()
+    {
+        return Ok(Some(binding));
+    }
+    let Some(simple_path) = crate::language::csharp_generic_type_semantic_path(hop_type_name)
+    else {
+        return Ok(None);
+    };
+    if simple_path.contains("::") {
+        return Ok(None);
+    }
+    let Some(scope_type_path) = csharp_scope_type_path_for_symbol(scope_symbol) else {
+        return Ok(None);
+    };
+    // Candidate nested paths: the declaring type itself when the simple name
+    // matches its own last segment, a type nested directly inside it, and a
+    // sibling nested within each enclosing type of the declaring chain. Only
+    // prefixes that are themselves declared types are considered, so
+    // namespace-level candidates keep resolving through the existing rules.
+    let mut candidate_paths = Vec::new();
+    let mut prefixes = Vec::new();
+    let mut prefix = scope_type_path;
+    loop {
+        prefixes.push(prefix);
+        match prefix.rsplit_once("::") {
+            Some((parent, _)) => prefix = parent,
+            None => break,
+        }
+    }
+    for (index, prefix) in prefixes.iter().enumerate() {
+        if index == 0 && prefix.rsplit("::").next() == Some(simple_path.as_str()) {
+            candidate_paths.push(scope_type_path.to_string());
+        }
+        candidate_paths.push(format!("{prefix}::{simple_path}"));
+    }
+    let candidate_paths = candidate_paths
+        .into_iter()
+        .filter(|candidate| {
+            semantic_path_index
+                .get(candidate)
+                .into_iter()
+                .flatten()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[**index]))
+                .count()
+                == 1
+        })
+        .collect::<BTreeSet<_>>();
+    if candidate_paths.len() != 1 {
+        return Ok(None);
+    }
+    let candidate = candidate_paths.iter().next().unwrap();
+    // The current receiver binding records one concrete-argument vector per
+    // type segment of the scope type, outermost first; the candidate's
+    // enclosing arguments are the leading entries up to the candidate's own
+    // enclosing type segments, so self, deeper-nested, and sibling nested
+    // candidates all keep the concrete outer arguments. When the binding did
+    // not track every type segment (bare `this`/`base` chains), empty entries
+    // keep non-generic members resolving while generic outer-parameter
+    // members fail closed downstream.
+    let mut scope_type_arguments = current_binding.enclosing_generic_arguments.clone();
+    scope_type_arguments.push(current_binding.generic_arguments.clone());
+    let type_segment_count = prefixes
+        .iter()
+        .filter(|prefix| {
+            let prefix_path = **prefix;
+            semantic_path_index
+                .get(prefix_path)
+                .into_iter()
+                .flatten()
+                .any(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        })
+        .count();
+    let candidate_type_segment_count =
+        candidate.split("::").count() - (scope_type_path.split("::").count() - type_segment_count);
+    let enclosing_count = candidate_type_segment_count.saturating_sub(1);
+    let enclosing_generic_arguments = if scope_type_arguments.len() == type_segment_count {
+        scope_type_arguments[..enclosing_count.min(scope_type_arguments.len())].to_vec()
+    } else {
+        vec![Vec::new(); enclosing_count]
+    };
+    Ok(Some(CSharpBaseTypeBinding {
+        semantic_type_path: candidate.clone(),
+        is_global_qualified: true,
+        alias_name: None,
+        namespace_import_paths: Vec::new(),
+        generic_arguments: crate::language::csharp_generic_type_arguments(hop_type_name)
+            .unwrap_or_default(),
+        raw_generic_argument_spellings: Vec::new(),
+        enclosing_generic_arguments,
+        raw_enclosing_generic_argument_spellings: Vec::new(),
+    }))
+}
+
+/// Returns the enclosing type path of a symbol that declares a member hop:
+/// the type's own semantic path for a type declaration, or the enclosing
+/// type path of a member such as a method. Symbols without an enclosing type
+/// (top-level functions) return `None`.
+fn csharp_scope_type_path_for_symbol(symbol: &IndexedSymbol) -> Option<&str> {
+    if csharp_is_type_declaration(symbol) {
+        return Some(symbol.semantic_path.as_str());
+    }
+    symbol
+        .semantic_path
+        .rsplit_once("::")
+        .map(|(parent_path, _)| parent_path)
+}
 /// Walks the intermediate hops of an instance receiver chain such as
 /// `group.member.helper(...)`, `this.member.helper(...)`, or
 /// `base.member.helper(...)` (everything after the leading receiver except the
@@ -7587,12 +7745,12 @@ fn resolve_csharp_member_chain_binding<'a>(
                 current_type_symbol = &raw_symbols[base_indexes[0]];
             }
         };
-        let Some(next_binding) = resolve_csharp_receiver_type_binding(
+        let Some(next_binding) = resolve_csharp_member_hop_type_binding(
             declaring_type_symbol,
             &hop_type_name,
+            &binding,
             raw_symbols,
             semantic_path_index,
-            csharp_source_namespace_path(declaring_type_symbol, raw_symbols).flatten(),
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -8486,12 +8644,12 @@ fn resolve_csharp_method_call_hop_binding<'a>(
         csharp_import_contexts_by_file,
         deadline,
     )?;
-    let Some(next_binding) = resolve_csharp_receiver_type_binding(
+    let Some(next_binding) = resolve_csharp_member_hop_type_binding(
         method,
         &return_type,
+        binding,
         raw_symbols,
         semantic_path_index,
-        csharp_source_namespace_path(method, raw_symbols).flatten(),
         csharp_global_import_context,
         file_overrides,
         csharp_import_contexts_by_file,
@@ -19246,7 +19404,6 @@ fn kotlin_direct_interface_parent_spellings(
     Ok(None)
 }
 
-#[derive(Debug)]
 enum KotlinInheritedMemberResolution {
     Resolved(usize),
     NoMember,
