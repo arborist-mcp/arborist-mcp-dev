@@ -33300,3 +33300,149 @@ class Caller {
         "Demo::Caller::ForeachThreeLevelConstructed"
     );
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_chain_foreach_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Box<T> {
+    public static T[] Values => default;
+}
+class Outer<T> {
+    public class Inner<U> {
+        public static Inner<U> StaticNested => default;
+        public static Inner<U>[] StaticNestedArray => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static Inner<V> StaticNested => default;
+            public V[] Items => default;
+            public T[] OuterItems => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int ForeachStaticNested() { foreach (var item in Outer<HelperA>.Inner<HelperB>.StaticNested.Items) { return item.RunB(1); } return 0; }
+    int ForeachStaticNestedOuter() { foreach (var item in Outer<HelperA>.Inner<HelperB>.StaticNested.OuterItems) { return item.RunA(2); } return 0; }
+    int ForeachStaticNestedArray() { foreach (var item in Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items) { return item.RunB(3); } return 0; }
+    int ForeachGlobalStaticNestedArray() { foreach (var item in global::Lib.Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items) { return item.RunB(4); } return 0; }
+    int ForeachThreeLevelStaticNested() { foreach (var item in Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticNested.Items) { return item.RunC(5); } return 0; }
+    int ForeachSingleLevel() { foreach (var item in Box<HelperB>.Values) { return item.RunB(6); } return 0; }
+    int ForeachThreeLevelOuterParam() { foreach (var item in Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticNested.OuterItems) { return item.RunA(7); } return 0; }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` collection that resolves through a leading static member on
+    // a constructed static receiver (`Outer<HelperA>.Inner<HelperB>.StaticNested
+    // .Items`, `StaticNestedArray[0].Items`) pins the collection element type
+    // through the receiver's concrete generic arguments, so `Inner<U>
+    // StaticNested` followed by `U[] Items` yields `HelperB` elements and a
+    // static array member with an element-access suffix (`StaticNestedArray[0]`)
+    // strips one component layer identically. The outer-parameter member
+    // `T[] OuterItems` resolves to `HelperA[]` on a receiver nested one level
+    // (`Outer<HelperA>.Inner<HelperB>`) and two levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>`), and a single-level
+    // constructed receiver terminal (`Box<HelperB>.Values`) and a
+    // `global::`-qualified receiver bind identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachStaticNestedOuter",
+        "Demo::Caller::ForeachThreeLevelOuterParam",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ForeachStaticNested",
+        "Demo::Caller::ForeachStaticNestedArray",
+        "Demo::Caller::ForeachGlobalStaticNestedArray",
+        "Demo::Caller::ForeachSingleLevel",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 1);
+    assert_eq!(
+        run_c_live.callers[0].symbol_id,
+        "Demo::Caller::ForeachThreeLevelStaticNested"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::ForeachStaticNestedOuter",
+        "Demo::Caller::ForeachThreeLevelOuterParam",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::ForeachStaticNested",
+        "Demo::Caller::ForeachStaticNestedArray",
+        "Demo::Caller::ForeachGlobalStaticNestedArray",
+        "Demo::Caller::ForeachSingleLevel",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 1);
+    assert_eq!(
+        run_c_persisted.callers[0].symbol_id,
+        "Demo::Caller::ForeachThreeLevelStaticNested"
+    );
+}
