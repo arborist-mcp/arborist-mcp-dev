@@ -32925,3 +32925,139 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public static Inner<U> StaticNested => default;
+        public static Inner<U>[] StaticNestedArray => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static Inner<V> StaticNested => default;
+            public V[] Items => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int StaticNestedProp() { var first = Outer<HelperA>.Inner<HelperB>.StaticNested.Items[0]; return first.RunB(1); }
+    int StaticNestedPropOuter() { var first = Outer<HelperA>.Inner<HelperB>.StaticNested.OuterItems[0]; return first.RunA(2); }
+    int StaticNestedArrayField() { var first = Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items[0]; return first.RunB(3); }
+    int StaticNestedArrayOuter() { var first = Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].OuterItems[0]; return first.RunA(4); }
+    int GlobalStaticNestedArray() { var first = global::Lib.Outer<HelperA>.Inner<HelperB>.StaticNestedArray[0].Items[0]; return first.RunB(5); }
+    int ThreeLevelStaticNestedProp() { var first = Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticNested.Items[0]; return first.RunC(6); }
+}
+",
+    )
+    .unwrap();
+
+    // A leading static field or property on a constructed static receiver
+    // (`Outer<HelperA>.Inner<HelperB>.StaticNested`) resolves its declared
+    // type through the receiver's concrete generic arguments, so `Inner<U>`
+    // pins `Inner<HelperB>` and the outer-parameter member `T[] OuterItems`
+    // resolves to `HelperA[]`; a static array member with an element-access
+    // suffix (`StaticNestedArray[0]`) strips one component layer and pins the
+    // same constructed component. A `global::`-qualified receiver and a
+    // constructed receiver through two enclosing generic levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>`) resolve identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::StaticNestedPropOuter",
+        "Demo::Caller::StaticNestedArrayOuter",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunA caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::StaticNestedProp",
+        "Demo::Caller::StaticNestedArrayField",
+        "Demo::Caller::GlobalStaticNestedArray",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 1);
+    assert_eq!(
+        run_c_live.callers[0].symbol_id,
+        "Demo::Caller::ThreeLevelStaticNestedProp"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::StaticNestedPropOuter",
+        "Demo::Caller::StaticNestedArrayOuter",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunA caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::StaticNestedProp",
+        "Demo::Caller::StaticNestedArrayField",
+        "Demo::Caller::GlobalStaticNestedArray",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 1);
+    assert_eq!(
+        run_c_persisted.callers[0].symbol_id,
+        "Demo::Caller::ThreeLevelStaticNestedProp"
+    );
+}
