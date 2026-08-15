@@ -8934,16 +8934,23 @@ fn resolve_csharp_member_hop_type_binding(
         return resolve_with_existing_rules();
     }
     // A simple name keeps the existing namespace/import resolution whenever
-    // it already produces a dispatchable type path; the nested-type fallback
-    // only fills the gap for names that otherwise fail.
+    // it already produces a dispatchable type path outside the declaring
+    // scope chain; a resolution through that chain falls through to the
+    // chain walk below so the returned binding carries the enclosing
+    // concrete generic arguments aligned with the receiver.
     if let Some(binding) = resolve_with_existing_rules()?
-        && csharp_dispatchable_type_path(
+        && let Some(resolved_type_path) = csharp_dispatchable_type_path(
             scope_symbol,
             raw_symbols,
             &binding,
             csharp_is_type_declaration,
         )
-        .is_some()
+        && !csharp_dispatchable_path_is_nested_in_scope_chain(
+            scope_symbol,
+            &resolved_type_path,
+            raw_symbols,
+            semantic_path_index,
+        )
     {
         return Ok(Some(binding));
     }
@@ -8966,7 +8973,14 @@ fn resolve_csharp_member_hop_type_binding(
     let mut prefixes = Vec::new();
     let mut prefix = scope_type_path;
     loop {
-        prefixes.push(prefix);
+        if semantic_path_index
+            .get(prefix)
+            .into_iter()
+            .flatten()
+            .any(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        {
+            prefixes.push(prefix);
+        }
         match prefix.rsplit_once("::") {
             Some((parent, _)) => prefix = parent,
             None => break,
@@ -9088,6 +9102,42 @@ fn csharp_scope_type_path_for_symbol(symbol: &IndexedSymbol) -> Option<&str> {
         .semantic_path
         .rsplit_once("::")
         .map(|(parent_path, _)| parent_path)
+}
+
+/// Returns whether `resolved_type_path` names a type nested inside an
+/// enclosing type of the declaring scope chain of `scope_symbol` (the same
+/// chain the member-hop type binding fallback walks for simple names).
+/// Simple names that resolve to such a nested type fall through to the chain
+/// walk so the returned binding carries the enclosing concrete generic
+/// arguments aligned with the receiver; a plain namespace/import/global
+/// resolution (including a simple name matching the scope type itself) keeps
+/// the fast path.
+fn csharp_dispatchable_path_is_nested_in_scope_chain(
+    scope_symbol: &IndexedSymbol,
+    resolved_type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> bool {
+    let Some(scope_type_path) = csharp_scope_type_path_for_symbol(scope_symbol) else {
+        return false;
+    };
+    let mut prefix = scope_type_path;
+    loop {
+        if semantic_path_index
+            .get(prefix)
+            .into_iter()
+            .flatten()
+            .any(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            && resolved_type_path.starts_with(&format!("{prefix}::"))
+        {
+            return true;
+        }
+        match prefix.rsplit_once("::") {
+            Some((parent_path, _)) => prefix = parent_path,
+            None => break,
+        }
+    }
+    false
 }
 /// Walks the intermediate hops of an instance receiver chain such as
 /// `group.member.helper(...)`, `this.member.helper(...)`, or
@@ -9784,18 +9834,65 @@ fn csharp_collect_enclosing_generic_argument_compositions(
                 substitute_csharp_type_parameters(spelling, &parameters, current_type_args)
             })
             .collect();
-        let base_enclosing_args: Vec<Vec<String>> = base_binding
+        let base_enclosing_args: Vec<Vec<String>> = if !base_binding
             .raw_enclosing_generic_argument_spellings
-            .iter()
-            .map(|segment| {
-                segment
+            .is_empty()
+        {
+            base_binding
+                .raw_enclosing_generic_argument_spellings
+                .iter()
+                .map(|segment| {
+                    segment
+                        .iter()
+                        .map(|spelling| {
+                            substitute_csharp_type_parameters(
+                                spelling,
+                                &parameters,
+                                current_type_args,
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        } else {
+            // A base spelled with a simple name can name a sibling nested
+            // type inside one of the current type's enclosing generic types
+            // (such as `Base<U>` nested beside `Mid<U>` inside `Outer<T>`);
+            // the base's enclosing arguments inherit the leading entries of
+            // the current type's enclosing arguments aligned with the
+            // innermost enclosing type that contains the base's target path,
+            // so `Caller : Outer<Helper>.Mid<Helper>` reaching `Base<U>`
+            // carries `Outer<Helper>` into the base step. A base outside the
+            // current type's enclosing chain keeps no enclosing arguments.
+            let mut enclosing_type_paths = Vec::new();
+            let mut prefix = current_type_path;
+            while let Some((parent_path, _)) = prefix.rsplit_once("::") {
+                prefix = parent_path;
+                if semantic_path_index
+                    .get(prefix)
+                    .into_iter()
+                    .flatten()
+                    .any(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                {
+                    enclosing_type_paths.push(prefix);
+                }
+            }
+            enclosing_type_paths.reverse();
+            let mut containing_index = None;
+            for (index, enclosing_type_path) in enclosing_type_paths.iter().enumerate() {
+                if base_type_path.starts_with(&format!("{enclosing_type_path}::")) {
+                    containing_index = Some(index);
+                }
+            }
+            match containing_index {
+                Some(index) => current_enclosing_args
                     .iter()
-                    .map(|spelling| {
-                        substitute_csharp_type_parameters(spelling, &parameters, current_type_args)
-                    })
-                    .collect()
-            })
-            .collect();
+                    .take(index + 1)
+                    .cloned()
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
         csharp_collect_enclosing_generic_argument_compositions(
             &base_type_path,
             &base_args,
@@ -11893,6 +11990,41 @@ fn csharp_struct_type_path(
     )
 }
 
+/// Returns the ordered enclosing type paths of `source_symbol`,
+/// innermost first, excluding the source's own type declaration so a type's
+/// base list resolves in the containing scope: `Demo::Outer::Mid` reports
+/// `["Demo::Outer"]` and a method on `Demo::Outer::Mid` reports
+/// `["Demo::Outer::Mid", "Demo::Outer"]`. A symbol without an enclosing
+/// type, or an enclosing chain that cannot be walked uniquely, returns
+/// `None` so callers fail closed.
+fn csharp_enclosing_type_scope_paths<'a>(
+    source_symbol: &'a IndexedSymbol,
+    raw_symbols: &'a [IndexedSymbol],
+) -> Option<Vec<&'a str>> {
+    let mut type_paths = Vec::new();
+    let mut type_path = source_symbol.scope_path.as_deref()?;
+    loop {
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == type_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        match type_candidates {
+            0 => break,
+            1 => type_paths.push(type_path),
+            _ => return None,
+        }
+        let Some((parent_path, _)) = type_path.rsplit_once("::") else {
+            break;
+        };
+        type_path = parent_path;
+    }
+    Some(type_paths)
+}
+
 fn csharp_dispatchable_type_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
@@ -11920,12 +12052,24 @@ fn csharp_dispatchable_type_path(
         );
     }
 
-    // Simple names resolve through the source namespace, then its enclosing
-    // namespaces, then the global scope, matching C# enclosing-namespace
-    // lookup; the innermost scope with candidates must be unambiguous or
-    // resolution fails closed.
+    // Simple names resolve through the source's enclosing type scopes (so a
+    // nested type's base list can name a sibling nested type inside the same
+    // containing type), then the source namespace, its enclosing namespaces,
+    // then the global scope, matching C# enclosing-scope lookup; the
+    // innermost scope with candidates must be unambiguous or resolution
+    // fails closed.
     let source_namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
     let mut type_paths = Vec::new();
+    if let Some(enclosing_type_paths) =
+        csharp_enclosing_type_scope_paths(source_symbol, raw_symbols)
+    {
+        for enclosing_type_path in enclosing_type_paths {
+            type_paths.push(format!(
+                "{enclosing_type_path}::{}",
+                binding.semantic_type_path
+            ));
+        }
+    }
     let mut namespace_path = source_namespace_path;
     while let Some(current_namespace) = namespace_path {
         type_paths.push(format!(
