@@ -8345,6 +8345,28 @@ fn csharp_constructor_receiver_segments(reference_name: &str) -> Option<Vec<&str
     Some(segments)
 }
 
+/// Rejects whitespace in a constructed-receiver type segment such as
+/// `Box<HelperA>` or `Pair<HelperA, HelperB>` only when it appears outside a
+/// balanced generic argument list; spaces inside argument lists are valid,
+/// while stray spaces and unbalanced angle brackets fail closed.
+fn csharp_type_segment_rejects_stray_whitespace(segment: &str) -> bool {
+    let mut generic_depth = 0usize;
+    for character in segment.chars() {
+        match character {
+            '<' => generic_depth += 1,
+            '>' => {
+                let Some(next_depth) = generic_depth.checked_sub(1) else {
+                    return true;
+                };
+                generic_depth = next_depth;
+            }
+            ' ' if generic_depth == 0 => return true,
+            _ => {}
+        }
+    }
+    generic_depth != 0
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# constructor receiver resolution inputs explicit"
@@ -8381,13 +8403,15 @@ fn resolve_csharp_constructor_receiver_call(
     // argument list such as `Box<HelperA>` or
     // `Box<Outer<HelperA>.Inner<HelperA>>`; every type segment must
     // otherwise normalize to a safe semantic type path with no brackets,
-    // parentheses, nullability, or whitespace so the receiver resolves to a
-    // declared type binding that can substitute the generic parameters in
-    // member declared types. Malformed spellings fail closed.
+    // parentheses, nullability, or stray whitespace outside balanced generic
+    // argument lists so the receiver resolves to a declared type binding that
+    // can substitute the generic parameters in member declared types.
+    // Malformed spellings fail closed.
     if type_segments.is_empty()
         || type_segments.iter().any(|segment| {
             segment.is_empty()
-                || segment.contains(['[', ']', '(', ')', '?', ' '])
+                || segment.contains(['[', ']', '(', ')', '?'])
+                || csharp_type_segment_rejects_stray_whitespace(segment)
                 || crate::language::csharp_generic_type_semantic_path(segment).is_none()
         })
     {
