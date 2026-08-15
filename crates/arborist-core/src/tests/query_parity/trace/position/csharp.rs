@@ -37069,3 +37069,109 @@ class Caller {
         );
     }
 }
+
+#[test]
+fn traces_csharp_direct_static_imported_field_multidimensional_foreach_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper[,] STATIC_MATRIX = new Helper[2,2];
+    public static Helper[][] STATIC_JAGGED = new Helper[2][];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int ForeachMatrix() { foreach (var item in STATIC_MATRIX) { return item.entry.Run(1); } return 0; }
+        int ForeachJaggedRow() { foreach (var row in STATIC_JAGGED) { return row[0].entry.Run(1); } return 0; }
+        int FailClosedMissing() { foreach (var item in MISSING_MATRIX) { return item.entry.Run(1); } return 0; }
+        int FailClosedOnElement() { foreach (var item in STATIC_MATRIX) { return item.Missing(1); } return 0; }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` over a static-imported array field
+    // (`foreach (var item in STATIC_MATRIX)` with `using static Demo.Util;`)
+    // binds the loop variable to the array's element component type, so a
+    // multi-dimensional array field (`Helper[,]`) yields `Helper` elements
+    // whose instance hops dispatch on the canonical declared type, and a
+    // jagged array field (`Helper[][]`) yields `Helper[]` rows whose own
+    // element access (`row[0]`) strips the second component layer. A field
+    // the imported type does not declare (`MISSING_MATRIX`) and a trailing
+    // member the element type does not declare (`item.Missing(...)` on a
+    // `Helper`) fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in [
+        "Other::Caller::ForeachJaggedRow",
+        "Other::Caller::ForeachMatrix",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::FailClosedOnElement",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in [
+        "Other::Caller::ForeachJaggedRow",
+        "Other::Caller::ForeachMatrix",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::FailClosedOnElement",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
