@@ -2525,7 +2525,20 @@ fn resolve_csharp_factory_chain_receiver_binding(
     // the trailing factory's declared return type substitutes the generic
     // parameters. Malformed or unresolvable constructed roots fail closed.
     if let Some(rest) = chain.strip_prefix("new ") {
-        let Some((type_name, trailing)) = csharp_constructed_receiver_chain_parts(rest) else {
+        let Some((type_name, trailing)) =
+            csharp_constructed_receiver_chain_parts(rest).or_else(|| {
+                // A bare constructed root such as `new Box<HelperA>()` (the
+                // constructor call is the final segment with no trailing member
+                // chain) keeps the whole type spelling as the receiver and an
+                // empty trailing chain, so a trailing factory on the constructed
+                // receiver such as `new Box<HelperA>().GetSingle()` still
+                // substitutes the concrete generic arguments into the factory's
+                // declared return type. Malformed spellings fail closed.
+                rest.strip_suffix("()")
+                    .filter(|type_name| !type_name.is_empty())
+                    .map(|type_name| (type_name.to_string(), String::new()))
+            })
+        else {
             return Ok(None);
         };
         let Some(binding) = resolve_csharp_receiver_type_binding(
@@ -2719,6 +2732,7 @@ fn resolve_csharp_factory_receiver_binding(
     // (`var o = Factory.Holder`) that resolves to the same binding. Other
     // factory shapes have no generic receiver mapping and keep the declared
     // return type, failing closed downstream when it names a type parameter.
+    let mut receiver_binding_for_return_type = None;
     let substituted_return_type = if let Some((receiver_name, method_name)) =
         factory_spelling.split_once('.')
         && !receiver_name.is_empty()
@@ -2742,6 +2756,7 @@ fn resolve_csharp_factory_receiver_binding(
             &receiver_binding,
             csharp_is_type_declaration,
         ) {
+        receiver_binding_for_return_type = Some(receiver_binding.clone());
         substitute_csharp_method_return_type(
             method,
             &receiver_binding,
@@ -2781,6 +2796,7 @@ fn resolve_csharp_factory_receiver_binding(
             csharp_is_type_declaration,
         )
     {
+        receiver_binding_for_return_type = Some(receiver_binding.clone());
         substitute_csharp_method_return_type(
             method,
             &receiver_binding,
@@ -2818,19 +2834,38 @@ fn resolve_csharp_factory_receiver_binding(
     // Resolve the factory's declared return type in the factory's own scope
     // and canonicalize it to the global-qualified semantic path, so a caller
     // in another namespace dispatches the final member on the canonical
-    // declared type independently of its own imports.
-    let Some(binding) = resolve_csharp_receiver_type_binding(
-        method,
-        &substituted_return_type,
-        raw_symbols,
-        semantic_path_index,
-        csharp_source_namespace_path(method, raw_symbols).flatten(),
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    // declared type independently of its own imports. When the factory was
+    // dispatched on a receiver binding (a constructed root or a bound
+    // receiver), a simple return type that names a nested type such as
+    // `Inner<HelperB>` on `Outer<HelperA>.Inner<HelperB>` resolves relative
+    // to the factory's own scope chain and keeps the receiver's concrete
+    // enclosing generic arguments; the existing rules remain the fallback
+    // for dotted, imported, and namespace-qualified spellings.
+    let Some(binding) = (if let Some(receiver_binding) = receiver_binding_for_return_type.as_ref() {
+        resolve_csharp_member_hop_type_binding(
+            method,
+            &substituted_return_type,
+            receiver_binding,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        resolve_csharp_receiver_type_binding(
+            method,
+            &substituted_return_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(method, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    }) else {
         return Ok(None);
     };
     Ok(canonicalize_csharp_type_binding(
@@ -7311,28 +7346,34 @@ fn resolve_csharp_member_hop_type_binding(
             None => break,
         }
     }
+    // The simple name resolves to the nearest enclosing declaration: the
+    // candidate list walks the declaring chain innermost-first and keeps the
+    // first prefix whose nested type actually declares a type with the simple
+    // name, so a same-named sibling nested in an outer enclosing type (such
+    // as `Outer<T>.Inner<U>` when the declaring scope is
+    // `Outer<T>.Middle<U>.Inner<V>`) is shadowed by the nearer declaration
+    // instead of making the chain ambiguous.
     for (index, prefix) in prefixes.iter().enumerate() {
-        if index == 0 && prefix.rsplit("::").next() == Some(simple_path.as_str()) {
-            candidate_paths.push(scope_type_path.to_string());
-        }
-        candidate_paths.push(format!("{prefix}::{simple_path}"));
-    }
-    let candidate_paths = candidate_paths
-        .into_iter()
-        .filter(|candidate| {
-            semantic_path_index
-                .get(candidate)
+        let candidate = if index == 0 && prefix.rsplit("::").next() == Some(simple_path.as_str()) {
+            scope_type_path.to_string()
+        } else {
+            format!("{prefix}::{simple_path}")
+        };
+        if !candidate_paths.contains(&candidate)
+            && semantic_path_index
+                .get(&candidate)
                 .into_iter()
                 .flatten()
                 .filter(|index| csharp_is_type_declaration(&raw_symbols[**index]))
                 .count()
                 == 1
-        })
-        .collect::<BTreeSet<_>>();
-    if candidate_paths.len() != 1 {
-        return Ok(None);
+        {
+            candidate_paths.push(candidate);
+        }
     }
-    let candidate = candidate_paths.iter().next().unwrap();
+    let Some(candidate) = candidate_paths.into_iter().next() else {
+        return Ok(None);
+    };
     // The current receiver binding records one concrete-argument vector per
     // type segment of the scope type, outermost first; the candidate's
     // enclosing arguments are the leading entries up to the candidate's own
