@@ -7428,6 +7428,31 @@ fn csharp_qualified_element_access_component_type_path(
             deadline,
         )?
         else {
+            // A `this.`-rooted bare chain whose member is not declared on
+            // the enclosing type or its ancestors falls back to the unbound
+            // bare member root rules (an inherited base-class or
+            // static-imported array member), so
+            // `foreach (var item in STATIC_MATRIX)` with
+            // `using static Demo.Util;` binds the loop variable to the
+            // imported array's element component type; unknown imports and
+            // non-array members fail closed.
+            if receiver == "this"
+                && hops.is_empty()
+                && let Some(binding) = resolve_csharp_unbound_bare_member_array_component_binding(
+                    source_symbol,
+                    &terminal,
+                    depth,
+                    raw_symbols,
+                    semantic_path_index,
+                    source_namespace_path,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+            {
+                return Ok(Some(binding));
+            }
             return Ok(None);
         };
         // The element component binding resolves in the declaring type's own
