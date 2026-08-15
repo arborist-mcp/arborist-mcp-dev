@@ -36782,7 +36782,10 @@ class Util {
     // declared array (`STATIC_MATRIX[0,0][0]` on a `Helper[,]`) fail closed.
     let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
     assert_eq!(run_live.callers.len(), 1);
-    assert_eq!(run_live.callers[0].symbol_id, "Other::Caller::MatrixChainVar");
+    assert_eq!(
+        run_live.callers[0].symbol_id,
+        "Other::Caller::MatrixChainVar"
+    );
     let helper_live =
         trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
     assert_eq!(helper_live.callers.len(), 2);
@@ -36795,7 +36798,10 @@ class Util {
             "missing live Helper Run caller {caller}"
         );
     }
-    for caller in ["Other::Caller::FailClosedDeep", "Other::Caller::FailClosedMissing"] {
+    for caller in [
+        "Other::Caller::FailClosedDeep",
+        "Other::Caller::FailClosedMissing",
+    ] {
         assert!(
             !helper_live
                 .callers
@@ -36814,7 +36820,10 @@ class Util {
         trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
             .unwrap();
     assert_eq!(run_persisted.callers.len(), 1);
-    assert_eq!(run_persisted.callers[0].symbol_id, "Other::Caller::MatrixChainVar");
+    assert_eq!(
+        run_persisted.callers[0].symbol_id,
+        "Other::Caller::MatrixChainVar"
+    );
     let helper_persisted =
         trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
             .unwrap();
@@ -36828,7 +36837,10 @@ class Util {
             "missing persisted Helper Run caller {caller}"
         );
     }
-    for caller in ["Other::Caller::FailClosedDeep", "Other::Caller::FailClosedMissing"] {
+    for caller in [
+        "Other::Caller::FailClosedDeep",
+        "Other::Caller::FailClosedMissing",
+    ] {
         assert!(
             !helper_persisted
                 .callers
