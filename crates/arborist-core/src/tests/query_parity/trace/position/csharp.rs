@@ -35231,3 +35231,106 @@ class Caller {
         );
     }
 }
+
+
+#[test]
+fn traces_csharp_constructed_generic_static_member_multidimensional_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperB { public int RunB(int value) => value; }
+class PlainHolder<T> { public T[] Items => default; }
+class Outer<T> {
+    public class Inner<U> {
+        public static PlainHolder<U>[,] StaticMatrix => default;
+        public static PlainHolder<U>[][] StaticJagged => default;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int GenericNestedMatrixDirect() { return Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0].Items[0].RunB(221); }
+    int GenericNestedJaggedDirect() { return Outer<HelperB>.Inner<HelperB>.StaticJagged[0][0].Items[0].RunB(222); }
+    int GenericNestedMatrixVar() { var x = Outer<HelperB>.Inner<HelperB>.StaticMatrix; return x[0,0].Items[0].RunB(223); }
+    int GenericNestedJaggedVar() { var y = Outer<HelperB>.Inner<HelperB>.StaticJagged; return y[0][0].Items[0].RunB(224); }
+    int GenericNestedMissingDirect() { return Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0].RunB(225); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct member chain rooted at a multi-segment constructed generic
+    // static type such as `Outer<HelperB>.Inner<HelperB>.StaticMatrix[0,0]`
+    // absorbs the consecutive generic type segments, resolves the leading
+    // static member on the concrete generic arguments of both the inner and
+    // outer segments, and strips one array component layer per element-access
+    // group, so the multi-dimensional (`[0,0]`) and jagged (`[0][0]`) forms
+    // both pin `PlainHolder<HelperB>` before the remaining instance hops
+    // walk; the direct chain and the `var`-initializer form resolve through
+    // the same substituted binding, while a trailing member the element type
+    // does not declare (`StaticMatrix[0,0].RunB(...)` on a
+    // `PlainHolder<HelperB>`) fails closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::GenericNestedJaggedDirect",
+        "Demo::Caller::GenericNestedJaggedVar",
+        "Demo::Caller::GenericNestedMatrixDirect",
+        "Demo::Caller::GenericNestedMatrixVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    for caller in ["Demo::Caller::GenericNestedMissingDirect"] {
+        assert!(
+            !run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live RunB caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 4);
+    for caller in [
+        "Demo::Caller::GenericNestedJaggedDirect",
+        "Demo::Caller::GenericNestedJaggedVar",
+        "Demo::Caller::GenericNestedMatrixDirect",
+        "Demo::Caller::GenericNestedMatrixVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    for caller in ["Demo::Caller::GenericNestedMissingDirect"] {
+        assert!(
+            !run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted RunB caller for missing member {caller}"
+        );
+    }
+}
