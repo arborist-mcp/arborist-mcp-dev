@@ -4543,9 +4543,9 @@ fn resolve_csharp_initializer_chain_binding(
         let mut candidate_bindings = Vec::new();
         if let Some(type_name) = receiver_name.strip_suffix("()")
             && !type_name.is_empty()
-            && !type_name.split('.').any(|segment| {
-                segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
-            })
+            && !type_name
+                .split('.')
+                .any(|segment| segment.is_empty() || segment.contains(['[', ']', '(', ')', '?']))
             && let Some(binding) = resolve_csharp_receiver_type_binding(
                 source_symbol,
                 type_name,
@@ -5839,7 +5839,11 @@ fn csharp_qualified_element_access_component_type_path(
                     deadline,
                 );
             }
-            (receiver.to_string(), chain.to_string(), false)
+            (
+                receiver.to_string(),
+                chain.to_string(),
+                receiver.ends_with("()"),
+            )
         };
     let (receiver, absorbed_chain_segments) = csharp_qualified_element_access_receiver(
         source_symbol,
@@ -6014,9 +6018,9 @@ fn csharp_qualified_element_access_component_type_path(
     } else if constructed_root
         && let Some(type_name) = receiver.strip_suffix("()")
         && !type_name.is_empty()
-        && !type_name.split('.').any(|segment| {
-            segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
-        })
+        && !type_name
+            .split('.')
+            .any(|segment| segment.is_empty() || segment.contains(['[', ']', '(', ')', '?']))
         && let Some(binding) = resolve_csharp_receiver_type_binding(
             source_symbol,
             type_name,
@@ -6028,13 +6032,22 @@ fn csharp_qualified_element_access_component_type_path(
             csharp_import_contexts_by_file,
             deadline,
         )?
+        && csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        )
+        .is_some()
     {
         // A constructed-receiver root such as `new Group()` in
         // `new Group().holder?.items[0]` or
         // `foreach (var item in new Group().holder?.items)` resolves the
         // constructed type, then walks any intermediate field hops and the
-        // terminal array member as an instance receiver; unknown constructed
-        // types fail closed.
+        // terminal array member as an instance receiver; an unbound name such
+        // as `makeGroup()` in `makeGroup().items[0]` falls through to the
+        // bare factory-call interpretation instead of failing the whole
+        // chain, and unknown constructed types fail closed.
         (binding, source_symbol, false)
     } else if let Some(mut leading_call) =
         csharp_outer_parenthesized_inner(receiver).or(Some(receiver))

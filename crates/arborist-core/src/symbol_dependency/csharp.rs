@@ -6,9 +6,10 @@ use anyhow::Result;
 use crate::language::{
     csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
     csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    csharp_generic_type_semantic_path, csharp_global_namespace_imports,
-    csharp_global_static_type_imports, csharp_global_type_alias_imports, detect_language,
-    node_text, normalize_path, parse_document, parse_document_with_timeout, read_source,
+    csharp_generic_type_arguments_per_segment, csharp_generic_type_semantic_path,
+    csharp_global_namespace_imports, csharp_global_static_type_imports,
+    csharp_global_type_alias_imports, detect_language, node_text, normalize_path, parse_document,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::semantic::csharp::is_csharp_symbol_node;
@@ -1353,7 +1354,26 @@ fn csharp_constructor_type_spelling(
     let Some(semantic_type_path) = csharp_generic_type_semantic_path(type_name) else {
         return Ok(None);
     };
-    Ok(Some(format!("{}()", semantic_type_path.replace("::", "."))))
+    // Re-attach the trimmed concrete type-argument spellings to their type
+    // segments so constructed generic receivers keep their arguments for
+    // return-type substitution; segment count mismatches fail closed.
+    // Mirrors the extractor's constructed type spelling rules.
+    let Some(arguments_per_segment) = csharp_generic_type_arguments_per_segment(type_name) else {
+        return Ok(None);
+    };
+    let semantic_segments = semantic_type_path.split("::").collect::<Vec<_>>();
+    if semantic_segments.len() != arguments_per_segment.len() {
+        return Ok(None);
+    }
+    let mut normalized_segments = Vec::with_capacity(semantic_segments.len());
+    for (segment, arguments) in semantic_segments.iter().zip(arguments_per_segment.iter()) {
+        if arguments.is_empty() {
+            normalized_segments.push((*segment).to_string());
+        } else {
+            normalized_segments.push(format!("{}<{}>", segment, arguments.join(", ")));
+        }
+    }
+    Ok(Some(format!("{}()", normalized_segments.join("."))))
 }
 
 /// Strips a trailing object-initializer body (`{ ... }`) and constructor
