@@ -9275,14 +9275,6 @@ fn resolve_csharp_receiver_type_binding(
     // generic type's parameters in member declared types.
     let generic_arguments =
         crate::language::csharp_generic_type_arguments(type_name).unwrap_or_default();
-    // A dotted nested spelling such as `Outer<Helper>.Inner<Helper>` also
-    // records the concrete type arguments of every enclosing segment
-    // (outermost first) so member declared types that reference an outer type
-    // parameter (`T[] outerItems` on `Inner<U>`) substitute `T`.
-    let enclosing_generic_arguments =
-        crate::language::csharp_generic_type_arguments_per_segment(type_name)
-            .map(|segments| segments[..segments.len().saturating_sub(1)].to_vec())
-            .unwrap_or_default();
     let binding = if !type_name.starts_with("global::")
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
@@ -9368,7 +9360,43 @@ fn resolve_csharp_receiver_type_binding(
         return Ok(None);
     };
     binding.generic_arguments = generic_arguments;
-    binding.enclosing_generic_arguments = enclosing_generic_arguments;
+    // A dotted nested spelling such as `Outer<Helper>.Inner<Helper>` also
+    // records the concrete type arguments of every enclosing segment
+    // (outermost first) so member declared types that reference an outer type
+    // parameter (`T[] outerItems` on `Inner<U>`) substitute `T`. The
+    // argument vectors align with the resolved type chain's type segments:
+    // leading namespace segments in the raw spelling (such as `Lib` in
+    // `Lib.Outer<Helper>.Inner<Helper>` or a `global::` prefix) carry no
+    // arguments, so the tail of the raw per-segment argument spellings maps
+    // onto the resolved type chain regardless of how the type was spelled.
+    binding.enclosing_generic_arguments =
+        crate::language::csharp_generic_type_arguments_per_segment(type_name)
+            .map(|segments| {
+                let mut type_segment_count = 0usize;
+                let mut prefix = binding.semantic_type_path.as_str();
+                loop {
+                    if semantic_path_index
+                        .get(prefix)
+                        .into_iter()
+                        .flatten()
+                        .any(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                    {
+                        type_segment_count += 1;
+                    }
+                    match prefix.rsplit_once("::") {
+                        Some((parent, _)) => prefix = parent,
+                        None => break,
+                    }
+                }
+                let chain_start = segments.len().saturating_sub(type_segment_count);
+                let enclosing_end = segments.len().saturating_sub(1);
+                if chain_start <= enclosing_end {
+                    segments[chain_start..enclosing_end].to_vec()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
     if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
         // A nullable value type such as `Point?` does not expose the
         // underlying struct's members directly; the receiver must be
