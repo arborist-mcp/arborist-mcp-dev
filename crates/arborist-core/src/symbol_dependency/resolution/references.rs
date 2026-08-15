@@ -2138,8 +2138,11 @@ fn resolve_csharp_instance_receiver_call(
             // through the same factory and chain rules before stripping one
             // component layer per element-access depth; a bare field chain
             // (`var items = holder`) resolves the chain terminal's declared
-            // array type directly. Untyped, unknown, and non-array bases fail
-            // closed.
+            // array type directly. A bare base that is not bound at all
+            // (`var first = STATIC_MATRIX[0,0]` with `using static
+            // Demo.Util;`) resolves as an unbound inherited or static-imported
+            // member array root before stripping the element-access depth.
+            // Untyped, unknown, and non-array bases fail closed.
             let marker_binding = if let Some(declared_type) = bindings.type_for(&base_reference) {
                 let Some(component_type) =
                     csharp_array_component_spelling_at_depth(&declared_type, base_depth)
@@ -2279,7 +2282,18 @@ fn resolve_csharp_instance_receiver_call(
                         }
                     }
                 } else {
-                    None
+                    resolve_csharp_unbound_bare_member_array_component_binding(
+                        source_symbol,
+                        &base_reference,
+                        base_depth,
+                        raw_symbols,
+                        semantic_path_index,
+                        source_namespace_path,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                    )?
                 }
             };
             let Some(binding) = marker_binding else {
