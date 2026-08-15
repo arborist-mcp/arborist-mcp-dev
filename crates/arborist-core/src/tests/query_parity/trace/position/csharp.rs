@@ -38318,3 +38318,157 @@ class Caller : Deep {
         );
     }
 }
+
+#[test]
+fn traces_csharp_inherited_field_shadows_static_import_multidimensional_foreach_element_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Entry {
+        public int Run(int value) => value;
+    }
+    class Helper {
+        public int Run(int value) => value;
+        public Entry entry = new Entry();
+    }
+    class OtherHelper {
+        public int Run(int value) => value;
+    }
+    class Util {
+        public static OtherHelper[,] MATRIX = new OtherHelper[2,2];
+        public static OtherHelper[][] JAGGED = new OtherHelper[2][];
+        public static OtherHelper[,] STATIC_ONLY_MATRIX = new OtherHelper[2,2];
+    }
+    class Base {
+        protected Helper[,] MATRIX = new Helper[2,2];
+        protected Helper[][] JAGGED = new Helper[2][];
+    }
+}
+namespace Other {
+    using static Demo.Util;
+    class Caller : Demo.Base {
+        int CollidingForeachMatrix() { foreach (var item in MATRIX) { return item.entry.Run(1); } return 0; }
+        int CollidingForeachJagged() { foreach (var row in JAGGED) { return row[0].entry.Run(1); } return 0; }
+        int StaticImportedOnlyForeach() { foreach (var item in STATIC_ONLY_MATRIX) { return item.Run(1); } return 0; }
+        int FailClosedMissing() { foreach (var item in MISSING) { return item.entry.Run(1); } return 0; }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `foreach` over a bare multidim/jagged field that matches both an
+    // inherited member and a same-named `using static` import pins the loop
+    // variable to the inherited base member's element type (an inherited
+    // member shadows the static import), so `Helper[,]`/`Helper[][]` reached
+    // through `class Caller : Demo.Base` yield `Helper` elements whose
+    // `entry.Run(1)` hops trace; a bare root that only matches the static
+    // import (`STATIC_ONLY_MATRIX` of `OtherHelper[,]`) still resolves
+    // through the imported member, and an unknown root fails closed.
+    let entry_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(entry_live.callers.len(), 2);
+    for caller in [
+        "Other::Caller::CollidingForeachJagged",
+        "Other::Caller::CollidingForeachMatrix",
+    ] {
+        assert!(
+            entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::StaticImportedOnlyForeach",
+    ] {
+        assert!(
+            !entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live Entry Run caller {caller}"
+        );
+    }
+    let other_live =
+        trace_symbol_graph(&dir, "Demo::OtherHelper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(other_live.callers.len(), 1);
+    assert!(
+        other_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::StaticImportedOnlyForeach"),
+        "missing live OtherHelper Run caller"
+    );
+    for caller in [
+        "Other::Caller::CollidingForeachJagged",
+        "Other::Caller::CollidingForeachMatrix",
+        "Other::Caller::FailClosedMissing",
+    ] {
+        assert!(
+            !other_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live OtherHelper Run caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let entry_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(entry_persisted.callers.len(), 2);
+    for caller in [
+        "Other::Caller::CollidingForeachJagged",
+        "Other::Caller::CollidingForeachMatrix",
+    ] {
+        assert!(
+            entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::StaticImportedOnlyForeach",
+    ] {
+        assert!(
+            !entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted Entry Run caller {caller}"
+        );
+    }
+    let other_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::OtherHelper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(other_persisted.callers.len(), 1);
+    assert!(
+        other_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::StaticImportedOnlyForeach"),
+        "missing persisted OtherHelper Run caller"
+    );
+    for caller in [
+        "Other::Caller::CollidingForeachJagged",
+        "Other::Caller::CollidingForeachMatrix",
+        "Other::Caller::FailClosedMissing",
+    ] {
+        assert!(
+            !other_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted OtherHelper Run caller {caller}"
+        );
+    }
+}
