@@ -36196,3 +36196,138 @@ class Util {
         );
     }
 }
+#[test]
+fn traces_csharp_direct_static_imported_member_chain_multidimensional_element_access_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper[,] STATIC_MATRIX = new Helper[2,2];
+    public static Helper[][] STATIC_JAGGED = new Helper[2][];
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int MatrixChain() { return STATIC_MATRIX[0,0].entry.Run(1); }
+        int JaggedChain() { return STATIC_JAGGED[0][0].entry.Run(1); }
+        int MatrixDirect() { return STATIC_MATRIX[0,0].Run(1); }
+        int JaggedDirect() { return STATIC_JAGGED[0][0].Run(1); }
+        int FailClosedMissingStatic() { return MISSING_MATRIX[0,0].entry.Run(1); }
+        int FailClosedInstanceOnElement() { return STATIC_MATRIX[0,0].Missing(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A direct call chain rooted at a static-imported field or property with
+    // a multi-dimensional element-access suffix such as
+    // `STATIC_MATRIX[0,0].entry.Run(1)` under `using static Demo.Util;`
+    // strips one array component layer per element-access group, so a
+    // multi-dimensional array field (`Helper[,]` indexed once with `[0,0]`)
+    // and a jagged array field (`Helper[][]` indexed twice with `[0][0]`)
+    // both pin the element component `Helper` before walking the remaining
+    // instance hops, and the final member dispatches on the canonical
+    // declared type. A static-imported member the type does not declare
+    // (`MISSING_MATRIX`) and a trailing member the element type does not
+    // declare (`STATIC_MATRIX[0,0].Missing(...)` on a `Helper`) fail closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(run_live.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedChain", "Other::Caller::MatrixChain"] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    let helper_live =
+        trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedDirect", "Other::Caller::MatrixDirect"] {
+        assert!(
+            helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Helper Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedInstanceOnElement",
+        "Other::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !helper_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_live
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing member {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_persisted.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedChain", "Other::Caller::MatrixChain"] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    let helper_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 2);
+    for caller in ["Other::Caller::JaggedDirect", "Other::Caller::MatrixDirect"] {
+        assert!(
+            helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Helper Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedInstanceOnElement",
+        "Other::Caller::FailClosedMissingStatic",
+    ] {
+        assert!(
+            !helper_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !run_persisted
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing member {caller}"
+        );
+    }
+}
