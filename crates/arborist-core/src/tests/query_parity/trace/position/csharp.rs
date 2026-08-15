@@ -38472,3 +38472,157 @@ namespace Other {
         );
     }
 }
+
+#[test]
+fn traces_csharp_inherited_field_shadows_static_import_multidimensional_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo {
+    class Entry {
+        public int Run(int value) => value;
+    }
+    class Helper {
+        public int Run(int value) => value;
+        public Entry entry = new Entry();
+    }
+    class OtherHelper {
+        public int Run(int value) => value;
+    }
+    class Util {
+        public static OtherHelper[,] MATRIX = new OtherHelper[2,2];
+        public static OtherHelper[][] JAGGED = new OtherHelper[2][];
+        public static OtherHelper[,] STATIC_ONLY_MATRIX = new OtherHelper[2,2];
+    }
+    class Base {
+        protected Helper[,] MATRIX = new Helper[2,2];
+        protected Helper[][] JAGGED = new Helper[2][];
+    }
+}
+namespace Other {
+    using static Demo.Util;
+    class Caller : Demo.Base {
+        int CollidingVarMatrix() { var items = MATRIX; return items[0,0].entry.Run(1); }
+        int CollidingVarJagged() { var items = JAGGED; return items[0][0].entry.Run(1); }
+        int StaticImportedOnlyVar() { var items = STATIC_ONLY_MATRIX; return items[0,0].Run(1); }
+        int FailClosedMissing() { var items = MISSING; return items[0,0].entry.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare multidim/jagged field that
+    // matches both an inherited member and a same-named `using static` import
+    // pins the local to the inherited base member's element type when it is
+    // indexed (an inherited member shadows the static import), so
+    // `Helper[,]`/`Helper[][]` reached through `class Caller : Demo.Base`
+    // dispatch the remaining hops on `Helper`; a bare root that only matches
+    // the static import (`STATIC_ONLY_MATRIX` of `OtherHelper[,]`) still
+    // resolves through the imported member, and an unknown root fails closed.
+    let entry_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(entry_live.callers.len(), 2);
+    for caller in [
+        "Other::Caller::CollidingVarJagged",
+        "Other::Caller::CollidingVarMatrix",
+    ] {
+        assert!(
+            entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::StaticImportedOnlyVar",
+    ] {
+        assert!(
+            !entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live Entry Run caller {caller}"
+        );
+    }
+    let other_live =
+        trace_symbol_graph(&dir, "Demo::OtherHelper::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(other_live.callers.len(), 1);
+    assert!(
+        other_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::StaticImportedOnlyVar"),
+        "missing live OtherHelper Run caller"
+    );
+    for caller in [
+        "Other::Caller::CollidingVarJagged",
+        "Other::Caller::CollidingVarMatrix",
+        "Other::Caller::FailClosedMissing",
+    ] {
+        assert!(
+            !other_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live OtherHelper Run caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let entry_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(entry_persisted.callers.len(), 2);
+    for caller in [
+        "Other::Caller::CollidingVarJagged",
+        "Other::Caller::CollidingVarMatrix",
+    ] {
+        assert!(
+            entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller}"
+        );
+    }
+    for caller in [
+        "Other::Caller::FailClosedMissing",
+        "Other::Caller::StaticImportedOnlyVar",
+    ] {
+        assert!(
+            !entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted Entry Run caller {caller}"
+        );
+    }
+    let other_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::OtherHelper::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(other_persisted.callers.len(), 1);
+    assert!(
+        other_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Other::Caller::StaticImportedOnlyVar"),
+        "missing persisted OtherHelper Run caller"
+    );
+    for caller in [
+        "Other::Caller::CollidingVarJagged",
+        "Other::Caller::CollidingVarMatrix",
+        "Other::Caller::FailClosedMissing",
+    ] {
+        assert!(
+            !other_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted OtherHelper Run caller {caller}"
+        );
+    }
+}
