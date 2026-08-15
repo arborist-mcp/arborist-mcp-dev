@@ -31856,3 +31856,100 @@ class Caller {
         "missing persisted caller VarItemsB"
     );
 }
+
+#[test]
+fn traces_csharp_nested_constructed_generic_receiver_property_chain_var_array_element_access_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+}
+class Caller {
+    int Direct() { return new Outer<HelperA>.Inner<HelperB>().Items[0].RunB(1); }
+    int Var() { var arr = new Outer<HelperA>.Inner<HelperB>().Items; return arr[0].RunB(2); }
+    int VarOuter() { var arr = new Outer<HelperA>.Inner<HelperB>().OuterItems; return arr[0].RunA(3); }
+    int VarSame() { var arr = new Outer<HelperA>.Inner<HelperA>().Items; return arr[0].RunA(4); }
+    int VarB() { var arr = new Outer<HelperB>.Inner<HelperB>().Items; return arr[0].RunB(5); }
+}
+",
+    )
+    .unwrap();
+
+    // A nested constructed generic receiver such as
+    // `new Outer<HelperA>.Inner<HelperB>().Items` keeps the dotted type path
+    // together in the `@init:` chain so a `var` local bound from the property
+    // chain dispatches element access on the inner type parameter (`U` ->
+    // `HelperB` in `U[] Items`) while an outer-parameter member (`T[]`
+    // OuterItems`) substitutes the outer argument (`T` -> `HelperA`), and the
+    // direct chain resolves the same way; mismatched concrete arguments
+    // dispatch on the matching helper type.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 2);
+    for caller in ["Demo::Caller::VarOuter", "Demo::Caller::VarSame"] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::Direct",
+        "Demo::Caller::Var",
+        "Demo::Caller::VarB",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live caller {caller}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 2);
+    for caller in ["Demo::Caller::VarOuter", "Demo::Caller::VarSame"] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 3);
+    for caller in [
+        "Demo::Caller::Direct",
+        "Demo::Caller::Var",
+        "Demo::Caller::VarB",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted caller {caller}"
+        );
+    }
+}
