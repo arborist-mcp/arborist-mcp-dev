@@ -1801,7 +1801,18 @@ fn csharp_foreach_collection_element_type(
             return Ok(Some(format!("@chain-element:{chain}")));
         }
         let Some(chain_binding) = bindings.raw_for(chain) else {
-            return Ok(None);
+            if bindings.contains(chain) {
+                // A marker-bound or element-access-initializer local is not a
+                // collection; fail closed.
+                return Ok(None);
+            }
+            // A bare-name initializer chain that is not a bound local
+            // resolves as an inherited base-class or static-imported member
+            // root (such as `var matrix = MATRIX` over a base field), so bind
+            // the loop variable to a `this.`-rooted chain-element marker the
+            // resolver walks to the terminal array member's element component
+            // type.
+            return Ok(Some(format!("@chain-element:this.{chain}")));
         };
         if chain_binding.starts_with('@') {
             return Ok(None);

@@ -39098,3 +39098,116 @@ class Caller : Lib.Base {
         );
     }
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_constructed_base_inherited_field_multidimensional_foreach_and_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Outer<T> {
+    class Mid<U> : Base<U> {
+    }
+    class Base<U> {
+        protected U[,] MATRIX = default;
+        protected U[][] JAGGED = default;
+        protected U FIELD;
+        protected T[,] OUTER_MATRIX = default;
+    }
+}
+class DirectCaller : Outer<Helper>.Base<Helper> {
+    int DirectForeachMatrix() { foreach (var item in MATRIX) { return item.entry.Run(1); } return 0; }
+    int DirectForeachJagged() { foreach (var row in JAGGED) { return row[0].entry.Run(1); } return 0; }
+    int DirectVarMatrix() { var matrix = MATRIX; foreach (var item in matrix) { return item.entry.Run(1); } return 0; }
+    int DirectVarIndexer() { var matrix = MATRIX; return matrix[0,0].entry.Run(1); }
+    int FailClosedMissing() { var items = MISSING; return items[0,0].entry.Run(1); }
+}
+class TopMid<U> : Outer<U>.Base<U> {
+}
+class TopCaller : TopMid<Helper> {
+    int TopForeachMatrix() { foreach (var item in MATRIX) { return item.entry.Run(1); } return 0; }
+    int TopVarMatrix() { var matrix = MATRIX; foreach (var item in matrix) { return item.entry.Run(1); } return 0; }
+    int TopVarIndexer() { var matrix = MATRIX; return matrix[0,0].entry.Run(1); }
+    int TopForeachOuterMatrix() { foreach (var item in OUTER_MATRIX) { return item.entry.Run(1); } return 0; }
+}
+",
+    )
+    .unwrap();
+
+    // A bare inherited array field reached through a constructed generic base
+    // (`class DirectCaller : Outer<Helper>.Base<Helper>`) or through a generic
+    // intermediate whose type argument arrives from the caller's own base
+    // (`class TopCaller : TopMid<Helper>` with `class TopMid<U> : Outer<U>.Base<U>`)
+    // binds `foreach` loop variables and `var` initializer locals to the base
+    // member's element component type, so `Helper[,]` yields `Helper` elements
+    // and `Helper[][]` yields `Helper[]` rows whose `entry.Run(1)` hops trace.
+    // A field the base chain does not declare (`MISSING`) fails closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let callers = run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::DirectCaller::DirectForeachMatrix",
+        "Demo::DirectCaller::DirectForeachJagged",
+        "Demo::DirectCaller::DirectVarMatrix",
+        "Demo::DirectCaller::DirectVarIndexer",
+        "Demo::TopCaller::TopForeachMatrix",
+        "Demo::TopCaller::TopVarMatrix",
+        "Demo::TopCaller::TopVarIndexer",
+        "Demo::TopCaller::TopForeachOuterMatrix",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller} in {callers:?}"
+        );
+    }
+    assert!(
+        !run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::DirectCaller::FailClosedMissing"),
+        "unexpected live caller for missing member"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::DirectCaller::DirectForeachMatrix",
+        "Demo::DirectCaller::DirectForeachJagged",
+        "Demo::DirectCaller::DirectVarMatrix",
+        "Demo::DirectCaller::DirectVarIndexer",
+        "Demo::TopCaller::TopForeachMatrix",
+        "Demo::TopCaller::TopVarMatrix",
+        "Demo::TopCaller::TopVarIndexer",
+        "Demo::TopCaller::TopForeachOuterMatrix",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+}
