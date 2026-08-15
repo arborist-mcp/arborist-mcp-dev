@@ -7178,6 +7178,58 @@ fn csharp_array_element_component_binding(
             deadline,
         );
     }
+    // A base bound from a member-chain `var` initializer (such as `x` in
+    // `var x = Plain.StaticNestedArray` followed by `x[0]`) resolves the
+    // chain terminal's declared array type before stripping one component
+    // layer per element-access depth; a dotted chain walks the terminal
+    // array member through the qualified element-access path (including a
+    // constructed static receiver root such as
+    // `Outer<HelperA>.Inner<HelperB>.StaticNestedArray`), and a bare chain
+    // names a bound field/property/local whose declared array type pins the
+    // element component type directly. Unresolvable chains, marker-bound
+    // chain terminals, and non-array or primitive-array terminals fail
+    // closed.
+    if let Some(chain) = bindings
+        .raw_for(base)
+        .and_then(csharp_var_initializer_chain_spelling)
+    {
+        if chain.contains('.') {
+            return csharp_qualified_element_access_component_type_path(
+                source_symbol,
+                chain,
+                depth,
+                bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        let Some(declared_type) = bindings.raw_for(chain) else {
+            return Ok(None);
+        };
+        if declared_type.is_empty() || declared_type.starts_with('@') {
+            return Ok(None);
+        }
+        let Some(component_type) = csharp_array_component_spelling_at_depth(declared_type, depth)
+        else {
+            return Ok(None);
+        };
+        return resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
     if let Some(declared_type) = bindings.type_for(base)
         && let Some(component_type) =
             csharp_array_component_spelling_at_depth(&declared_type, depth)
