@@ -33061,3 +33061,118 @@ class Caller {
         "Demo::Caller::ThreeLevelStaticNestedProp"
     );
 }
+
+#[test]
+fn traces_csharp_constructed_static_receiver_static_member_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Lib.cs"),
+        "namespace Lib;
+class HelperA { public int RunA(int value) => value; }
+class HelperB { public int RunB(int value) => value; }
+class HelperC { public int RunC(int value) => value; }
+class Outer<T> {
+    public class Inner<U> {
+        public static Inner<U> StaticNested => default;
+        public U[] Items => default;
+        public T[] OuterItems => default;
+    }
+    public class Middle<U> {
+        public class Inner<V> {
+            public static Inner<V> StaticNested => default;
+            public V[] Items => default;
+        }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Lib;
+class Caller {
+    int VarStaticNested() { var x = Outer<HelperA>.Inner<HelperB>.StaticNested; var first = x.Items[0]; return first.RunB(1); }
+    int VarStaticNestedOuter() { var x = Outer<HelperA>.Inner<HelperB>.StaticNested; var first = x.OuterItems[0]; return first.RunA(2); }
+    int VarGlobalStaticNested() { var x = global::Lib.Outer<HelperA>.Inner<HelperB>.StaticNested; var first = x.Items[0]; return first.RunB(3); }
+    int VarThreeLevelStaticNested() { var x = Outer<HelperA>.Middle<HelperB>.Inner<HelperC>.StaticNested; var first = x.Items[0]; return first.RunC(4); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static member on a constructed static
+    // receiver (`var x = Outer<HelperA>.Inner<HelperB>.StaticNested`) binds
+    // the receiver's concrete generic arguments, so `Inner<U> StaticNested`
+    // pins `Inner<HelperB>` and the outer-parameter member `T[] OuterItems`
+    // resolves to `HelperA[]`; the element access on the bound local
+    // (`x.Items[0]`) dispatches on the substituted member. A
+    // `global::`-qualified constructed receiver and a constructed receiver
+    // through two enclosing generic levels
+    // (`Outer<HelperA>.Middle<HelperB>.Inner<HelperC>`) bind identically.
+    let run_a_live =
+        trace_symbol_graph(&dir, "Lib::HelperA::RunA", TraceDirection::Callers).unwrap();
+    assert_eq!(run_a_live.callers.len(), 1);
+    assert_eq!(
+        run_a_live.callers[0].symbol_id,
+        "Demo::Caller::VarStaticNestedOuter"
+    );
+    let run_b_live =
+        trace_symbol_graph(&dir, "Lib::HelperB::RunB", TraceDirection::Callers).unwrap();
+    assert_eq!(run_b_live.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarStaticNested",
+        "Demo::Caller::VarGlobalStaticNested",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live RunB caller {caller}"
+        );
+    }
+    let run_c_live =
+        trace_symbol_graph(&dir, "Lib::HelperC::RunC", TraceDirection::Callers).unwrap();
+    assert_eq!(run_c_live.callers.len(), 1);
+    assert_eq!(
+        run_c_live.callers[0].symbol_id,
+        "Demo::Caller::VarThreeLevelStaticNested"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperA::RunA", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_a_persisted.callers.len(), 1);
+    assert_eq!(
+        run_a_persisted.callers[0].symbol_id,
+        "Demo::Caller::VarStaticNestedOuter"
+    );
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperB::RunB", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_b_persisted.callers.len(), 2);
+    for caller in [
+        "Demo::Caller::VarStaticNested",
+        "Demo::Caller::VarGlobalStaticNested",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted RunB caller {caller}"
+        );
+    }
+    let run_c_persisted =
+        trace_symbol_graph_from_index(&db_path, "Lib::HelperC::RunC", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(run_c_persisted.callers.len(), 1);
+    assert_eq!(
+        run_c_persisted.callers[0].symbol_id,
+        "Demo::Caller::VarThreeLevelStaticNested"
+    );
+}
