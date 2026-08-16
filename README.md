@@ -568,7 +568,9 @@ for response shapes, error behavior, and examples.
   children use the same conservative parent/module chain. Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
-  those exact bindings remains unavailable. Patching remains capability-gated.
+  those exact bindings remains unavailable. Structural patching targets Rust functions, methods, and
+  declaration items by semantic path or source position with syntax-level validation; language-specific
+  patch binding validation remains deferred.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
@@ -620,8 +622,9 @@ C, C++, JavaScript, TypeScript, and TSX use the registry and explicit
 capabilities. JavaScript-family adapters provide semantic skeletons, indexing,
 conservative local-module tracing, structural patching, source overlays, and
 persisted-index coverage. Phase 5 now includes Rust parsing, raw queries, semantic skeletons,
-conservative declaration indexing, local module dependency refresh, and conservative bare and
-inline-module-qualified direct-call graph tracing plus position identity. Go now has parsing, raw
+conservative declaration indexing, local module dependency refresh, conservative bare and
+inline-module-qualified direct-call graph tracing, position identity, and structural patch
+targeting with syntax-level validation. Go now has parsing, raw
 Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
 static local-package dependency refresh under the nearest valid simple `go.mod` module path, and
 same-file bare plus unambiguous local-package imported-function direct-call graph tracing. Java
@@ -641,8 +644,8 @@ these capabilities.
 
 Remaining larger work includes:
 
-- Adding carefully-scoped Rust out-of-line-module, Cargo, and import trace resolution before
-  considering Rust patching.
+- Adding carefully-scoped Rust inline-module, Cargo, and import trace resolution beyond current
+  bindings, plus language-specific Rust patch binding validation.
 - Extending Go package/import trace resolution beyond direct local function calls only after
   dedicated fixtures establish safe behavior.
 - Extending Java trace resolution beyond unique same-type calls and explicitly imported local static

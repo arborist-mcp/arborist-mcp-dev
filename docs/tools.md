@@ -44,8 +44,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `crate::...` and `super::...` calls from out-of-line children use the same conservative parent/module
   chain. Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
-  and import resolution beyond those exact bindings remains unavailable. Patching returns an explicit
-  unsupported-operation error.
+  and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
+  functions, methods, and declaration items by semantic path or source position with syntax-level
+  validation; language-specific patch binding validation remains deferred.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
