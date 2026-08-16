@@ -39569,3 +39569,198 @@ class NestedCaller : Outer<Helper>.Mid<Helper> {
         "unexpected persisted caller for missing member"
     );
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_constructed_nested_generic_base_inherited_static_factory_var_initializer_and_direct_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static Helper MakeHelper() => new Helper();
+}
+class Derived<T> : Base<T> { }
+class Caller : Derived<Helper> {
+    int PlainVar() { var helper = Make(); return helper.Run(1); }
+    int PlainVarConcrete() { var helper = MakeHelper(); return helper.Run(2); }
+    static int PlainStaticVar() { var helper = Make(); return helper.Run(3); }
+    int PlainDirect() { return Make().Run(4); }
+}
+class FixedCaller : Base<Helper> {
+    int FixedVar() { var helper = Make(); return helper.Run(5); }
+}
+class Outer<T> {
+    class Mid<U> : Base<U> {
+    }
+    class Base<U> {
+        protected static U Make() => default;
+        protected static T MakeOuter() => default;
+    }
+}
+class NestedCaller : Outer<Helper>.Mid<Helper> {
+    int InnerVar() { var helper = Make(); return helper.Run(6); }
+    int InnerDirect() { return Make().Run(7); }
+    int OuterVar() { var helper = MakeOuter(); return helper.Run(8); }
+    static int OuterStaticVar() { var helper = MakeOuter(); return helper.Run(9); }
+    int FailClosedMissing() { var helper = Missing(); return helper.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A bare `var` initializer or direct call rooted at an inherited static
+    // factory method such as `var helper = Make()` or `Make().Run(1)` where
+    // the factory is declared on a class/record ancestor dispatches through
+    // the unique base chain for both instance and static callers, so the
+    // declared return type resolves after substituting the composed
+    // last-segment arguments (`U` in `Base<U>` reached as
+    // `Caller : Derived<Helper>`, `FixedCaller : Base<Helper>`, or
+    // `NestedCaller : Outer<Helper>.Mid<Helper>`) and the composed enclosing
+    // arguments (`T` in `Outer<T>`'s nested `Base<U>`). A missing factory
+    // (`Missing`) fails closed and does not trace the trailing call.
+    let run_live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let callers = run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::PlainVar",
+        "Demo::Caller::PlainVarConcrete",
+        "Demo::Caller::PlainStaticVar",
+        "Demo::Caller::PlainDirect",
+        "Demo::FixedCaller::FixedVar",
+        "Demo::NestedCaller::InnerVar",
+        "Demo::NestedCaller::InnerDirect",
+        "Demo::NestedCaller::OuterVar",
+        "Demo::NestedCaller::OuterStaticVar",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Helper Run caller {caller} in {callers:?}"
+        );
+    }
+    assert!(
+        !run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::NestedCaller::FailClosedMissing"),
+        "unexpected live caller for missing factory"
+    );
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::PlainDirect",
+                "Demo::Caller::PlainStaticVar",
+                "Demo::Caller::PlainVar",
+                "Demo::FixedCaller::FixedVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::InnerDirect",
+                "Demo::NestedCaller::InnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::OuterStaticVar",
+                "Demo::NestedCaller::OuterVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, factory, TraceDirection::Callers).unwrap();
+        let mut live_callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        live_callers.sort();
+        assert_eq!(live_callers, expected, "{factory} live");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::PlainVar",
+        "Demo::Caller::PlainVarConcrete",
+        "Demo::Caller::PlainStaticVar",
+        "Demo::Caller::PlainDirect",
+        "Demo::FixedCaller::FixedVar",
+        "Demo::NestedCaller::InnerVar",
+        "Demo::NestedCaller::InnerDirect",
+        "Demo::NestedCaller::OuterVar",
+        "Demo::NestedCaller::OuterStaticVar",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Helper Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+    assert!(
+        !run_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::NestedCaller::FailClosedMissing"),
+        "unexpected persisted caller for missing factory"
+    );
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::PlainDirect",
+                "Demo::Caller::PlainStaticVar",
+                "Demo::Caller::PlainVar",
+                "Demo::FixedCaller::FixedVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::InnerDirect",
+                "Demo::NestedCaller::InnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::OuterStaticVar",
+                "Demo::NestedCaller::OuterVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, factory, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{factory} persisted");
+    }
+}

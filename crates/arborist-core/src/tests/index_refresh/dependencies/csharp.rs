@@ -232,10 +232,21 @@ fn refreshes_csharp_inherited_bare_callers_when_a_base_method_becomes_static() {
     assert_eq!(stats.rebuilt_files, 1);
     assert_eq!(stats.reused_files, 1);
 
+    // A static base method remains callable by simple name from a derived
+    // instance method, so the refreshed bare call still resolves to the now
+    // static `Base::Ping`; the refresh still rebuilds the changed base and
+    // its inherited bare dependents together.
     let refreshed =
         trace_symbol_graph_from_index(&db_path, "Demo::Derived::Call", TraceDirection::Callees)
             .unwrap();
-    assert!(refreshed.callees.is_empty());
+    assert_eq!(
+        refreshed
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Base::Ping"]
+    );
 }
 
 #[test]
