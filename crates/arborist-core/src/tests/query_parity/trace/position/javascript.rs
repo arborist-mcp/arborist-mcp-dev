@@ -872,3 +872,137 @@ fn keeps_namespace_member_non_exported_symbols_fail_closed() {
         live.callees
     );
 }
+
+#[test]
+fn traces_javascript_namespace_import_default_member_call_edge_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "export default function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./helper\";\nexport function caller(value: number): number { return ns.default(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 27 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_javascript_namespace_reexport_default_member_call_edge() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &helper,
+        "export default function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export * as ns from \"./helper\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import { ns } from \"./bridge\";\nexport function caller(value: number): number { return ns.default(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    let helper_symbol = live
+        .callees
+        .iter()
+        .find(|symbol| symbol.semantic_path == "helper")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected caller to resolve to the namespace re-export default member, callees: {:?}",
+                live.callees
+            )
+        });
+    assert_eq!(helper_symbol.symbol_id, "helper");
+}
+
+#[test]
+fn traces_javascript_namespace_default_member_call_edge_through_default_reexport_bridge() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &helper,
+        "export default function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export { default } from \"./helper\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./bridge\";\nexport function caller(value: number): number { return ns.default(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    let helper_symbol = live
+        .callees
+        .iter()
+        .find(|symbol| symbol.semantic_path == "helper")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected caller to resolve to the re-exported default member, callees: {:?}",
+                live.callees
+            )
+        });
+    assert_eq!(helper_symbol.symbol_id, "helper");
+}
+
+#[test]
+fn keeps_namespace_default_member_anonymous_exports_fail_closed() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &helper,
+        "export default function (value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./helper\";\nexport function caller(value: number): number { return ns.default(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "anonymous default exports must fail closed for namespace default members, callees: {:?}",
+        live.callees
+    );
+}
