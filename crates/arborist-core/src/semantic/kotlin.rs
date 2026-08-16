@@ -194,6 +194,14 @@ pub(crate) fn is_kotlin_semantic_symbol_node(node: Node<'_>) -> bool {
     true
 }
 
+pub(crate) fn kotlin_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tree> {
+    // Kotlin symbol nodes are complete declarations that include their modifiers and annotations.
+    // Replacing such a node therefore covers the whole declaration, so a replacement must
+    // reproduce any annotations or modifiers the user wants to keep; surrounding declarations
+    // and comments outside the node's byte range are left untouched.
+    node
+}
+
 pub(crate) fn kotlin_symbol_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let name = match node.kind() {
         "class_declaration"

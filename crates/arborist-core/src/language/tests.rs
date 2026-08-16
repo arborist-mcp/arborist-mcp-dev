@@ -256,24 +256,17 @@ fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabil
 
     assert_eq!(descriptor.display_name, "Kotlin");
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "kotlin-bare-companion-root-receiver-trace-v30"
-    );
+    assert_eq!(descriptor.analysis_revision, "kotlin-patch-targeting-v31");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
-    ] {
-        assert!(descriptor.capabilities.contains(capability));
-    }
-    for capability in [
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
-        assert!(!descriptor.capabilities.contains(capability));
+        assert!(descriptor.capabilities.contains(capability));
     }
 }
 
