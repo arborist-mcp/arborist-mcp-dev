@@ -138,6 +138,7 @@ fn collect_javascript_named_import_module_paths(
                     file_overrides,
                 )
             });
+        collect_import_equals_namespace_bindings(node, path, source, file_overrides, bindings)?;
         collect_default_and_namespace_import_bindings(node, source, module_path.clone(), bindings)?;
         for (imported_name, local_name) in named_import_bindings(node, source)? {
             insert_javascript_module_binding(
@@ -623,6 +624,58 @@ fn collect_default_and_namespace_import_bindings(
     Ok(())
 }
 
+/// Records TypeScript `import name = require("./module")` bindings as module
+/// namespaces so member calls (`name.helper(...)`) and namespace-object calls
+/// (`name(...)`) resolve through the existing machinery. The module specifier
+/// lives on the `import_require_clause`; dynamic specifiers and unresolvable
+/// local modules fail closed through the shared binding insert.
+fn collect_import_equals_namespace_bindings(
+    node: Node<'_>,
+    path: &Path,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    let Some(clause) = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "import_require_clause")
+    else {
+        return Ok(());
+    };
+    let mut clause_cursor = clause.walk();
+    let mut local_name = None;
+    let mut specifier = None;
+    for child in clause.named_children(&mut clause_cursor) {
+        match child.kind() {
+            "identifier" => {
+                let name = node_text(child, source)?.trim().to_owned();
+                if !name.is_empty() {
+                    local_name = Some(name);
+                }
+            }
+            "string" => {
+                specifier = javascript_string_literal(child, source)?;
+            }
+            _ => {}
+        }
+    }
+    let Some(local_name) = local_name else {
+        return Ok(());
+    };
+    let module_path = specifier.and_then(|specifier| {
+        resolve_local_javascript_module_path_with_overrides(path, &specifier, file_overrides)
+    });
+    insert_javascript_module_binding(
+        bindings,
+        local_name,
+        "<namespace>".to_owned(),
+        module_path,
+        false,
+    );
+    Ok(())
+}
+
 /// Returns the local declaration name of a module's default export when it can
 /// be resolved conservatively: a named `export default function`/`class`
 /// declaration, `export default <identifier>` naming a declared module-level
@@ -1017,6 +1070,16 @@ fn collect_javascript_static_module_specifiers(
             if let Some(source_node) = node
                 .child_by_field_name("source")
                 .or_else(|| first_string_child(node))
+                && let Some(specifier) = javascript_string_literal(source_node, source)?
+            {
+                specifiers.insert(specifier);
+            }
+        }
+        // TypeScript `import name = require("./module")` carries its specifier
+        // as a string child of the clause rather than a field on the import
+        // statement.
+        "import_require_clause" => {
+            if let Some(source_node) = first_string_child(node)
                 && let Some(specifier) = javascript_string_literal(source_node, source)?
             {
                 specifiers.insert(specifier);
@@ -1956,5 +2019,73 @@ exports.Klass = class Klass {};
                 "source {source:?} must fail closed, local_names: {local_names:?}"
             );
         }
+    }
+
+    #[test]
+    fn collects_typescript_import_equals_specifiers_and_namespace_bindings() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-import-equals-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let helper = root.join("helper.ts");
+        let helper_path = crate::language::normalize_path(&helper);
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "import ns = require(\"./helper\");\n";
+        let document = parse_document(&module, source).unwrap();
+
+        assert_eq!(
+            javascript_static_module_specifiers(document.tree.root_node(), source).unwrap(),
+            BTreeSet::from(["./helper".to_string()])
+        );
+        let imports = javascript_named_import_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let binding = imports.get("ns").unwrap();
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding
+                .module_paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![helper_path]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_typescript_import_equals_non_local_specifiers_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-import-equals-package-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let source = "import pkg = require(\"package-name\");\n";
+        let document = parse_document(&module, source).unwrap();
+
+        let imports = javascript_named_import_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let binding = imports.get("pkg").unwrap();
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert!(binding.unresolved);
+        assert!(binding.module_paths.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 }
