@@ -41674,3 +41674,163 @@ class Derived<T> : Base<T> { }
         "Demo::Base::Make persisted"
     );
 }
+
+
+#[test]
+fn traces_csharp_cross_namespace_multi_hop_constructed_generic_inherited_static_factory_declaring_base_caller_edges_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using OtherAlias = Other.Derived<HelperA>;
+using OtherAliasMid = Other.Mid<HelperA>;
+class HelperA {
+    public int Run(int value) => value;
+}
+class Caller {
+    int DirectBase() { return Other.Derived<HelperA>.Make().Run(1); }
+    int AliasBase() { return OtherAlias.Make().Run(1); }
+    int DirectShadowMid() { return Other.Derived<HelperA>.ShadowMake().Run(1); }
+    int AliasShadowMid() { return OtherAliasMid.ShadowMake().Run(1); }
+    int DirectBaseOnly() { return Other.Derived<HelperA>.BaseOnly().Run(1); }
+    int FailClosedMissing() { return Other.Derived<HelperA>.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class Base<U> {
+    protected static U Make() => default;
+    protected static U BaseOnly() => default;
+}
+class Mid<T> : Base<T> {
+    protected static T ShadowMake() => default;
+}
+class Derived<T> : Mid<T> { }
+",
+    )
+    .unwrap();
+
+    // A constructed generic static factory spelled directly on a
+    // cross-namespace type through a multi-level generic chain
+    // (`Other.Derived<HelperA> : Mid<T> : Base<T>`) pins the nearest
+    // declaring class/record ancestor for each inherited static factory: a
+    // member declared only on the root base (`Make`) resolves to
+    // `Other::Base::Make` for both the direct and the alias spellings, a
+    // member shadowed at the intermediate level (`ShadowMake`) resolves to
+    // `Other::Mid::ShadowMake` for both the direct spelling and an alias
+    // bound to the intermediate type (`OtherAliasMid`), and a member the
+    // whole chain declares only once at the root (`BaseOnly`) still pins the
+    // root base through two hops; a member the chain does not declare
+    // (`Other.Derived<HelperA>.Missing()`) fails closed.
+    let base_make_live =
+        trace_symbol_graph(&dir, "Other::Base::Make", TraceDirection::Callers).unwrap();
+    let mut base_callers = base_make_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    base_callers.sort();
+    assert_eq!(
+        base_callers,
+        vec!["Demo::Caller::AliasBase", "Demo::Caller::DirectBase"],
+        "Other::Base::Make live"
+    );
+    assert!(
+        !base_make_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Other::Base::Make live unexpected FailClosedMissing"
+    );
+
+    let shadow_mid_live =
+        trace_symbol_graph(&dir, "Other::Mid::ShadowMake", TraceDirection::Callers).unwrap();
+    let mut shadow_callers = shadow_mid_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    shadow_callers.sort();
+    assert_eq!(
+        shadow_callers,
+        vec![
+            "Demo::Caller::AliasShadowMid",
+            "Demo::Caller::DirectShadowMid",
+        ],
+        "Other::Mid::ShadowMake live"
+    );
+
+    let base_only_live =
+        trace_symbol_graph(&dir, "Other::Base::BaseOnly", TraceDirection::Callers).unwrap();
+    let mut base_only_callers = base_only_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    base_only_callers.sort();
+    assert_eq!(
+        base_only_callers,
+        vec!["Demo::Caller::DirectBaseOnly"],
+        "Other::Base::BaseOnly live"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let base_make_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Base::Make", TraceDirection::Callers)
+            .unwrap();
+    let mut base_persisted_callers = base_make_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    base_persisted_callers.sort();
+    assert_eq!(
+        base_persisted_callers,
+        vec!["Demo::Caller::AliasBase", "Demo::Caller::DirectBase"],
+        "Other::Base::Make persisted"
+    );
+    assert!(
+        !base_make_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Other::Base::Make persisted unexpected FailClosedMissing"
+    );
+
+    let shadow_mid_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Mid::ShadowMake", TraceDirection::Callers)
+            .unwrap();
+    let mut shadow_persisted_callers = shadow_mid_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    shadow_persisted_callers.sort();
+    assert_eq!(
+        shadow_persisted_callers,
+        vec![
+            "Demo::Caller::AliasShadowMid",
+            "Demo::Caller::DirectShadowMid",
+        ],
+        "Other::Mid::ShadowMake persisted"
+    );
+
+    let base_only_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Base::BaseOnly", TraceDirection::Callers)
+            .unwrap();
+    let mut base_only_persisted_callers = base_only_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    base_only_persisted_callers.sort();
+    assert_eq!(
+        base_only_persisted_callers,
+        vec!["Demo::Caller::DirectBaseOnly"],
+        "Other::Base::BaseOnly persisted"
+    );
+}
