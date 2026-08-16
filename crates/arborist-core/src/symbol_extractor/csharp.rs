@@ -295,17 +295,22 @@ fn csharp_instance_member_chain_spelling(
                 let mut cursor = arguments.walk();
                 let arity = arguments.named_children(&mut cursor).count();
                 // A bare-call root such as `MakeHelper()` in
-                // `MakeHelper().entry` records the call as the leading chain
-                // segment; the resolver dispatches it as a factory method on
-                // the enclosing type or a static-imported type. Bare-call
-                // roots are only kept when static type-qualified roots are
-                // allowed; otherwise the caller falls through to the direct
-                // invocation handling.
+                // `MakeHelper().entry` or `MakeGeneric<HelperA>()` in
+                // `MakeGeneric<HelperA>().Run(1)` records the call as the
+                // leading chain segment; the resolver dispatches it as a
+                // factory method on the enclosing type or a static-imported
+                // type. Bare-call roots, including generic-name roots that
+                // keep their type-argument list in the segment spelling, are
+                // only kept when static type-qualified roots are allowed;
+                // otherwise the caller falls through to the direct invocation
+                // handling.
                 if !matches!(
                     function.kind(),
                     "member_access_expression" | "conditional_access_expression"
                 ) {
-                    if !keep_static_type_roots || function.kind() != "identifier" {
+                    if !keep_static_type_roots
+                        || !matches!(function.kind(), "identifier" | "generic_name")
+                    {
                         return Ok(None);
                     }
                     let name = crate::language::node_text(function, source)?.trim();

@@ -40039,3 +40039,310 @@ class NestedCaller : Outer<Helper>.Mid<Helper> {
         assert_eq!(persisted_callers, expected, "{factory} persisted");
     }
 }
+
+#[test]
+fn traces_csharp_bare_generic_static_factory_direct_member_chains_over_constructed_generic_bases_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class HelperA {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static T MakeT<T>() => default;
+    protected static T[,] MakeMatrixT<T>() => default;
+}
+class Derived<T> : Base<T> { }
+class Caller : Derived<HelperA> {
+    int BareGenericDirect() { return MakeT<HelperB>().Run(1); }
+    int BareGenericVar() { var h = MakeT<HelperB>(); return h.Run(1); }
+    int BareGenericHop() { return MakeT<HelperA>().entry.Run(1); }
+    int QualifiedGenericDirect() { return Caller.MakeT<HelperB>().Run(1); }
+    int BareGenericMatrixDirect() { return MakeMatrixT<HelperA>()[0,0].Run(1); }
+    int BareGenericMatrixChain() { return MakeMatrixT<HelperA>()[0,0].entry.Run(1); }
+    int BareGenericMatrixVar() { var h = MakeMatrixT<HelperA>(); return h[0,0].Run(1); }
+    int FailClosedMissing() { return MissingT<HelperA>().Run(1); }
+}
+class PlainBase {
+    protected static T MakeT<T>() => default;
+}
+class PlainCaller : PlainBase {
+    int PlainBareDirect() { return MakeT<HelperB>().Run(1); }
+    int PlainBareVar() { var h = MakeT<HelperB>(); return h.Run(1); }
+}
+class SameClass {
+    static T MakeT<T>() => default;
+    int SameBareDirect() { return MakeT<HelperB>().Run(1); }
+    int SameBareVar() { var h = MakeT<HelperB>(); return h.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A bare generic static factory chain such as `MakeT<HelperB>().Run(1)` or
+    // `MakeT<HelperA>().entry.Run(1)` records the generic-name root with its
+    // call-site type-argument list as the leading chain segment, so the
+    // resolver substitutes the method's own type parameters in the declared
+    // return type (`T` to `HelperB`) before dispatching the trailing member on
+    // the constructed receiver, for direct calls, var initializers, member
+    // hops, and multi-dimensional element-access chains, with the factory
+    // declared on the same type, a plain base, or a constructed generic base
+    // (`Caller : Derived<HelperA>` with `Base<U>::MakeT<T>`). A generic
+    // factory the base chain does not declare (`MissingT<HelperA>()`) fails
+    // closed.
+    let run_b_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::Run", TraceDirection::Callers).unwrap();
+    let callers = run_b_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericDirect",
+        "Demo::Caller::BareGenericVar",
+        "Demo::Caller::QualifiedGenericDirect",
+        "Demo::PlainCaller::PlainBareDirect",
+        "Demo::PlainCaller::PlainBareVar",
+        "Demo::SameClass::SameBareDirect",
+        "Demo::SameClass::SameBareVar",
+    ] {
+        assert!(
+            run_b_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live HelperB Run caller {caller} in {callers:?}"
+        );
+    }
+    let run_a_live =
+        trace_symbol_graph(&dir, "Demo::HelperA::Run", TraceDirection::Callers).unwrap();
+    let callers_a = run_a_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericMatrixDirect",
+        "Demo::Caller::BareGenericMatrixVar",
+    ] {
+        assert!(
+            run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live HelperA Run caller {caller} in {callers_a:?}"
+        );
+    }
+    let entry_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let entry_callers = entry_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericHop",
+        "Demo::Caller::BareGenericMatrixChain",
+    ] {
+        assert!(
+            entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller} in {entry_callers:?}"
+        );
+    }
+    assert!(
+        !run_b_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing")
+            && !run_a_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing")
+            && !entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "unexpected live caller for missing generic factory"
+    );
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::BareGenericDirect",
+                "Demo::Caller::BareGenericHop",
+                "Demo::Caller::BareGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+            ],
+        ),
+        (
+            "Demo::Base::MakeMatrixT",
+            vec![
+                "Demo::Caller::BareGenericMatrixChain",
+                "Demo::Caller::BareGenericMatrixDirect",
+                "Demo::Caller::BareGenericMatrixVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::MakeT",
+            vec![
+                "Demo::PlainCaller::PlainBareDirect",
+                "Demo::PlainCaller::PlainBareVar",
+            ],
+        ),
+        (
+            "Demo::SameClass::MakeT",
+            vec![
+                "Demo::SameClass::SameBareDirect",
+                "Demo::SameClass::SameBareVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, factory, TraceDirection::Callers).unwrap();
+        let mut live_callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        live_callers.sort();
+        assert_eq!(live_callers, expected, "{factory} live");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_b_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_b_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericDirect",
+        "Demo::Caller::BareGenericVar",
+        "Demo::Caller::QualifiedGenericDirect",
+        "Demo::PlainCaller::PlainBareDirect",
+        "Demo::PlainCaller::PlainBareVar",
+        "Demo::SameClass::SameBareDirect",
+        "Demo::SameClass::SameBareVar",
+    ] {
+        assert!(
+            run_b_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted HelperB Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+    let run_a_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_a_persisted = run_a_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericMatrixDirect",
+        "Demo::Caller::BareGenericMatrixVar",
+    ] {
+        assert!(
+            run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted HelperA Run caller {caller} in {callers_a_persisted:?}"
+        );
+    }
+    let entry_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let entry_callers_persisted = entry_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::BareGenericHop",
+        "Demo::Caller::BareGenericMatrixChain",
+    ] {
+        assert!(
+            entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller} in {entry_callers_persisted:?}"
+        );
+    }
+    assert!(
+        !run_b_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing")
+            && !run_a_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing")
+            && !entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "unexpected persisted caller for missing generic factory"
+    );
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::BareGenericDirect",
+                "Demo::Caller::BareGenericHop",
+                "Demo::Caller::BareGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+            ],
+        ),
+        (
+            "Demo::Base::MakeMatrixT",
+            vec![
+                "Demo::Caller::BareGenericMatrixChain",
+                "Demo::Caller::BareGenericMatrixDirect",
+                "Demo::Caller::BareGenericMatrixVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::MakeT",
+            vec![
+                "Demo::PlainCaller::PlainBareDirect",
+                "Demo::PlainCaller::PlainBareVar",
+            ],
+        ),
+        (
+            "Demo::SameClass::MakeT",
+            vec![
+                "Demo::SameClass::SameBareDirect",
+                "Demo::SameClass::SameBareVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, factory, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{factory} persisted");
+    }
+}
