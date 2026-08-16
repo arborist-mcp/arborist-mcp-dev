@@ -1353,3 +1353,67 @@ fn traces_javascript_require_aliased_commonjs_object_export_namespace_member_cal
     assert_eq!(live.callees[0].symbol_id, "localHelper");
     assert_eq!(live.callees[0].file_path, normalize_path(&helper));
 }
+
+#[test]
+fn traces_javascript_require_namespace_member_call_edge_to_commonjs_exports_member_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const ns = require(\"./helper.cjs\");\nexport function caller(value: number): number { return ns.helper(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 16 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_javascript_require_aliased_commonjs_exports_member_call_edge_in_live_workspace() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &helper,
+        "function localHelper(value) { return value + 1; }\nexports.helper = localHelper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const ns = require(\"./helper.cjs\");\nexport function caller(value: number): number { return ns.helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "localHelper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&helper));
+}

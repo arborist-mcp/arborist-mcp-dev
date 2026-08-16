@@ -1760,4 +1760,135 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn resolves_require_namespace_member_binding_for_commonjs_exports_member_assignments() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-exports-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "exports.helper = function helper() {}\nmodule.exports.direct = function direct() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        for member_name in ["helper", "direct"] {
+            let member = resolve_javascript_namespace_member_binding(
+                binding.module_paths.iter().next().unwrap(),
+                member_name,
+                None,
+                &mut contexts,
+                None,
+            )
+            .unwrap()
+            .unwrap_or_else(|| panic!("{member_name} exports member should resolve"));
+            assert_eq!(member.imported_name, member_name);
+            assert_eq!(
+                member.module_paths,
+                BTreeSet::from([normalize_path(&helper)])
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_aliased_commonjs_exports_member_namespace_members_to_local_symbols() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-alias-exports-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "function localHelper() {}\nexports.helper = localHelper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("aliased exports member should resolve");
+        assert_eq!(member.imported_name, "localHelper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_require_destructured_member_binding_for_commonjs_exports_member_assignments() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-destructured-exports-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(&helper, "exports.helper = function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./helper.cjs\");\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("destructured require binding should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
