@@ -41281,3 +41281,117 @@ class NestedCaller {
         "Demo::HelperA::Run persisted unexpected NestedFailClosedMissing"
     );
 }
+
+#[test]
+fn traces_csharp_global_type_alias_constructed_generic_base_inherited_static_field_property_and_multidimensional_member_chain_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using Alias = Demo.Derived<HelperA>;
+global using NestedAlias = Demo.Outer<HelperA>.Inner<HelperA>;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class HelperA {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U StaticField;
+    protected static U StaticProp { get; }
+    protected static U Make() => default;
+    protected static U[,] StaticGrid;
+}
+class Derived<T> : Base<T> { }
+class Outer<T> {
+    public class Inner<U> : Base<U> { }
+    public class Base<U> {
+        protected static T StaticOuterField;
+        protected static T[,] StaticOuterGrid;
+    }
+}
+class Caller {
+    int AliasFieldDirect() { return Alias.StaticField.Run(1); }
+    int AliasFieldVar() { var h = Alias.StaticField; return h.Run(1); }
+    int AliasPropDirect() { return Alias.StaticProp.Run(1); }
+    int AliasPropVar() { var h = Alias.StaticProp; return h.Run(1); }
+    int AliasMakeDirect() { return Alias.Make().Run(1); }
+    int AliasGridDirect() { return Alias.StaticGrid[0, 1].Run(1); }
+    int AliasGridVar() { var h = Alias.StaticGrid[0, 1]; return h.Run(1); }
+    int AliasGridForeach() { foreach (var h in Alias.StaticGrid) { return h.Run(1); } return 0; }
+    int NestedOuterFieldDirect() { return NestedAlias.StaticOuterField.Run(1); }
+    int NestedOuterGridVar() { var h = NestedAlias.StaticOuterGrid[0, 1]; return h.Run(1); }
+    int FailClosedMissing() { return Alias.MissingField.Run(1); }
+    int FailClosedMissingVar() { var h = Alias.MissingField; return h.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `global using` alias to a constructed generic base such as
+    // `global using Alias = Demo.Derived<HelperA>;` dispatches inherited
+    // static fields, properties, factories, and multidimensional arrays
+    // through the alias target's unique class/record ancestor chain, exactly
+    // like a file-scoped alias: `Base<U>::static U StaticField` substitutes
+    // the alias target's concrete argument for the declared `U` so direct
+    // calls, `var` initializers, `foreach` elements, and element access all
+    // trace to the substituted receiver type's method. A nested global alias
+    // keeps its enclosing outer argument (`T` -> `HelperA`) for outer
+    // parameter-declared members and grids, and an alias field the base chain
+    // does not declare (`Alias.MissingField`) fails closed.
+    let expected = vec![
+        "Demo::Caller::AliasFieldDirect",
+        "Demo::Caller::AliasFieldVar",
+        "Demo::Caller::AliasGridDirect",
+        "Demo::Caller::AliasGridForeach",
+        "Demo::Caller::AliasGridVar",
+        "Demo::Caller::AliasMakeDirect",
+        "Demo::Caller::AliasPropDirect",
+        "Demo::Caller::AliasPropVar",
+        "Demo::Caller::NestedOuterFieldDirect",
+        "Demo::Caller::NestedOuterGridVar",
+    ];
+    let live = trace_symbol_graph(&dir, "Demo::HelperA::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(callers, expected, "Demo::HelperA::Run live");
+    assert!(
+        !live.callers.iter().any(|candidate| candidate.symbol_id
+            == "Demo::Caller::FailClosedMissing"
+            || candidate.symbol_id == "Demo::Caller::FailClosedMissingVar"),
+        "Demo::HelperA::Run live unexpected FailClosedMissing"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut persisted_callers = persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    persisted_callers.sort();
+    assert_eq!(persisted_callers, expected, "Demo::HelperA::Run persisted");
+    assert!(
+        !persisted.callers.iter().any(|candidate| candidate.symbol_id
+            == "Demo::Caller::FailClosedMissing"
+            || candidate.symbol_id == "Demo::Caller::FailClosedMissingVar"),
+        "Demo::HelperA::Run persisted unexpected FailClosedMissing"
+    );
+}
