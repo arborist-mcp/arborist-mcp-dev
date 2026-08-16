@@ -356,11 +356,43 @@ fn unresolved_named_module_binding(imported_name: &str) -> JavaScriptImportBindi
     }
 }
 
+/// Returns the local name of `module_path`'s default export when it is a
+/// named declaration (`export default function foo() {}`,
+/// `export default foo;`, or `export { foo as default };`); anonymous default
+/// exports return `None` and fail closed.
+pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_name(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript default export module")?;
+    }
+    let path = Path::new(module_path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalize_path(path)))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline
+                .remaining_timeout_micros("parsing JavaScript/TypeScript default export module")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
+    crate::language::javascript_module_default_export_local_name(document.tree.root_node(), &source)
+}
+
 /// Resolves the binding that defines `member_name` when it is accessed as a
 /// member of `module_path`'s namespace object. Direct named exports resolve to
 /// the module itself; named re-export and star re-export chains are followed
-/// transitively with cycle detection. The returned binding's `imported_name`
-/// is the member's local name in its defining module so aliased re-exports
+/// transitively with cycle detection, and the `default` member resolves to the
+/// module's named default export. The returned binding's `imported_name` is
+/// the member's local name in its defining module so aliased re-exports
 /// resolve to the right symbol. `None` means the member is not exported or the
 /// chain is broken, ambiguous, or cyclic; both cases fail closed for namespace
 /// member lookup.
@@ -373,12 +405,6 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
 ) -> Result<Option<JavaScriptImportBinding>> {
     if let Some(deadline) = deadline {
         deadline.check("resolving JavaScript/TypeScript namespace member")?;
-    }
-    // A namespace object exposes the module's default export under the name
-    // `default`; default-member usage stays deferred alongside bare namespace
-    // usage.
-    if member_name == "default" {
-        return Ok(None);
     }
     let module_context = javascript_import_context_from_cache(
         module_path,
@@ -398,7 +424,47 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
         if resolved.unresolved || resolved.module_paths.is_empty() {
             return Ok(None);
         }
+        // `export { default } from "./module"` resolves to a binding whose
+        // imported name is still `default`; name its terminal module's actual
+        // default export so the right symbol is collected.
+        if resolved.imported_name == "default" {
+            if resolved.module_paths.len() != 1 {
+                return Ok(None);
+            }
+            let Some(module_path) = resolved.module_paths.iter().next() else {
+                return Ok(None);
+            };
+            let Some(default_name) = resolve_javascript_module_default_export_name(
+                module_path,
+                file_overrides,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(JavaScriptImportBinding {
+                imported_name: default_name,
+                module_paths: resolved.module_paths,
+                unresolved: false,
+            }));
+        }
         return Ok(Some(resolved));
+    }
+    // A namespace object exposes the module's default export as `default`.
+    // `export { default } from "./module"` re-exports are handled above; a
+    // direct default export resolves to its named local symbol, and anonymous
+    // default exports fail closed. Star re-exports never forward a default.
+    if member_name == "default" {
+        let Some(default_name) =
+            resolve_javascript_module_default_export_name(module_path, file_overrides, deadline)?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(JavaScriptImportBinding {
+            imported_name: default_name,
+            module_paths: BTreeSet::from([module_path.to_owned()]),
+            unresolved: false,
+        }));
     }
     if module_context.named_export_names.contains(member_name) {
         return Ok(Some(JavaScriptImportBinding {
@@ -1135,6 +1201,106 @@ mod tests {
         )
         .unwrap();
         assert!(binding.is_none(), "non-exported members must fail closed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_default_export_to_local_name() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-direct-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let overrides = BTreeMap::from([(
+            normalize_path(&module),
+            "export default function helper() {}\n".to_owned(),
+        )]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "default",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named default export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_default_export_through_named_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-reexport-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&module),
+                "export { default } from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export default function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "default",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("re-exported default should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_member_anonymous_default_exports_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-anonymous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let overrides = BTreeMap::from([(
+            normalize_path(&module),
+            "export default function () {}\n".to_owned(),
+        )]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "default",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "anonymous default exports must fail closed"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

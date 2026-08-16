@@ -37,6 +37,7 @@ use super::super::java::{
 };
 use super::super::javascript::{
     JavaScriptImportBinding, JavaScriptImportContext,
+    resolve_javascript_module_default_export_name,
     resolve_javascript_named_import_binding_for_reference,
     resolve_javascript_namespace_member_binding,
 };
@@ -65,7 +66,7 @@ use super::type_alias::{
 use crate::language::{
     JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
-    normalize_path, parse_document, parse_document_with_timeout, read_source,
+    normalize_path, parse_document, read_source,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
@@ -23868,7 +23869,7 @@ fn javascript_default_import_candidate_indexes(
             deadline.check("resolving JavaScript/TypeScript default import")?;
         }
         let Some(default_name) =
-            javascript_module_default_export_name_for_path(module_path, file_overrides, deadline)?
+            resolve_javascript_module_default_export_name(module_path, file_overrides, deadline)?
         else {
             continue;
         };
@@ -23941,33 +23942,6 @@ fn collect_javascript_member_candidates_in_module(
             }
         }
     }
-}
-
-fn javascript_module_default_export_name_for_path(
-    module_path: &str,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
-    let path = Path::new(module_path);
-    if let Some(deadline) = deadline {
-        deadline.check("reading JavaScript/TypeScript default import module")?;
-    }
-    let source = file_overrides
-        .and_then(|overrides| overrides.get(&normalize_path(path)))
-        .cloned()
-        .map(Ok)
-        .unwrap_or_else(|| read_source(path))?;
-    let document = if let Some(deadline) = deadline {
-        parse_document_with_timeout(
-            path,
-            &source,
-            deadline
-                .remaining_timeout_micros("parsing JavaScript/TypeScript default import module")?,
-        )?
-    } else {
-        parse_document(path, &source)?
-    };
-    crate::language::javascript_module_default_export_local_name(document.tree.root_node(), &source)
 }
 
 #[cfg(test)]
