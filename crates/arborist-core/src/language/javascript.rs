@@ -1439,7 +1439,7 @@ fn collect_require_pattern_bindings(
     Ok(())
 }
 
-fn direct_require_specifier(node: Node<'_>, source: &str) -> Result<Option<String>> {
+pub(crate) fn direct_require_specifier(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(function) = node.child_by_field_name("function") else {
         return Ok(None);
     };

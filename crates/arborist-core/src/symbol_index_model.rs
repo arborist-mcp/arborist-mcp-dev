@@ -45,6 +45,16 @@ pub(crate) struct JavaScriptReferenceDetails {
     /// where `ns` is a local `import * as ns from "..."` binding.
     #[serde(default)]
     pub(crate) namespace_receiver: Option<String>,
+    /// Inline `require("./module").member(...)` member call: the static module
+    /// specifier and the accessed member name, resolved against the
+    /// referencing file at resolution time so overlay/override paths apply.
+    #[serde(default)]
+    pub(crate) require_member_call: Option<(String, String)>,
+    /// Inline bare `require("./module")(...)` namespace-object call: the
+    /// static module specifier, resolved against the referencing file at
+    /// resolution time. Only CommonJS callable exports resolve.
+    #[serde(default)]
+    pub(crate) require_object_call: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

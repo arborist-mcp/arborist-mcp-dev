@@ -66,6 +66,7 @@ use crate::language::{
     JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
     normalize_path, parse_document, read_source,
+    resolve_local_javascript_module_path_with_overrides,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
@@ -1706,6 +1707,65 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         Vec::new()
     };
+    // Inline `require("./module").member(...)` member calls resolve through
+    // the same namespace-member machinery as `const ns = require(...)` member
+    // calls, with the module path resolved against the referencing file so
+    // overlay/override paths apply. Missing or unresolvable modules and
+    // non-exported members fail closed instead of falling back to same-named
+    // workspace symbols.
+    let javascript_require_member_call =
+        javascript_reference_details.and_then(|details| details.require_member_call.as_ref());
+    let javascript_require_member_candidates =
+        if let Some((specifier, member)) = javascript_require_member_call {
+            resolve_local_javascript_module_path_with_overrides(
+                Path::new(&source_symbol.file_path),
+                specifier,
+                file_overrides,
+            )
+            .map(|module_path| {
+                javascript_module_member_candidate_indexes(
+                    raw_symbols,
+                    name_index,
+                    member,
+                    &BTreeSet::from([normalize_path(&module_path)]),
+                    file_overrides,
+                    javascript_import_contexts_by_file,
+                    deadline,
+                )
+            })
+            .transpose()?
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+    // Inline bare `require("./module")(...)` namespace-object calls resolve
+    // only when the required module exports a single CommonJS callable, with
+    // the module path resolved against the referencing file. Non-callable or
+    // ESM-only modules fail closed.
+    let javascript_require_object_call =
+        javascript_reference_details.and_then(|details| details.require_object_call.as_deref());
+    let javascript_require_object_call_candidates =
+        if let Some(specifier) = javascript_require_object_call {
+            resolve_local_javascript_module_path_with_overrides(
+                Path::new(&source_symbol.file_path),
+                specifier,
+                file_overrides,
+            )
+            .map(|module_path| {
+                javascript_namespace_object_call_candidate_indexes(
+                    raw_symbols,
+                    name_index,
+                    &BTreeSet::from([normalize_path(&module_path)]),
+                    file_overrides,
+                    javascript_import_contexts_by_file,
+                    deadline,
+                )
+            })
+            .transpose()?
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
     let candidate_lookup_name = javascript_import_binding
         .as_ref()
         .map(|binding| binding.imported_name.as_str())
@@ -1720,7 +1780,9 @@ fn resolve_reference_path_with_deadline<'a>(
     // terminal module), so the generic import-bound filter below must not
     // re-scope them against the directly-bound module.
     let javascript_scoped_candidates = javascript_namespace_receiver.is_some()
-        || !javascript_namespace_object_call_candidates.is_empty();
+        || !javascript_namespace_object_call_candidates.is_empty()
+        || javascript_require_member_call.is_some()
+        || javascript_require_object_call.is_some();
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
         let path_group_candidates = cpp_qualified_reference_path_groups(
             lookup_name,
@@ -1782,6 +1844,15 @@ fn resolve_reference_path_with_deadline<'a>(
         (javascript_namespace_candidates, false)
     } else if !javascript_namespace_object_call_candidates.is_empty() {
         (javascript_namespace_object_call_candidates, false)
+    } else if javascript_require_member_call.is_some() {
+        // Inline require member calls resolve only within the required module;
+        // unknown members fail closed instead of falling back to same-named
+        // workspace symbols.
+        (javascript_require_member_candidates, false)
+    } else if javascript_require_object_call.is_some() {
+        // Inline require object calls resolve only CommonJS callable exports;
+        // non-callable or ESM-only modules fail closed.
+        (javascript_require_object_call_candidates, false)
     } else if !javascript_default_import_candidates.is_empty() {
         (javascript_default_import_candidates, false)
     } else {

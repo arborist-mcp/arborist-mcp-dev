@@ -33,12 +33,14 @@ pub(crate) use java::{
     java_local_explicit_type_imports, java_local_file_dependency_paths,
 };
 pub(crate) use javascript::{
-    javascript_export_local_names, javascript_local_module_dependency_paths,
-    javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
+    direct_require_specifier, javascript_export_local_names,
+    javascript_local_module_dependency_paths, javascript_module_callable_export_local_name,
+    javascript_module_default_export_local_name,
     javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check,
+    resolve_local_javascript_module_path_with_overrides,
 };
 pub(crate) use kotlin::kotlin_local_file_dependency_paths;
 pub use parser::{

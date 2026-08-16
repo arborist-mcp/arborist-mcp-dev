@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::{node_text, normalize_path};
+use crate::language::{direct_require_specifier, node_text, normalize_path};
 use crate::semantic::javascript::{
     is_javascript_symbol_node, javascript_parameters, javascript_return_type,
     javascript_semantic_path, javascript_signature, javascript_symbol_name,
@@ -22,7 +22,19 @@ type CallAritiesByName = BTreeMap<String, BTreeSet<usize>>;
 /// observed for that spelling, so `ns.helper(value)` records the member name
 /// `helper` plus its namespace receiver `ns`.
 type NamespaceMemberCalls = BTreeMap<(String, String), BTreeSet<usize>>;
-type DirectCalls = (ReferenceNames, CallAritiesByName, NamespaceMemberCalls);
+/// Inline `require("./module").member(...)` member calls keyed by
+/// `(specifier, member)` with the arities observed for that spelling.
+type RequireMemberCalls = BTreeMap<(String, String), BTreeSet<usize>>;
+/// Inline bare `require("./module")(...)` namespace-object calls keyed by
+/// specifier with the arities observed for that spelling.
+type RequireObjectCalls = BTreeMap<String, BTreeSet<usize>>;
+type DirectCalls = (
+    ReferenceNames,
+    CallAritiesByName,
+    NamespaceMemberCalls,
+    RequireMemberCalls,
+    RequireObjectCalls,
+);
 
 pub(crate) fn index_javascript_symbols_with_deadline(
     path: &Path,
@@ -71,8 +83,13 @@ fn indexed_symbol(
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let (references_by_name, call_arities_by_name, namespace_member_calls) =
-        collect_direct_calls(node, source, deadline)?;
+    let (
+        references_by_name,
+        call_arities_by_name,
+        namespace_member_calls,
+        require_member_calls,
+        require_object_calls,
+    ) = collect_direct_calls(node, source, deadline)?;
     let mut reference_facts =
         reference_facts_from_legacy(&references_by_name, &call_arities_by_name);
     reference_facts.extend(namespace_member_calls.into_iter().map(
@@ -81,9 +98,37 @@ fn indexed_symbol(
             call_arities: Some(arities),
             language_details: ReferenceLanguageDetails::JavaScript(JavaScriptReferenceDetails {
                 namespace_receiver: Some(receiver),
+                require_member_call: None,
+                require_object_call: None,
             }),
         },
     ));
+    reference_facts.extend(require_member_calls.into_iter().map(
+        |((specifier, member), arities)| ReferenceFact {
+            spelling: member.clone(),
+            call_arities: Some(arities),
+            language_details: ReferenceLanguageDetails::JavaScript(JavaScriptReferenceDetails {
+                namespace_receiver: None,
+                require_member_call: Some((specifier, member)),
+                require_object_call: None,
+            }),
+        },
+    ));
+    reference_facts.extend(
+        require_object_calls
+            .into_iter()
+            .map(|(specifier, arities)| ReferenceFact {
+                spelling: specifier.clone(),
+                call_arities: Some(arities),
+                language_details: ReferenceLanguageDetails::JavaScript(
+                    JavaScriptReferenceDetails {
+                        namespace_receiver: None,
+                        require_member_call: None,
+                        require_object_call: Some(specifier),
+                    },
+                ),
+            }),
+    );
 
     Ok(Some(IndexedSymbol {
         extension_receiver: None,
@@ -113,6 +158,8 @@ fn collect_direct_calls(
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
     let mut namespace_member_calls = BTreeMap::new();
+    let mut require_member_calls = BTreeMap::new();
+    let mut require_object_calls = BTreeMap::new();
     let root = symbol_node
         .child_by_field_name("body")
         .or_else(|| symbol_node.child_by_field_name("value"));
@@ -124,11 +171,20 @@ fn collect_direct_calls(
             &mut references,
             &mut call_arities_by_name,
             &mut namespace_member_calls,
+            &mut require_member_calls,
+            &mut require_object_calls,
         )?;
     }
-    Ok((references, call_arities_by_name, namespace_member_calls))
+    Ok((
+        references,
+        call_arities_by_name,
+        namespace_member_calls,
+        require_member_calls,
+        require_object_calls,
+    ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_direct_calls_from_node(
     node: Node<'_>,
     source: &str,
@@ -136,6 +192,8 @@ fn collect_direct_calls_from_node(
     references: &mut ReferenceNames,
     call_arities_by_name: &mut CallAritiesByName,
     namespace_member_calls: &mut NamespaceMemberCalls,
+    require_member_calls: &mut RequireMemberCalls,
+    require_object_calls: &mut RequireObjectCalls,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting JavaScript/TypeScript direct calls")?;
@@ -185,6 +243,50 @@ fn collect_direct_calls_from_node(
                 .or_default()
                 .insert(arity);
         }
+    } else if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && function.kind() == "member_expression"
+        && let Some(object) = function.child_by_field_name("object")
+        && let Some(specifier) = direct_require_specifier(object, source)?
+        && let Some(property) = function.child_by_field_name("property")
+        && property.kind() == "property_identifier"
+        && let Ok(member) = node_text(property, source)
+    {
+        // Inline `require("./module").member(...)` resolves `member` within
+        // the required module's namespace through the same machinery as
+        // namespace member calls.
+        let member = member.trim();
+        if !member.is_empty() {
+            let arity = node
+                .child_by_field_name("arguments")
+                .map(|arguments| {
+                    let mut cursor = arguments.walk();
+                    arguments.named_children(&mut cursor).count()
+                })
+                .unwrap_or(0);
+            require_member_calls
+                .entry((specifier, member.to_string()))
+                .or_default()
+                .insert(arity);
+        }
+    } else if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && let Some(specifier) = direct_require_specifier(function, source)?
+    {
+        // Inline bare `require("./module")(...)` is a namespace-object call on
+        // the required module's export object and resolves only CommonJS
+        // callable exports.
+        let arity = node
+            .child_by_field_name("arguments")
+            .map(|arguments| {
+                let mut cursor = arguments.walk();
+                arguments.named_children(&mut cursor).count()
+            })
+            .unwrap_or(0);
+        require_object_calls
+            .entry(specifier)
+            .or_default()
+            .insert(arity);
     }
 
     let mut cursor = node.walk();
@@ -199,6 +301,8 @@ fn collect_direct_calls_from_node(
             references,
             call_arities_by_name,
             namespace_member_calls,
+            require_member_calls,
+            require_object_calls,
         )?;
     }
     Ok(())
