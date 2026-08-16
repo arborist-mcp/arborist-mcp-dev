@@ -18,6 +18,18 @@ use crate::workspace_scan::WorkspaceScanDeadline;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::symbol_dependency) struct CSharpTypeAliasBinding {
     pub(crate) semantic_type_path: String,
+    /// Raw top-level type-argument spellings of the alias target's final
+    /// type segment, such as `["HelperA"]` for
+    /// `using Alias = Demo.Derived<HelperA>;`; empty for non-generic alias
+    /// targets. Alias targets cannot reference type parameters, so the
+    /// spellings are already concrete.
+    pub(crate) raw_generic_argument_spellings: Vec<String>,
+    /// Raw top-level type-argument spellings of every dotted segment that
+    /// precedes the final segment of the alias target, outermost first, such
+    /// as `[["HelperA"]]` for
+    /// `using Alias = Demo.Outer<HelperA>.Inner<HelperB>;`; empty when the
+    /// target has no enclosing generic segments.
+    pub(crate) raw_enclosing_generic_argument_spellings: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,7 +264,7 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
         if root.has_error() {
             continue;
         }
-        for (local_name, semantic_type_path) in csharp_global_type_alias_imports(root, &source)? {
+        for import in csharp_global_type_alias_imports(root, &source)? {
             if let Some(deadline) = deadline {
                 deadline.check("extracting C# global type alias bindings")?;
             }
@@ -260,8 +272,13 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
                 &mut type_alias_bindings,
                 &mut ambiguous_type_alias_names,
                 None,
-                local_name,
-                CSharpTypeAliasBinding { semantic_type_path },
+                import.local_name,
+                CSharpTypeAliasBinding {
+                    semantic_type_path: import.semantic_type_path,
+                    raw_generic_argument_spellings: import.raw_generic_argument_spellings,
+                    raw_enclosing_generic_argument_spellings: import
+                        .raw_enclosing_generic_argument_spellings,
+                },
             );
         }
         for semantic_type_path in csharp_global_static_type_imports(root, &source)? {
@@ -444,6 +461,9 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             import.local_name,
             CSharpTypeAliasBinding {
                 semantic_type_path: import.semantic_type_path,
+                raw_generic_argument_spellings: import.raw_generic_argument_spellings,
+                raw_enclosing_generic_argument_spellings: import
+                    .raw_enclosing_generic_argument_spellings,
             },
         );
     }
@@ -2166,6 +2186,10 @@ fn resolve_csharp_base_type_binding_parts(
                 binding.semantic_type_path = alias.semantic_type_path.clone();
                 binding.is_global_qualified = true;
                 binding.alias_name = Some(local_name.clone());
+                binding.raw_generic_argument_spellings =
+                    alias.raw_generic_argument_spellings.clone();
+                binding.raw_enclosing_generic_argument_spellings =
+                    alias.raw_enclosing_generic_argument_spellings.clone();
                 break;
             }
         }
@@ -2191,6 +2215,9 @@ fn resolve_csharp_base_type_binding_parts(
                     binding.is_global_qualified = true;
                     binding.alias_name = Some(local_name.clone());
                     binding.namespace_import_paths.clear();
+                    binding.raw_generic_argument_spellings = alias.raw_generic_argument_spellings;
+                    binding.raw_enclosing_generic_argument_spellings =
+                        alias.raw_enclosing_generic_argument_spellings;
                 } else {
                     binding.namespace_import_paths.extend(
                         csharp_global_base_namespace_import_paths(global_import_context),

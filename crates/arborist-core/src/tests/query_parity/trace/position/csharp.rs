@@ -40346,3 +40346,666 @@ class SameClass {
         assert_eq!(persisted_callers, expected, "{factory} persisted");
     }
 }
+
+#[test]
+fn traces_csharp_type_alias_constructed_generic_base_inherited_static_factory_and_method_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using Alias = Demo.Derived<HelperA>;
+using PlainAlias = Demo.PlainBase;
+class Entry {
+    public int Run(int value) => value;
+}
+class HelperA {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static T2 MakeT<T2>() => default;
+    protected static void Ping() { }
+}
+class Derived<T> : Base<T> { }
+class PlainBase {
+    protected static U Make<U>() => default;
+    protected static void Ping() { }
+}
+class Caller : Derived<HelperA> {
+    int AliasNonGenericDirect() { return Alias.Make().Run(1); }
+    int AliasNonGenericVar() { var h = Alias.Make(); return h.Run(1); }
+    int AliasGenericDirect() { return Alias.MakeT<HelperB>().Run(1); }
+    int AliasGenericVar() { var h = Alias.MakeT<HelperB>(); return h.Run(1); }
+    int AliasVoid() { Alias.Ping(); return 0; }
+    int QualifiedGenericDirect() { return Caller.MakeT<HelperB>().Run(1); }
+    int FailClosedMissing() { return Alias.Missing().Run(1); }
+}
+class PlainCaller {
+    int PlainAliasGenericDirect() { return PlainAlias.Make<HelperB>().Run(1); }
+    int PlainAliasGenericVar() { var h = PlainAlias.Make<HelperB>(); return h.Run(1); }
+    int PlainAliasVoid() { PlainAlias.Ping(); return 0; }
+}
+",
+    )
+    .unwrap();
+
+    // An alias to a constructed generic base such as
+    // `using Alias = Demo.Derived<HelperA>;` dispatches inherited static
+    // factories and methods on the alias target's unique class/record
+    // ancestor chain, so `Alias.Make()` with `Derived<HelperA> : Base<HelperA>`
+    // and `Base<U>::Make` resolves the callee to the declaring base method and
+    // substitutes the alias target's concrete argument for the declared `U`
+    // return type, for direct calls, `var` initializers, generic method calls
+    // (`Alias.MakeT<HelperB>`), and void calls (`Alias.Ping()`). A plain
+    // (non-generic) alias baseline stays working, and an alias method the base
+    // chain does not declare (`Alias.Missing()`) fails closed.
+    for (target, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+            ],
+        ),
+        ("Demo::Base::Ping", vec!["Demo::Caller::AliasVoid"]),
+        (
+            "Demo::PlainBase::Make",
+            vec![
+                "Demo::PlainCaller::PlainAliasGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::Ping",
+            vec!["Demo::PlainCaller::PlainAliasVoid"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for target in [
+        "Demo::Base::Make",
+        "Demo::Base::MakeT",
+        "Demo::Base::Ping",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+            "{target} live unexpected FailClosedMissing"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+            ],
+        ),
+        ("Demo::Base::Ping", vec!["Demo::Caller::AliasVoid"]),
+        (
+            "Demo::PlainBase::Make",
+            vec![
+                "Demo::PlainCaller::PlainAliasGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::Ping",
+            vec!["Demo::PlainCaller::PlainAliasVoid"],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::QualifiedGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericDirect",
+                "Demo::PlainCaller::PlainAliasGenericVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for target in [
+        "Demo::Base::Make",
+        "Demo::Base::MakeT",
+        "Demo::Base::Ping",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+            "{target} persisted unexpected FailClosedMissing"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_nested_generic_type_alias_inherited_static_factory_and_method_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using NestedAlias = Demo.Outer<HelperA>.Inner<HelperA>;
+class Entry {
+    public int Run(int value) => value;
+}
+class HelperA {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Outer<T> {
+    public class Inner<U> : Base<U> { }
+    public class Base<U> {
+        protected static U Make() => default;
+        protected static T MakeOuter() => default;
+        protected static T2 MakeT<T2>() => default;
+    }
+}
+class NestedCaller {
+    int NestedInnerDirect() { return NestedAlias.Make().Run(1); }
+    int NestedInnerVar() { var h = NestedAlias.Make(); return h.Run(1); }
+    int NestedOuterDirect() { return NestedAlias.MakeOuter().Run(1); }
+    int NestedOuterVar() { var h = NestedAlias.MakeOuter(); return h.Run(1); }
+    int NestedGenericDirect() { return NestedAlias.MakeT<HelperB>().Run(1); }
+    int NestedGenericVar() { var h = NestedAlias.MakeT<HelperB>(); return h.Run(1); }
+    int NestedFailClosedMissing() { return NestedAlias.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // An alias to a constructed nested generic target such as
+    // `using NestedAlias = Demo.Outer<HelperA>.Inner<HelperA>;` keeps the
+    // target's concrete last-segment and enclosing generic arguments, so
+    // inherited static factories declared on `Outer<T>`'s nested `Base<U>`
+    // substitute the inner parameter (`U` -> `HelperA`), the outer enclosing
+    // parameter (`T` -> `HelperA`), and the method's own type parameter
+    // (`T2` -> `HelperB`) in the declared return type for direct calls and
+    // `var` initializers. An alias method the base chain does not declare
+    // (`NestedAlias.Missing()`) fails closed.
+    for (target, expected) in [
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::NestedInnerDirect",
+                "Demo::NestedCaller::NestedInnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::NestedOuterDirect",
+                "Demo::NestedCaller::NestedOuterVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeT",
+            vec![
+                "Demo::NestedCaller::NestedGenericDirect",
+                "Demo::NestedCaller::NestedGenericVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::NestedCaller::NestedInnerDirect",
+                "Demo::NestedCaller::NestedInnerVar",
+                "Demo::NestedCaller::NestedOuterDirect",
+                "Demo::NestedCaller::NestedOuterVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::NestedCaller::NestedGenericDirect",
+                "Demo::NestedCaller::NestedGenericVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for target in [
+        "Demo::Outer::Base::Make",
+        "Demo::Outer::Base::MakeOuter",
+        "Demo::Outer::Base::MakeT",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id
+                    == "Demo::NestedCaller::NestedFailClosedMissing"),
+            "{target} live unexpected NestedFailClosedMissing"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected) in [
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::NestedInnerDirect",
+                "Demo::NestedCaller::NestedInnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::NestedOuterDirect",
+                "Demo::NestedCaller::NestedOuterVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeT",
+            vec![
+                "Demo::NestedCaller::NestedGenericDirect",
+                "Demo::NestedCaller::NestedGenericVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::NestedCaller::NestedInnerDirect",
+                "Demo::NestedCaller::NestedInnerVar",
+                "Demo::NestedCaller::NestedOuterDirect",
+                "Demo::NestedCaller::NestedOuterVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::NestedCaller::NestedGenericDirect",
+                "Demo::NestedCaller::NestedGenericVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for target in [
+        "Demo::Outer::Base::Make",
+        "Demo::Outer::Base::MakeOuter",
+        "Demo::Outer::Base::MakeT",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id
+                    == "Demo::NestedCaller::NestedFailClosedMissing"),
+            "{target} persisted unexpected NestedFailClosedMissing"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_global_type_alias_constructed_generic_base_inherited_static_factory_and_method_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using GlobalAlias = Demo.Derived<HelperA>;
+global using GlobalPlainAlias = Demo.PlainBase;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class HelperA {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static T2 MakeT<T2>() => default;
+    protected static void Ping() { }
+}
+class Derived<T> : Base<T> { }
+class PlainBase {
+    protected static U Make<U>() => default;
+    protected static void Ping() { }
+}
+class Caller {
+    int AliasNonGenericDirect() { return GlobalAlias.Make().Run(1); }
+    int AliasNonGenericVar() { var h = GlobalAlias.Make(); return h.Run(1); }
+    int AliasGenericDirect() { return GlobalAlias.MakeT<HelperB>().Run(1); }
+    int AliasGenericVar() { var h = GlobalAlias.MakeT<HelperB>(); return h.Run(1); }
+    int AliasVoid() { GlobalAlias.Ping(); return 0; }
+    int PlainAliasGenericDirect() { return GlobalPlainAlias.Make<HelperB>().Run(1); }
+    int PlainAliasGenericVar() { var h = GlobalPlainAlias.Make<HelperB>(); return h.Run(1); }
+    int PlainAliasVoid() { GlobalPlainAlias.Ping(); return 0; }
+    int FailClosedMissing() { return GlobalAlias.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `global using` alias to a constructed generic base such as
+    // `global using GlobalAlias = Demo.Derived<HelperA>;` dispatches inherited
+    // static factories and methods through the alias target's unique
+    // class/record ancestor chain exactly like a file-scoped alias, resolving
+    // callees to the declaring base method and substituting the alias
+    // target's concrete generic argument for the declared `U` return type,
+    // for direct calls, `var` initializers, generic method calls, and void
+    // calls. A plain global alias baseline stays working, and an alias method
+    // the base chain does not declare (`GlobalAlias.Missing()`) fails closed.
+    for (target, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+            ],
+        ),
+        ("Demo::Base::Ping", vec!["Demo::Caller::AliasVoid"]),
+        (
+            "Demo::PlainBase::Make",
+            vec![
+                "Demo::Caller::PlainAliasGenericDirect",
+                "Demo::Caller::PlainAliasGenericVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::Ping",
+            vec!["Demo::Caller::PlainAliasVoid"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::PlainAliasGenericDirect",
+                "Demo::Caller::PlainAliasGenericVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+    }
+    for target in [
+        "Demo::Base::Make",
+        "Demo::Base::MakeT",
+        "Demo::Base::Ping",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+            "{target} live unexpected FailClosedMissing"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeT",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+            ],
+        ),
+        ("Demo::Base::Ping", vec!["Demo::Caller::AliasVoid"]),
+        (
+            "Demo::PlainBase::Make",
+            vec![
+                "Demo::Caller::PlainAliasGenericDirect",
+                "Demo::Caller::PlainAliasGenericVar",
+            ],
+        ),
+        (
+            "Demo::PlainBase::Ping",
+            vec!["Demo::Caller::PlainAliasVoid"],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for (target, expected) in [
+        (
+            "Demo::HelperA::Run",
+            vec![
+                "Demo::Caller::AliasNonGenericDirect",
+                "Demo::Caller::AliasNonGenericVar",
+            ],
+        ),
+        (
+            "Demo::HelperB::Run",
+            vec![
+                "Demo::Caller::AliasGenericDirect",
+                "Demo::Caller::AliasGenericVar",
+                "Demo::Caller::PlainAliasGenericDirect",
+                "Demo::Caller::PlainAliasGenericVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{target} persisted");
+    }
+    for target in [
+        "Demo::Base::Make",
+        "Demo::Base::MakeT",
+        "Demo::Base::Ping",
+        "Demo::HelperA::Run",
+        "Demo::HelperB::Run",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(
+            !persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+            "{target} persisted unexpected FailClosedMissing"
+        );
+    }
+}

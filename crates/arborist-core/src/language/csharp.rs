@@ -8,6 +8,32 @@ pub(crate) struct CSharpFileTypeAliasImport {
     pub(crate) scope_path: Option<String>,
     pub(crate) local_name: String,
     pub(crate) semantic_type_path: String,
+    /// Raw top-level type-argument spellings of the alias target's final
+    /// type segment, such as `["HelperA"]` for
+    /// `using Alias = Demo.Derived<HelperA>;`; empty for non-generic alias
+    /// targets.
+    pub(crate) raw_generic_argument_spellings: Vec<String>,
+    /// Raw top-level type-argument spellings of every dotted segment that
+    /// precedes the final segment of the alias target, outermost first, such
+    /// as `[["HelperA"]]` for
+    /// `using Alias = Demo.Outer<HelperA>.Inner<HelperB>;`; empty when the
+    /// target has no enclosing generic segments.
+    pub(crate) raw_enclosing_generic_argument_spellings: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CSharpGlobalTypeAliasImport {
+    pub(crate) local_name: String,
+    pub(crate) semantic_type_path: String,
+    /// Raw top-level type-argument spellings of the alias target's final
+    /// type segment, such as `["HelperA"]` for
+    /// `global using GlobalAlias = Demo.Derived<HelperA>;`; empty for
+    /// non-generic alias targets.
+    pub(crate) raw_generic_argument_spellings: Vec<String>,
+    /// Raw top-level type-argument spellings of every dotted segment that
+    /// precedes the final segment of the alias target, outermost first; empty
+    /// when the target has no enclosing generic segments.
+    pub(crate) raw_enclosing_generic_argument_spellings: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,6 +238,13 @@ fn csharp_type_alias_import_from_directive(
         scope_path: scope_path.map(str::to_string),
         local_name: local_name.to_string(),
         semantic_type_path,
+        raw_generic_argument_spellings: csharp_generic_type_arguments(target_path)
+            .unwrap_or_default(),
+        raw_enclosing_generic_argument_spellings: csharp_generic_type_arguments_per_segment(
+            target_path,
+        )
+        .map(|segments| segments[..segments.len().saturating_sub(1)].to_vec())
+        .unwrap_or_default(),
     }))
 }
 
@@ -299,7 +332,7 @@ pub(crate) fn csharp_global_namespace_imports(root: Node<'_>, source: &str) -> R
 pub(crate) fn csharp_global_type_alias_imports(
     root: Node<'_>,
     source: &str,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<CSharpGlobalTypeAliasImport>> {
     let mut imports = Vec::new();
     let mut cursor = root.walk();
     for directive in root.named_children(&mut cursor) {
@@ -326,7 +359,16 @@ pub(crate) fn csharp_global_type_alias_imports(
         };
         let target_path = node_text(target, source)?.trim();
         if let Some(semantic_type_path) = csharp_generic_type_semantic_path(target_path) {
-            imports.push((local_name.to_string(), semantic_type_path));
+            imports.push(CSharpGlobalTypeAliasImport {
+                local_name: local_name.to_string(),
+                semantic_type_path,
+                raw_generic_argument_spellings: csharp_generic_type_arguments(target_path)
+                    .unwrap_or_default(),
+                raw_enclosing_generic_argument_spellings:
+                    csharp_generic_type_arguments_per_segment(target_path)
+                        .map(|segments| segments[..segments.len().saturating_sub(1)].to_vec())
+                        .unwrap_or_default(),
+            });
         }
     }
     Ok(imports)
@@ -887,16 +929,22 @@ class Caller {}
                     scope_path: None,
                     local_name: "HelperAlias".to_string(),
                     semantic_type_path: "Demo::Utility::Helper".to_string(),
+                    raw_generic_argument_spellings: Vec::new(),
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
                 },
                 super::CSharpFileTypeAliasImport {
                     scope_path: None,
                     local_name: "GlobalAlias".to_string(),
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
+                    raw_generic_argument_spellings: Vec::new(),
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
                 },
                 super::CSharpFileTypeAliasImport {
                     scope_path: None,
                     local_name: "GenericAlias".to_string(),
                     semantic_type_path: "Demo::Utility::GenericHelper".to_string(),
+                    raw_generic_argument_spellings: vec!["int".to_string()],
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
                 },
             ]
         );
@@ -1045,18 +1093,24 @@ class Caller {}
         assert_eq!(
             csharp_global_type_alias_imports(document.tree.root_node(), source).unwrap(),
             vec![
-                (
-                    "HelperAlias".to_string(),
-                    "Demo::Utility::Helper".to_string()
-                ),
-                (
-                    "GlobalAlias".to_string(),
-                    "Demo::Utility::GlobalHelper".to_string(),
-                ),
-                (
-                    "GenericAlias".to_string(),
-                    "Demo::Utility::Generic".to_string(),
-                ),
+                super::CSharpGlobalTypeAliasImport {
+                    local_name: "HelperAlias".to_string(),
+                    semantic_type_path: "Demo::Utility::Helper".to_string(),
+                    raw_generic_argument_spellings: Vec::new(),
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
+                },
+                super::CSharpGlobalTypeAliasImport {
+                    local_name: "GlobalAlias".to_string(),
+                    semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
+                    raw_generic_argument_spellings: Vec::new(),
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
+                },
+                super::CSharpGlobalTypeAliasImport {
+                    local_name: "GenericAlias".to_string(),
+                    semantic_type_path: "Demo::Utility::Generic".to_string(),
+                    raw_generic_argument_spellings: vec!["int".to_string()],
+                    raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
+                },
             ]
         );
     }
@@ -1139,6 +1193,8 @@ namespace Demo.App {
                 scope_path: Some("Demo::App".to_string()),
                 local_name: "HelperAlias".to_string(),
                 semantic_type_path: "Demo::Utility::Helper".to_string(),
+                raw_generic_argument_spellings: Vec::new(),
+                raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
             }]
         );
 
@@ -1154,6 +1210,8 @@ class Caller {}
                 scope_path: Some("Demo::App".to_string()),
                 local_name: "HelperAlias".to_string(),
                 semantic_type_path: "Demo::Utility::Helper".to_string(),
+                raw_generic_argument_spellings: Vec::new(),
+                raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
             }]
         );
     }

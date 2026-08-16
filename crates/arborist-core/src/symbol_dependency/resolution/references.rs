@@ -903,13 +903,18 @@ fn resolve_reference_path_with_deadline<'a>(
             if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
                 return Ok(None);
             }
-            return Ok(resolve_csharp_imported_static_method(
+            return resolve_csharp_imported_static_method(
+                source_symbol,
                 raw_symbols,
                 semantic_path_index,
                 &binding,
                 &method_name,
                 call_arity,
-            ));
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         if csharp_type_alias_name_is_ambiguous_for_reference(
             &source_symbol.file_path,
@@ -942,13 +947,18 @@ fn resolve_reference_path_with_deadline<'a>(
             if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
                 return Ok(None);
             }
-            return Ok(resolve_csharp_imported_static_method(
+            return resolve_csharp_imported_static_method(
+                source_symbol,
                 raw_symbols,
                 semantic_path_index,
                 &binding,
                 &method_name,
                 call_arity,
-            ));
+                Some(csharp_global_import_context),
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         if let Some(target_path) =
             csharp_simple_type_static_target_path(reference_name, source_symbol, raw_symbols)
@@ -2599,7 +2609,23 @@ fn resolve_csharp_bound_factory_receiver_binding(
         }
         return Ok(None);
     }
-    Ok(None)
+    // A dotted factory root whose receiver is not a bound local may still be
+    // a type-qualified static call on a declared type (including a type
+    // alias or a constructed generic spelling), so `Alias.Make()` with
+    // `using Alias = Demo.Derived<HelperA>;` dispatches with the receiver
+    // type's concrete generic arguments for return-type substitution.
+    // Unresolvable receiver names keep `None` and fail closed.
+    resolve_csharp_receiver_type_binding(
+        source_symbol,
+        receiver_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
 }
 
 /// Resolves the receiver type binding for the prefix of a factory-chain
@@ -4614,12 +4640,17 @@ fn resolve_csharp_factory_static_method<'a>(
             return Ok(None);
         }
         resolve_csharp_imported_static_method(
+            source_symbol,
             raw_symbols,
             semantic_path_index,
             &binding,
             &method_name,
             factory_arity,
-        )
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if csharp_type_alias_name_is_ambiguous_for_reference(
         &source_symbol.file_path,
         factory_name,
@@ -4646,12 +4677,17 @@ fn resolve_csharp_factory_static_method<'a>(
             return Ok(None);
         }
         resolve_csharp_imported_static_method(
+            source_symbol,
             raw_symbols,
             semantic_path_index,
             &binding,
             &method_name,
             factory_arity,
-        )
+            Some(csharp_global_import_context),
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if let Some(target_path) =
         csharp_simple_type_static_target_path(factory_name, source_symbol, raw_symbols)
         && let Some((type_path, method_name)) = target_path.rsplit_once("::")
@@ -5411,13 +5447,18 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             // constructed-generic member branch resolve the root.
             continue;
         }
-        let type_path = match resolve_csharp_static_initializer_type_path(
+        // A type prefix that resolves as a plain declared type carries no
+        // receiver binding; a prefix that resolves through the receiver
+        // rules (an alias or a constructed generic spelling) keeps its
+        // binding so the static factory's declared return type can
+        // substitute the prefix's concrete generic arguments.
+        let (type_path, receiver_binding) = match resolve_csharp_static_initializer_type_path(
             source_symbol,
             &type_name,
             raw_symbols,
             semantic_path_index,
         ) {
-            Some(type_path) => type_path,
+            Some(type_path) => (type_path, None),
             None => {
                 // A type prefix that does not resolve as a plain declared type
                 // may still resolve through the same alias and namespace-import
@@ -5448,7 +5489,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                         ) else {
                             continue;
                         };
-                        type_path
+                        (type_path, Some(binding))
                     }
                     None => {
                         if let Some(type_path) = resolve_csharp_namespace_imported_nested_type_path(
@@ -5462,7 +5503,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                             csharp_import_contexts_by_file,
                             deadline,
                         )? {
-                            type_path
+                            (type_path, None)
                         } else if let Some(type_path) =
                             resolve_csharp_namespace_imported_dotted_type_path(
                                 source_symbol,
@@ -5476,7 +5517,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                                 deadline,
                             )?
                         {
-                            type_path
+                            (type_path, None)
                         } else if let Some(type_path) = resolve_csharp_alias_to_dotted_type_path(
                             source_symbol,
                             &type_name,
@@ -5488,7 +5529,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                             csharp_import_contexts_by_file,
                             deadline,
                         )? {
-                            type_path
+                            (type_path, None)
                         } else {
                             continue;
                         }
@@ -5588,6 +5629,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             let return_type = csharp_substitute_qualified_factory_return_type(
                 method_symbol,
                 &type_path,
+                receiver_binding.as_ref(),
                 &return_type,
                 raw_symbols,
                 semantic_path_index,
@@ -5722,6 +5764,7 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             let return_type = csharp_substitute_qualified_factory_return_type(
                 method_symbol,
                 &type_path,
+                receiver_binding.as_ref(),
                 &return_type,
                 raw_symbols,
                 semantic_path_index,
@@ -10400,10 +10443,11 @@ fn csharp_substitute_bare_inherited_factory_return_type(
 /// ancestor chain, so `Caller.Make()` on `Caller : Derived<Helper>` with
 /// `protected static U Make()` on `Base<U>` resolves the declared `U` return
 /// to `Helper`. The qualified type's binding seeds the composition walk with
-/// its own type path and empty concrete arguments; a method declared directly
-/// on the qualified type or a type outside its base chain keeps the declared
-/// return type unchanged and fails closed downstream when it names a type
-/// parameter.
+/// its own type path and, when the receiver was resolved through a type
+/// alias or constructed generic spelling, its concrete generic arguments; a
+/// method declared directly on the qualified type or a type outside its base
+/// chain keeps the declared return type unchanged and fails closed
+/// downstream when it names a type parameter.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# qualified factory return type substitution inputs explicit"
@@ -10411,6 +10455,7 @@ fn csharp_substitute_bare_inherited_factory_return_type(
 fn csharp_substitute_qualified_factory_return_type(
     method: &IndexedSymbol,
     type_path: &str,
+    receiver_binding: Option<&CSharpBaseTypeBinding>,
     return_type: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -10419,16 +10464,26 @@ fn csharp_substitute_qualified_factory_return_type(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<String> {
-    let binding = CSharpBaseTypeBinding {
-        semantic_type_path: type_path.to_string(),
-        is_global_qualified: true,
-        alias_name: None,
-        namespace_import_paths: Vec::new(),
-        generic_arguments: Vec::new(),
-        raw_generic_argument_spellings: Vec::new(),
-        enclosing_generic_arguments: Vec::new(),
-        raw_enclosing_generic_argument_spellings: Vec::new(),
-    };
+    // The qualified type's binding seeds the composition walk with its own
+    // type path and, when the receiver was resolved through a type alias or
+    // a constructed generic spelling, its concrete generic arguments, so
+    // `Alias.Make()` with `using Alias = Demo.Derived<HelperA>;` and
+    // `Base<U>::Make` resolves the declared `U` return to `HelperA`.
+    // Receivers resolved without a binding seed empty concrete arguments and
+    // keep the declared return type unchanged for methods that do not
+    // reference type parameters.
+    let binding = receiver_binding
+        .cloned()
+        .unwrap_or_else(|| CSharpBaseTypeBinding {
+            semantic_type_path: type_path.to_string(),
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+            generic_arguments: Vec::new(),
+            raw_generic_argument_spellings: Vec::new(),
+            enclosing_generic_arguments: Vec::new(),
+            raw_enclosing_generic_argument_spellings: Vec::new(),
+        });
     substitute_csharp_method_return_type(
         method,
         &binding,
@@ -11513,7 +11568,17 @@ fn resolve_csharp_receiver_type_binding(
     let Some(mut binding) = binding else {
         return Ok(None);
     };
-    binding.generic_arguments = generic_arguments;
+    // An alias binding carries the alias target's generic arguments as raw
+    // spellings (the alias name itself cannot take type arguments), so a
+    // receiver spelled through an alias such as `Alias` with
+    // `using Alias = Demo.Derived<HelperA>;` promotes those arguments into
+    // the receiver's concrete arguments. Non-alias spellings keep the
+    // spelling-derived arguments.
+    if binding.alias_name.is_some() && generic_arguments.is_empty() {
+        binding.generic_arguments = binding.raw_generic_argument_spellings.clone();
+    } else {
+        binding.generic_arguments = generic_arguments;
+    }
     // A dotted nested spelling such as `Outer<Helper>.Inner<Helper>` also
     // records the concrete type arguments of every enclosing segment
     // (outermost first) so member declared types that reference an outer type
@@ -11551,6 +11616,18 @@ fn resolve_csharp_receiver_type_binding(
                 }
             })
             .unwrap_or_default();
+    // An alias target's enclosing generic segments (such as `Outer<HelperA>`
+    // in `using Alias = Demo.Outer<HelperA>.Inner<HelperB>;`) carry their
+    // arguments through the alias binding; the raw per-segment spellings are
+    // aligned by dropping leading namespace segments that hold no arguments.
+    if binding.alias_name.is_some() && binding.enclosing_generic_arguments.is_empty() {
+        binding.enclosing_generic_arguments = binding
+            .raw_enclosing_generic_argument_spellings
+            .iter()
+            .skip_while(|segment| segment.is_empty())
+            .cloned()
+            .collect();
+    }
     if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
         // A nullable value type such as `Point?` does not expose the
         // underlying struct's members directly; the receiver must be
@@ -14168,29 +14245,35 @@ fn resolve_csharp_imported_nested_static_method(
     )
 }
 
+/// Resolves an alias-qualified static method such as `Alias.Make()` with
+/// `using Alias = Demo.Derived<HelperA>;`. The alias target is resolved
+/// directly first; when the target does not declare the method itself, the
+/// unique class/record ancestor chain of the alias target is walked, so
+/// `Alias.Make()` with `Derived<HelperA> : Base<HelperA>` and
+/// `Base<U>::Make` resolves to the declaring base method. Unknown,
+/// ambiguous, or non-static methods return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# alias-qualified static method resolution inputs explicit"
+)]
 fn resolve_csharp_imported_static_method(
+    source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     binding: &CSharpTypeAliasBinding,
     method_name: &str,
     call_arity: usize,
-) -> Option<String> {
-    let type_candidates = semantic_path_index
-        .get(&binding.semantic_type_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
-        .count();
-    if type_candidates != 1 {
-        return None;
-    }
-    let target_path = format!("{}::{method_name}", binding.semantic_type_path);
-    resolve_csharp_candidate(
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let direct_target_path = format!("{}::{method_name}", binding.semantic_type_path);
+    if let Some(symbol_id) = resolve_csharp_candidate(
         raw_symbols,
         semantic_path_index,
-        &target_path,
-        None,
+        &direct_target_path,
+        Some(source_symbol),
         call_arity,
         CSharpCandidateRequirements {
             node_kind: "method_declaration",
@@ -14198,6 +14281,20 @@ fn resolve_csharp_imported_static_method(
             require_instance: false,
             require_same_file: false,
         },
+    ) {
+        return Ok(Some(symbol_id));
+    }
+    resolve_csharp_type_qualified_static_method(
+        source_symbol,
+        &binding.semantic_type_path,
+        method_name,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
     )
 }
 
