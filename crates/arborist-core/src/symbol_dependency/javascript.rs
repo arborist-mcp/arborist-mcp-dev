@@ -4,8 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, javascript_export_local_names, javascript_named_export_names,
-    javascript_named_import_module_paths_with_overrides_and_check,
+    detect_language, javascript_export_local_names,
+    javascript_module_reexport_module_paths_with_overrides_and_check,
+    javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
     parse_document_with_timeout, read_source,
@@ -31,6 +32,11 @@ pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     /// `module.exports = { exported: local }`), so namespace members resolve
     /// to the declaring local symbol.
     pub(crate) export_local_names: BTreeMap<String, String>,
+    /// Local module paths re-exported wholesale through
+    /// `module.exports = require("./module")`; the module's namespace is the
+    /// target module's export object, so members and callable-object calls
+    /// resolve within the terminal module of the re-export chain.
+    pub(crate) module_reexport_module_paths: BTreeSet<String>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -144,7 +150,53 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
             &source,
             Some(&check_traversal_deadline),
         )?,
+        module_reexport_module_paths:
+            javascript_module_reexport_module_paths_with_overrides_and_check(
+                path,
+                document.tree.root_node(),
+                &source,
+                file_overrides,
+                Some(&check_traversal_deadline),
+            )?
+            .into_iter()
+            .map(|path| normalize_path(&path))
+            .collect(),
     })
+}
+
+/// Follows `module.exports = require("./module")` wholesale re-export chains
+/// from `module_path` to the terminal module that actually declares exports.
+/// Returns `None` when the chain is empty, ambiguous (multiple targets), or
+/// cyclic so callers fail closed instead of guessing.
+fn javascript_module_reexport_terminal(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut visited = BTreeSet::new();
+    let mut current = module_path.to_owned();
+    loop {
+        if !visited.insert(current.clone()) {
+            return Ok(None);
+        }
+        let context = javascript_import_context_from_cache(
+            &current,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+        )?;
+        match context.module_reexport_module_paths.len() {
+            0 => return Ok(Some(current)),
+            1 => {
+                let Some(target) = context.module_reexport_module_paths.iter().next() else {
+                    return Ok(None);
+                };
+                current = target.clone();
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 pub(in crate::symbol_dependency) fn resolve_javascript_named_import_binding_for_reference(
@@ -201,6 +253,34 @@ fn resolve_named_module_binding(
             contexts_by_file,
             deadline,
         )?;
+        // A wholesale re-export (`module.exports = require("./impl")`) aliases
+        // this module's exports to the target module's, so a named member
+        // resolves within the terminal module of the chain. Namespace
+        // bindings keep pointing at the bound module; member and
+        // namespace-object resolution follow the chain at use time.
+        let effective_module_path = if binding.imported_name == "<namespace>"
+            || module_context.module_reexport_module_paths.is_empty()
+        {
+            module_path.clone()
+        } else {
+            let Some(terminal) = javascript_module_reexport_terminal(
+                module_path,
+                file_overrides,
+                contexts_by_file,
+                deadline,
+            )?
+            else {
+                resolution_stack.remove(&resolution_key);
+                return Ok(unresolved_named_module_binding(&binding.imported_name));
+            };
+            terminal
+        };
+        let module_context = javascript_import_context_from_cache(
+            &effective_module_path,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+        )?;
         let candidate = if let Some(reexport_binding) = module_context
             .named_reexport_bindings
             .get(&binding.imported_name)
@@ -216,7 +296,7 @@ fn resolve_named_module_binding(
             // `export * from "./module"` forwards the target's named exports,
             // but never a module's default export.
             match resolve_star_reexported_module_paths(
-                module_path,
+                &effective_module_path,
                 &binding.imported_name,
                 file_overrides,
                 contexts_by_file,
@@ -238,14 +318,14 @@ fn resolve_named_module_binding(
                 }
                 StarReexportLookup::Absent => JavaScriptImportBinding {
                     imported_name: binding.imported_name.clone(),
-                    module_paths: BTreeSet::from([module_path.clone()]),
+                    module_paths: BTreeSet::from([effective_module_path.clone()]),
                     unresolved: false,
                 },
             }
         } else {
             JavaScriptImportBinding {
                 imported_name: binding.imported_name.clone(),
-                module_paths: BTreeSet::from([module_path.clone()]),
+                module_paths: BTreeSet::from([effective_module_path.clone()]),
                 unresolved: false,
             }
         };
@@ -406,11 +486,26 @@ pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_nam
 pub(in crate::symbol_dependency) fn resolve_javascript_namespace_object_call_binding(
     module_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<JavaScriptImportBinding>> {
     if let Some(deadline) = deadline {
         deadline.check("reading JavaScript/TypeScript CommonJS callable export module")?;
     }
+    // `module.exports = require("./impl")` aliases the namespace object to the
+    // target module's export object, so callability is decided by the terminal
+    // module of the wholesale re-export chain; broken or cyclic chains fail
+    // closed.
+    let Some(terminal_path) = javascript_module_reexport_terminal(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let module_path = terminal_path.as_str();
     // `.mjs` and `.mts` are ESM-only: their namespace objects are never
     // callable even when the source text mentions `module.exports`.
     let extension = Path::new(module_path)
@@ -475,6 +570,28 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
         contexts_by_file,
         deadline,
     )?;
+    if !module_context.module_reexport_module_paths.is_empty() {
+        // `module.exports = require("./impl")` aliases this module's namespace
+        // to the target module's export object; members resolve within the
+        // terminal module of the wholesale re-export chain, and broken or
+        // cyclic chains fail closed.
+        let Some(terminal_path) = javascript_module_reexport_terminal(
+            module_path,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_javascript_namespace_member_binding(
+            &terminal_path,
+            member_name,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+        );
+    }
     let mut resolution_stack = BTreeSet::new();
     if let Some(reexport_binding) = module_context.named_reexport_bindings.get(member_name) {
         let resolved = resolve_named_module_binding(
@@ -1391,10 +1508,14 @@ mod tests {
         )
         .unwrap();
 
-        let binding =
-            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
-                .unwrap()
-                .expect("CommonJS callable export should resolve");
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("CommonJS callable export should resolve");
         assert_eq!(binding.imported_name, "helper");
         assert!(!binding.unresolved);
         assert_eq!(
@@ -1419,10 +1540,14 @@ mod tests {
         )
         .unwrap();
 
-        let binding =
-            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
-                .unwrap()
-                .expect("named function expression export should resolve");
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named function expression export should resolve");
         assert_eq!(binding.imported_name, "helper");
         let _ = fs::remove_dir_all(root);
     }
@@ -1444,6 +1569,7 @@ mod tests {
             let binding = resolve_javascript_namespace_object_call_binding(
                 &normalize_path(&module),
                 None,
+                &mut BTreeMap::new(),
                 None,
             )
             .unwrap();
@@ -1466,9 +1592,13 @@ mod tests {
         let module = root.join("module.mjs");
         fs::write(&module, "function helper() {}\nmodule.exports = helper;\n").unwrap();
 
-        let binding =
-            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
-                .unwrap();
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
         assert!(
             binding.is_none(),
             ".mjs namespace objects are never callable and must fail closed"
@@ -1502,6 +1632,7 @@ mod tests {
             let binding = resolve_javascript_namespace_object_call_binding(
                 &normalize_path(&module),
                 None,
+                &mut BTreeMap::new(),
                 None,
             )
             .unwrap();
@@ -1630,6 +1761,7 @@ mod tests {
         let callable = resolve_javascript_namespace_object_call_binding(
             binding.module_paths.iter().next().unwrap(),
             None,
+            &mut BTreeMap::new(),
             None,
         )
         .unwrap()
@@ -1970,6 +2102,7 @@ mod tests {
         let callable = resolve_javascript_namespace_object_call_binding(
             binding.module_paths.iter().next().unwrap(),
             None,
+            &mut BTreeMap::new(),
             None,
         )
         .unwrap()
@@ -2008,6 +2141,211 @@ mod tests {
         .expect("missing import-equals binding still records a binding");
         assert!(binding.unresolved);
         assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn resolves_require_namespace_member_binding_through_module_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "exports.helper = function helper() {}\n").unwrap();
+        fs::write(&bridge, "module.exports = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./bridge.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("wholesale re-export member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_require_destructured_member_binding_through_module_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-destructured-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "exports.helper = function helper() {}\n").unwrap();
+        fs::write(&bridge, "module.exports = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("destructured require binding should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_named_import_through_module_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-named-import-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.ts");
+        fs::write(&impl_path, "export function helper() {}\n").unwrap();
+        fs::write(&bridge, "module.exports = require(\"./impl\");\n").unwrap();
+        fs::write(
+            &caller,
+            "import { helper } from \"./bridge\";\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("named import binding should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_object_call_through_module_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "module.exports = function helper() {}\n").unwrap();
+        fs::write(&bridge, "module.exports = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "import fn = require(\"./bridge.cjs\");\nexport function caller() { return fn(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "fn",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals binding should resolve");
+        let callable = resolve_javascript_namespace_object_call_binding(
+            binding.module_paths.iter().next().unwrap(),
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("wholesale re-export namespace-object call should resolve");
+        assert_eq!(callable.imported_name, "helper");
+        assert_eq!(
+            callable.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_cyclic_module_reexport_chains_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let a = root.join("a.cjs");
+        let b = root.join("b.cjs");
+        fs::write(&a, "module.exports = require(\"./b.cjs\");\n").unwrap();
+        fs::write(&b, "module.exports = require(\"./a.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./a.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap();
+        assert!(
+            member.is_none(),
+            "cyclic wholesale re-export chains must fail closed"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

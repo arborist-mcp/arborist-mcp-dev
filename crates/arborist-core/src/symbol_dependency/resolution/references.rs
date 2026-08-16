@@ -1701,6 +1701,7 @@ fn resolve_reference_path_with_deadline<'a>(
             name_index,
             &binding.module_paths,
             file_overrides,
+            javascript_import_contexts_by_file,
             deadline,
         )?
     } else {
@@ -1714,6 +1715,13 @@ fn resolve_reference_path_with_deadline<'a>(
         language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
     let scoped_cpp_direct_call =
         language_id == Some(LanguageId::Cpp) && call_arity.is_some() && !qualified_cpp_reference;
+    // Namespace-member and namespace-object-call candidate sets are already
+    // scoped to the defining module(s) of the bound namespace (following
+    // wholesale `module.exports = require(...)` re-export chains to the
+    // terminal module), so the generic import-bound filter below must not
+    // re-scope them against the directly-bound module.
+    let javascript_scoped_candidates = javascript_namespace_receiver.is_some()
+        || !javascript_namespace_object_call_candidates.is_empty();
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
         let path_group_candidates = cpp_qualified_reference_path_groups(
             lookup_name,
@@ -1823,15 +1831,19 @@ fn resolve_reference_path_with_deadline<'a>(
         })
         .collect::<Vec<_>>();
     let import_bound_candidates = if let Some(binding) = javascript_import_binding {
-        candidate_slice
-            .iter()
-            .copied()
-            .filter(|index| {
-                binding
-                    .module_paths
-                    .contains(&raw_symbols[*index].file_path)
-            })
-            .collect()
+        if javascript_scoped_candidates {
+            candidate_slice
+        } else {
+            candidate_slice
+                .iter()
+                .copied()
+                .filter(|index| {
+                    binding
+                        .module_paths
+                        .contains(&raw_symbols[*index].file_path)
+                })
+                .collect()
+        }
     } else {
         candidate_slice
     };
@@ -23932,6 +23944,7 @@ fn javascript_namespace_object_call_candidate_indexes(
     name_index: &BTreeMap<String, Vec<usize>>,
     module_paths: &BTreeSet<String>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<usize>> {
     if module_paths.is_empty() {
@@ -23947,6 +23960,7 @@ fn javascript_namespace_object_call_candidate_indexes(
         let Some(binding) = resolve_javascript_namespace_object_call_binding(
             module_path,
             file_overrides,
+            javascript_import_contexts_by_file,
             deadline,
         )?
         else {
