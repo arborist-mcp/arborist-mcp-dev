@@ -38,6 +38,7 @@ use super::super::java::{
 use super::super::javascript::{
     JavaScriptImportBinding, JavaScriptImportContext,
     resolve_javascript_named_import_binding_for_reference,
+    resolve_javascript_namespace_member_binding,
 };
 use super::super::kotlin::{
     KotlinImportContext, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
@@ -1660,6 +1661,8 @@ fn resolve_reference_path_with_deadline<'a>(
                 name_index,
                 reference_name,
                 &binding.module_paths,
+                file_overrides,
+                javascript_import_contexts_by_file,
                 deadline,
             )?
         } else {
@@ -23885,6 +23888,8 @@ fn javascript_module_member_candidate_indexes(
     name_index: &BTreeMap<String, Vec<usize>>,
     member_name: &str,
     module_paths: &BTreeSet<String>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<usize>> {
     if module_paths.is_empty() {
@@ -23895,13 +23900,29 @@ fn javascript_module_member_candidate_indexes(
         if let Some(deadline) = deadline {
             deadline.check("resolving JavaScript/TypeScript namespace member")?;
         }
-        collect_javascript_member_candidates_in_module(
-            raw_symbols,
-            name_index,
-            member_name,
+        // Namespace members are the bound module's exports: direct named
+        // exports, named re-export chains, and star re-export chains. Broken,
+        // ambiguous, cyclic, or non-exported members fail closed instead of
+        // falling back to same-named workspace symbols.
+        let Some(binding) = resolve_javascript_namespace_member_binding(
             module_path,
-            &mut candidates,
-        );
+            member_name,
+            file_overrides,
+            javascript_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        for exporting_path in &binding.module_paths {
+            collect_javascript_member_candidates_in_module(
+                raw_symbols,
+                name_index,
+                &binding.imported_name,
+                exporting_path,
+                &mut candidates,
+            );
+        }
     }
     Ok(candidates.into_iter().collect())
 }

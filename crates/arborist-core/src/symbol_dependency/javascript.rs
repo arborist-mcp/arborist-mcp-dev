@@ -356,6 +356,81 @@ fn unresolved_named_module_binding(imported_name: &str) -> JavaScriptImportBindi
     }
 }
 
+/// Resolves the binding that defines `member_name` when it is accessed as a
+/// member of `module_path`'s namespace object. Direct named exports resolve to
+/// the module itself; named re-export and star re-export chains are followed
+/// transitively with cycle detection. The returned binding's `imported_name`
+/// is the member's local name in its defining module so aliased re-exports
+/// resolve to the right symbol. `None` means the member is not exported or the
+/// chain is broken, ambiguous, or cyclic; both cases fail closed for namespace
+/// member lookup.
+pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
+    module_path: &str,
+    member_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaScriptImportBinding>> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving JavaScript/TypeScript namespace member")?;
+    }
+    // A namespace object exposes the module's default export under the name
+    // `default`; default-member usage stays deferred alongside bare namespace
+    // usage.
+    if member_name == "default" {
+        return Ok(None);
+    }
+    let module_context = javascript_import_context_from_cache(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    let mut resolution_stack = BTreeSet::new();
+    if let Some(reexport_binding) = module_context.named_reexport_bindings.get(member_name) {
+        let resolved = resolve_named_module_binding(
+            reexport_binding.clone(),
+            file_overrides,
+            contexts_by_file,
+            deadline,
+            &mut resolution_stack,
+        )?;
+        if resolved.unresolved || resolved.module_paths.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(resolved));
+    }
+    if module_context.named_export_names.contains(member_name) {
+        return Ok(Some(JavaScriptImportBinding {
+            imported_name: member_name.to_owned(),
+            module_paths: BTreeSet::from([module_path.to_owned()]),
+            unresolved: false,
+        }));
+    }
+    if module_context.star_reexport_module_paths.is_empty() {
+        return Ok(None);
+    }
+    match resolve_star_reexported_module_paths(
+        module_path,
+        member_name,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+        &mut resolution_stack,
+    )? {
+        // Multiple defining modules make the star re-export ambiguous; fail
+        // closed instead of guessing.
+        StarReexportLookup::Found(paths) if paths.len() == 1 => Ok(Some(JavaScriptImportBinding {
+            imported_name: member_name.to_owned(),
+            module_paths: paths,
+            unresolved: false,
+        })),
+        StarReexportLookup::Found(_)
+        | StarReexportLookup::Absent
+        | StarReexportLookup::Unresolved => Ok(None),
+    }
+}
+
 fn javascript_import_context_from_cache(
     file_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -384,6 +459,7 @@ mod tests {
     use super::{
         javascript_import_context_for_file_with_overrides_and_deadline,
         resolve_javascript_named_import_binding_for_reference,
+        resolve_javascript_namespace_member_binding,
     };
     use crate::language::normalize_path;
 
@@ -884,6 +960,181 @@ mod tests {
         .expect("named import should be recorded");
         assert!(binding.unresolved);
         assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_direct_export_to_module() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-member-direct-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let overrides = BTreeMap::from([(
+            normalize_path(&module),
+            "export function helper() {}\n".to_owned(),
+        )]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("direct export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_through_star_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-member-star-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&module),
+                "export * from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("star re-export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_through_named_reexport_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-member-alias-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&module),
+                "export { helper as other } from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "other",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("aliased named re-export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_member_ambiguous_star_reexports_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-member-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let first = root.join("first.ts");
+        let second = root.join("second.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&module),
+                "export * from \"./first\";\nexport * from \"./second\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&first),
+                "export function helper() {}\n".to_owned(),
+            ),
+            (
+                normalize_path(&second),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "ambiguous star re-exports must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_member_non_exported_symbols_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-member-nonexported-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let overrides =
+            BTreeMap::from([(normalize_path(&module), "function helper() {}\n".to_owned())]);
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(binding.is_none(), "non-exported members must fail closed");
         let _ = fs::remove_dir_all(root);
     }
 }
