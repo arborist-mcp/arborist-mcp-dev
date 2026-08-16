@@ -1891,4 +1891,123 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn resolves_typescript_import_equals_namespace_member_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-import-equals-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "function helper() {}\nmodule.exports = { helper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert!(!binding.unresolved);
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals namespace member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_typescript_import_equals_namespace_object_call_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-import-equals-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(&helper, "module.exports = function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "import fn = require(\"./helper.cjs\");\nexport function caller() { return fn(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "fn",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        let callable = resolve_javascript_namespace_object_call_binding(
+            binding.module_paths.iter().next().unwrap(),
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals namespace-object call should resolve");
+        assert_eq!(callable.imported_name, "helper");
+        assert_eq!(
+            callable.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_typescript_import_equals_missing_modules_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-import-equals-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        fs::write(
+            &caller,
+            "import ns = require(\"./missing\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("missing import-equals binding still records a binding");
+        assert!(binding.unresolved);
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
 }
