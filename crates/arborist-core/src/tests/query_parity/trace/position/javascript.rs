@@ -1332,7 +1332,7 @@ fn traces_javascript_require_namespace_member_call_edge_to_commonjs_object_expor
 }
 
 #[test]
-fn keeps_javascript_require_aliased_commonjs_object_exports_fail_closed() {
+fn traces_javascript_require_aliased_commonjs_object_export_namespace_member_call_edge() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cjs");
     let caller = dir.join("caller.ts");
@@ -1349,9 +1349,7 @@ fn keeps_javascript_require_aliased_commonjs_object_exports_fail_closed() {
     .unwrap();
 
     let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
-    assert!(
-        live.callees.is_empty(),
-        "aliased CommonJS object exports must fail closed, callees: {:?}",
-        live.callees
-    );
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "localHelper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&helper));
 }

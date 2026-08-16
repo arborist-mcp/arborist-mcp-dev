@@ -273,15 +273,40 @@ fn collect_javascript_star_reexport_module_paths(
 /// Collects the names a module source declares as direct named exports:
 /// declaration exports (`export function foo`, `export const foo`,
 /// `export class Foo`, TypeScript `export interface Foo`/`export type Foo`),
-/// and `export { foo }` / `export { foo as bar }` clauses without a source.
-/// Re-export forms (`export ... from "./module"`) and default exports are not
-/// direct named exports and are excluded.
+/// `export { foo }` / `export { foo as bar }` clauses without a source, and
+/// CommonJS `module.exports = { ... }` object-literal properties that name a
+/// local identifier. Re-export forms (`export ... from "./module"`) and
+/// default exports are not direct named exports and are excluded.
 pub(crate) fn javascript_named_export_names(
     root: Node<'_>,
     source: &str,
     check: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<BTreeSet<String>> {
+    Ok(javascript_direct_export_facts(root, source, check)?.0)
+}
+
+/// Collects the exported-name to local-name mappings for aliased direct
+/// exports: `export { local as exported }` clauses and CommonJS
+/// `module.exports = { exported: local }` pairs whose value is a local
+/// identifier. Namespace member resolution uses these so `ns.exported(...)`
+/// resolves to the declaring local symbol.
+pub(crate) fn javascript_export_local_names(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeMap<String, String>> {
+    Ok(javascript_direct_export_facts(root, source, check)?.1)
+}
+
+/// Walks top-level statements once, collecting the direct named export names
+/// and their exported-name to local-name alias mappings in a single pass.
+fn javascript_direct_export_facts(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<(BTreeSet<String>, BTreeMap<String, String>)> {
     let mut names = BTreeSet::new();
+    let mut local_names = BTreeMap::new();
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
@@ -289,9 +314,9 @@ pub(crate) fn javascript_named_export_names(
         }
         if statement.kind() == "expression_statement" {
             // CommonJS `module.exports = { ... }` object literals export their
-            // shorthand/same-named property names; other assignment shapes
-            // fail closed in commonjs_object_export_names.
-            names.extend(commonjs_object_export_names(statement, source)?);
+            // identifier-valued property names; other assignment shapes fail
+            // closed in commonjs_object_export_facts.
+            commonjs_object_export_facts(statement, source, &mut names, &mut local_names)?;
             continue;
         }
         if statement.kind() != "export_statement" {
@@ -310,14 +335,21 @@ pub(crate) fn javascript_named_export_names(
                 if specifier.kind() != "export_specifier" {
                     continue;
                 }
-                let exported_node = specifier
-                    .child_by_field_name("alias")
-                    .or_else(|| specifier.child_by_field_name("name"));
+                let local_node = specifier.child_by_field_name("name");
+                let exported_node = specifier.child_by_field_name("alias").or(local_node);
                 if let Some(exported_node) = exported_node
                     && let Ok(exported_name) = node_text(exported_node, source)
                     && !exported_name.trim().is_empty()
                 {
-                    names.insert(exported_name.trim().to_owned());
+                    let exported_name = exported_name.trim().to_owned();
+                    names.insert(exported_name.clone());
+                    if let Some(local_node) = local_node
+                        && let Ok(local_name) = node_text(local_node, source)
+                        && !local_name.trim().is_empty()
+                        && local_name.trim() != exported_name
+                    {
+                        local_names.insert(exported_name, local_name.trim().to_owned());
+                    }
                 }
             }
             continue;
@@ -359,44 +391,60 @@ pub(crate) fn javascript_named_export_names(
             names.extend(declared_names);
         }
     }
-    Ok(names)
+    Ok((names, local_names))
 }
 
-/// Collects the names a CommonJS module exports through a direct
-/// `module.exports = { ... }` object literal. Shorthand properties
-/// (`module.exports = { helper }`) and pairs whose value is a same-named
-/// identifier (`module.exports = { helper: helper }`) name an exported local
-/// symbol and resolve; aliased pairs, method definitions, computed and string
-/// keys, and non-object exports fail closed rather than guessing which local
-/// symbol a differently-named property exports.
-fn commonjs_object_export_names(statement: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
-    let mut names = BTreeSet::new();
+/// Records the names a CommonJS module exports through a direct
+/// `module.exports = { ... }` object literal, plus exported-name to local-name
+/// aliases for pairs whose value is a differently-named identifier. Shorthand
+/// properties (`module.exports = { helper }`), same-named pairs
+/// (`module.exports = { helper: helper }`), and aliased pairs
+/// (`module.exports = { helper: localHelper }`) name an exported local symbol;
+/// method definitions, computed and string keys, non-identifier values, and
+/// non-object exports fail closed rather than guessing which local symbol a
+/// differently-shaped property exports.
+fn commonjs_object_export_facts(
+    statement: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    local_names: &mut BTreeMap<String, String>,
+) -> Result<()> {
     let Some(assignment) = statement.named_child(0) else {
-        return Ok(names);
+        return Ok(());
     };
     if assignment.kind() != "assignment_expression" {
-        return Ok(names);
+        return Ok(());
     }
     let Some(left) = assignment.child_by_field_name("left") else {
-        return Ok(names);
+        return Ok(());
     };
     if !is_module_exports_member(left, source)? {
-        return Ok(names);
+        return Ok(());
     }
     let Some(right) = assignment.child_by_field_name("right") else {
-        return Ok(names);
+        return Ok(());
     };
     if right.kind() != "object" {
-        return Ok(names);
+        return Ok(());
     }
     let mut cursor = right.walk();
     for property in right.named_children(&mut cursor) {
-        let exported_name = match property.kind() {
-            "shorthand_property_identifier" => node_text(property, source)?.trim().to_owned(),
+        match property.kind() {
+            "shorthand_property_identifier" => {
+                let name = node_text(property, source)?.trim().to_owned();
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+            }
             "pair" => {
                 let Some(key) = property.child_by_field_name("key") else {
                     continue;
                 };
+                // Only static unquoted keys name a local symbol export;
+                // computed (`[name]`) and string (`"name"`) keys fail closed.
+                if key.kind() != "property_identifier" {
+                    continue;
+                }
                 let Some(value) = property.child_by_field_name("value") else {
                     continue;
                 };
@@ -405,20 +453,18 @@ fn commonjs_object_export_names(statement: Node<'_>, source: &str) -> Result<BTr
                 }
                 let key_name = node_text(key, source)?.trim().to_owned();
                 let local_name = node_text(value, source)?.trim().to_owned();
-                if key_name != local_name {
-                    // An aliased property exports a different local symbol;
-                    // resolving it needs name mapping and fails closed.
+                if key_name.is_empty() || local_name.is_empty() {
                     continue;
                 }
-                key_name
+                names.insert(key_name.clone());
+                if key_name != local_name {
+                    local_names.insert(key_name, local_name);
+                }
             }
-            _ => continue,
-        };
-        if !exported_name.is_empty() {
-            names.insert(exported_name);
+            _ => {}
         }
     }
-    Ok(names)
+    Ok(())
 }
 
 /// Returns whether `node` is a `module.exports` member expression.
@@ -1076,14 +1122,14 @@ fn is_javascript_family_source_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
 
     use anyhow::bail;
 
     use super::{
-        javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
-        javascript_named_export_names,
+        javascript_export_local_names, javascript_module_callable_export_local_name,
+        javascript_module_default_export_local_name, javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
         javascript_star_reexport_module_paths_with_overrides_and_check,
@@ -1701,17 +1747,16 @@ module.exports = { first: first, second };
     }
 
     #[test]
-    fn keeps_aliased_and_expression_object_exports_fail_closed() {
+    fn keeps_expression_and_non_object_exports_fail_closed() {
         for source in [
-            // Aliased pair exports a differently-named local symbol.
-            "module.exports = { helper: localHelper };\n",
-            // Method shorthand and computed/string keys are not same-named
-            // local symbol exports.
+            // Method shorthand and computed/string keys do not name a local
+            // identifier export.
             "module.exports = { helper() {} };\n",
             "module.exports = { [name]: helper };\n",
             "module.exports = { \"helper\": helper };\n",
-            // Non-object module.exports and unrelated assignments export
-            // nothing through this conservative path.
+            // Non-identifier values and non-object module.exports assignments
+            // export nothing through this conservative path.
+            "module.exports = { helper: function () {} };\n",
             "module.exports = helper;\n",
             "const value = 1;\n",
         ] {
@@ -1723,5 +1768,38 @@ module.exports = { first: first, second };
                 "source {source:?} must fail closed, names: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn collects_commonjs_object_export_local_aliases() {
+        let source = "module.exports = { helper: localHelper, plain };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(
+            names,
+            BTreeSet::from(["helper".to_string(), "plain".to_string()])
+        );
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
+        );
+    }
+
+    #[test]
+    fn collects_es_export_local_aliases() {
+        let source = "function localHelper() {}\nexport { localHelper as helper };\n";
+        let document = parse_document(Path::new("sample.ts"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(names, BTreeSet::from(["helper".to_string()]));
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
+        );
     }
 }

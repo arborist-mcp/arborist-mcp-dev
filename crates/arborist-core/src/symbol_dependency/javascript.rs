@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, javascript_named_export_names,
+    detect_language, javascript_export_local_names, javascript_named_export_names,
     javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
@@ -26,6 +26,11 @@ pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     pub(crate) named_reexport_bindings: BTreeMap<String, JavaScriptImportBinding>,
     pub(crate) star_reexport_module_paths: BTreeSet<String>,
     pub(crate) named_export_names: BTreeSet<String>,
+    /// Exported-name to local-name mappings for aliased direct exports
+    /// (`export { local as exported }` and CommonJS
+    /// `module.exports = { exported: local }`), so namespace members resolve
+    /// to the declaring local symbol.
+    pub(crate) export_local_names: BTreeMap<String, String>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -130,6 +135,11 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
         .map(|path| normalize_path(&path))
         .collect(),
         named_export_names: javascript_named_export_names(
+            document.tree.root_node(),
+            &source,
+            Some(&check_traversal_deadline),
+        )?,
+        export_local_names: javascript_export_local_names(
             document.tree.root_node(),
             &source,
             Some(&check_traversal_deadline),
@@ -520,8 +530,16 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
         }));
     }
     if module_context.named_export_names.contains(member_name) {
+        // Aliased direct exports (`export { local as exported }` and
+        // CommonJS `module.exports = { exported: local }`) resolve to the
+        // declaring local symbol so namespace members bind correctly.
+        let local_name = module_context
+            .export_local_names
+            .get(member_name)
+            .cloned()
+            .unwrap_or_else(|| member_name.to_owned());
         return Ok(Some(JavaScriptImportBinding {
-            imported_name: member_name.to_owned(),
+            imported_name: local_name,
             module_paths: BTreeSet::from([module_path.to_owned()]),
             unresolved: false,
         }));
@@ -1697,7 +1715,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_aliased_commonjs_object_exports_fail_closed_for_namespace_members() {
+    fn resolves_aliased_commonjs_object_export_namespace_members_to_local_symbols() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-require-alias-object-export-{}",
             std::process::id()
@@ -1733,10 +1751,12 @@ mod tests {
             &mut contexts,
             None,
         )
-        .unwrap();
-        assert!(
-            member.is_none(),
-            "aliased CommonJS object exports must fail closed"
+        .unwrap()
+        .expect("aliased CommonJS object export member should resolve");
+        assert_eq!(member.imported_name, "localHelper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
         );
         let _ = fs::remove_dir_all(root);
     }
