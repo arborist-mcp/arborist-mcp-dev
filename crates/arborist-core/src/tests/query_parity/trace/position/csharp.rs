@@ -41675,9 +41675,9 @@ class Derived<T> : Base<T> { }
     );
 }
 
-
 #[test]
-fn traces_csharp_cross_namespace_multi_hop_constructed_generic_inherited_static_factory_declaring_base_caller_edges_in_live_workspace_and_persisted_index() {
+fn traces_csharp_cross_namespace_multi_hop_constructed_generic_inherited_static_factory_declaring_base_caller_edges_in_live_workspace_and_persisted_index()
+ {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
     fs::write(
@@ -41832,5 +41832,175 @@ class Derived<T> : Mid<T> { }
         base_only_persisted_callers,
         vec!["Demo::Caller::DirectBaseOnly"],
         "Other::Base::BaseOnly persisted"
+    );
+}
+
+#[test]
+fn traces_csharp_cross_namespace_alias_outer_constructed_generic_nested_inherited_static_factory_declaring_base_caller_edges_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using OuterAlias = Other.Outer<HelperA>;
+class HelperA {
+    public int Run(int value) => value;
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Caller {
+    int NestedFactory() { return Other.Outer<HelperA>.Inner<HelperB>.Make().Run(1); }
+    int NestedFactoryAlias() { return OuterAlias.Inner<HelperB>.Make().Run(1); }
+    int NestedFactoryAliasVar() { var h = OuterAlias.Inner<HelperB>.Make(); return h.Run(1); }
+    int NestedVoid() { Other.Outer<HelperA>.Inner<HelperB>.VoidMethod(); return 1; }
+    int NestedVoidAlias() { OuterAlias.Inner<HelperB>.VoidMethod(); return 1; }
+    int FailClosedMissing() { return OuterAlias.Inner<HelperB>.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class Base<U> {
+    protected static U Make() => default;
+    protected static void VoidMethod() { }
+}
+class Outer<T> {
+    public class Inner<U> : Base<U> { }
+}
+",
+    )
+    .unwrap();
+
+    // A file-scoped alias to a cross-namespace constructed generic outer
+    // type (`using OuterAlias = Other.Outer<HelperA>;`) with a constructed
+    // generic nested type (`OuterAlias.Inner<HelperB>`) dispatches inherited
+    // static factories and methods through the nested type's unique
+    // class/record ancestor chain, so both the direct dotted spelling
+    // (`Other.Outer<HelperA>.Inner<HelperB>.Make()`) and the alias spelling
+    // pin the declaring base method's caller graph (`Other::Base::Make`,
+    // `Other::Base::VoidMethod`), and the factory's substituted return type
+    // (`HelperB`) dispatches the trailing member chain for both spellings,
+    // including a `var` initializer; a member the chain does not declare
+    // (`OuterAlias.Inner<HelperB>.Missing()`) fails closed.
+    let base_make_live =
+        trace_symbol_graph(&dir, "Other::Base::Make", TraceDirection::Callers).unwrap();
+    let mut make_callers = base_make_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    make_callers.sort();
+    assert_eq!(
+        make_callers,
+        vec![
+            "Demo::Caller::NestedFactory",
+            "Demo::Caller::NestedFactoryAlias",
+            "Demo::Caller::NestedFactoryAliasVar",
+        ],
+        "Other::Base::Make live"
+    );
+
+    let void_live =
+        trace_symbol_graph(&dir, "Other::Base::VoidMethod", TraceDirection::Callers).unwrap();
+    let mut void_callers = void_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    void_callers.sort();
+    assert_eq!(
+        void_callers,
+        vec!["Demo::Caller::NestedVoid", "Demo::Caller::NestedVoidAlias",],
+        "Other::Base::VoidMethod live"
+    );
+
+    let helper_b_run_live =
+        trace_symbol_graph(&dir, "Demo::HelperB::Run", TraceDirection::Callers).unwrap();
+    let mut helper_b_callers = helper_b_run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    helper_b_callers.sort();
+    assert_eq!(
+        helper_b_callers,
+        vec![
+            "Demo::Caller::NestedFactory",
+            "Demo::Caller::NestedFactoryAlias",
+            "Demo::Caller::NestedFactoryAliasVar",
+        ],
+        "Demo::HelperB::Run live"
+    );
+    assert!(
+        !helper_b_run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Demo::HelperB::Run live unexpected FailClosedMissing"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let base_make_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Base::Make", TraceDirection::Callers)
+            .unwrap();
+    let mut make_persisted_callers = base_make_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    make_persisted_callers.sort();
+    assert_eq!(
+        make_persisted_callers,
+        vec![
+            "Demo::Caller::NestedFactory",
+            "Demo::Caller::NestedFactoryAlias",
+            "Demo::Caller::NestedFactoryAliasVar",
+        ],
+        "Other::Base::Make persisted"
+    );
+
+    let void_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Base::VoidMethod", TraceDirection::Callers)
+            .unwrap();
+    let mut void_persisted_callers = void_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    void_persisted_callers.sort();
+    assert_eq!(
+        void_persisted_callers,
+        vec!["Demo::Caller::NestedVoid", "Demo::Caller::NestedVoidAlias",],
+        "Other::Base::VoidMethod persisted"
+    );
+
+    let helper_b_run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperB::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut helper_b_persisted_callers = helper_b_run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    helper_b_persisted_callers.sort();
+    assert_eq!(
+        helper_b_persisted_callers,
+        vec![
+            "Demo::Caller::NestedFactory",
+            "Demo::Caller::NestedFactoryAlias",
+            "Demo::Caller::NestedFactoryAliasVar",
+        ],
+        "Demo::HelperB::Run persisted"
+    );
+    assert!(
+        !helper_b_run_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Demo::HelperB::Run persisted unexpected FailClosedMissing"
     );
 }
