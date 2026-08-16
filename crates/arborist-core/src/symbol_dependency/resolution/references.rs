@@ -5892,8 +5892,22 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         // defer to a longer type prefix that may name a nested type.
         let member_owner = {
             let mut current_type_symbol = type_symbol;
-            let mut current_generic_arguments = Vec::new();
-            let mut current_enclosing_generic_arguments = Vec::new();
+            // A type prefix resolved through the receiver rules (a type alias
+            // or a constructed generic spelling) seeds the inheritance walk
+            // with its concrete generic arguments, so `Alias.StaticField`
+            // with `using Alias = Demo.Derived<HelperA>;` and
+            // `Base<U>::StaticField` substitutes the alias target's argument
+            // into the field's declared type; prefixes resolved as plain
+            // declared types keep empty arguments and fail closed for
+            // parameter-dependent members.
+            let mut current_generic_arguments = receiver_binding
+                .as_ref()
+                .map(|binding| binding.generic_arguments.clone())
+                .unwrap_or_default();
+            let mut current_enclosing_generic_arguments = receiver_binding
+                .as_ref()
+                .map(|binding| binding.enclosing_generic_arguments.clone())
+                .unwrap_or_default();
             let mut visited_type_paths = BTreeSet::new();
             let mut found = None;
             loop {
