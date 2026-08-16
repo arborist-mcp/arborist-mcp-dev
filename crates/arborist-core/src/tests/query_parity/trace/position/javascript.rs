@@ -1722,3 +1722,91 @@ fn keeps_javascript_namespace_default_member_call_to_cjs_callable_fail_closed() 
         live.callees
     );
 }
+
+#[test]
+fn keeps_javascript_shadowed_exports_alias_member_calls_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+            &helper,
+            "function helper(value) { return value + 1; }\nfunction app() {}\nexports.helper = helper;\nmodule.exports = app;\n",
+        )
+        .unwrap();
+    fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller(value: number): number { return ns.helper(value); }\n",
+        )
+        .unwrap();
+
+    let position = Position { row: 0, column: 16 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert!(
+        live.callers.is_empty(),
+        "shadowed exports alias members must not resolve, callers: {:?}",
+        live.callers
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert!(
+        persisted.callers.is_empty(),
+        "persisted shadowed exports alias members must not resolve, callers: {:?}",
+        persisted.callers
+    );
+}
+
+#[test]
+fn traces_javascript_module_exports_attached_member_call_edge_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+            &helper,
+            "function app() {}\nfunction extraFn(value) { return value + 1; }\nmodule.exports = app;\nmodule.exports.extra = extraFn;\n",
+        )
+        .unwrap();
+    fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller(value: number): number { return ns.extra(value); }\n",
+        )
+        .unwrap();
+
+    let position = Position { row: 1, column: 20 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "extraFn");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "extraFn");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}

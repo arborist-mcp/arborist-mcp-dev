@@ -2681,4 +2681,191 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn keeps_shadowed_exports_alias_members_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-exports-shadow-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        // The `module.exports = app` replacement abandons the `exports`
+        // alias, so `exports.helper` never reaches the exported object and
+        // namespace member lookups for it must fail closed.
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value; }\nfunction app() {}\nexports.helper = helper;\nmodule.exports = app;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./impl.cjs\");\nexport function caller() { return ns.helper(1); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap();
+        assert!(
+            member.is_none(),
+            "shadowed exports alias members must fail closed, member: {member:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_module_exports_members_attached_after_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-attached-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        // The express-style pattern attaches members onto the final callable
+        // `module.exports` object, so those members are real namespace exports.
+        fs::write(
+            &impl_path,
+            "function app() {}\nfunction extraFn(value) { return value; }\nmodule.exports = app;\nmodule.exports.extra = extraFn;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./impl.cjs\");\nexport function caller() { return ns.extra(1); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "extra",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("attached member should resolve");
+        assert_eq!(member.imported_name, "extraFn");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_pre_replacement_module_exports_members_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-pre-replacement-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        // `module.exports.extra` runs before the final replacement, so it
+        // mutates an object that gets replaced and must fail closed.
+        fs::write(
+            &impl_path,
+            "function app() {}\nfunction extraFn(value) { return value; }\nmodule.exports.extra = extraFn;\nmodule.exports = app;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./impl.cjs\");\nexport function caller() { return ns.extra(1); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "extra",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap();
+        assert!(
+            member.is_none(),
+            "pre-replacement member assignments must fail closed, member: {member:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_cjs_default_member_attached_after_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-default-attached-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nfunction app() {}\nmodule.exports = app;\nmodule.exports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import helper from \"./impl.cjs\";\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import binding should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        assert_eq!(
+            resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
+                .unwrap(),
+            Some("helper".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
