@@ -304,6 +304,55 @@ pub(crate) fn javascript_export_local_names(
     Ok(javascript_direct_export_facts(root, source, check)?.1)
 }
 
+/// Returns the byte offset of the last top-level `module.exports = <value>`
+/// replacement assignment, or `None` when the module never reassigns
+/// `module.exports`. Once any replacement runs, the `exports` alias keeps
+/// pointing at the original object, so member assignments on it no longer
+/// reach the exported object, and the final replacement also shadows any
+/// export object it replaced.
+fn last_javascript_module_exports_replacement(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<Option<usize>> {
+    let mut last = None;
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if statement.kind() != "expression_statement" {
+            continue;
+        }
+        let Some(expression) = statement.named_child(0) else {
+            continue;
+        };
+        if expression.kind() != "assignment_expression"
+            || !is_javascript_module_exports_assignment(expression, source)?
+        {
+            continue;
+        }
+        last = Some(statement.start_byte());
+    }
+    Ok(last)
+}
+
+/// Returns whether `statement` is a top-level `module.exports = <value>`
+/// replacement assignment.
+fn is_javascript_module_exports_replacement_statement(
+    statement: Node<'_>,
+    source: &str,
+) -> Result<bool> {
+    if statement.kind() != "expression_statement" {
+        return Ok(false);
+    }
+    let Some(expression) = statement.named_child(0) else {
+        return Ok(false);
+    };
+    Ok(expression.kind() == "assignment_expression"
+        && is_javascript_module_exports_assignment(expression, source)?)
+}
+
 /// Walks top-level statements once, collecting the direct named export names
 /// and their exported-name to local-name alias mappings in a single pass.
 fn javascript_direct_export_facts(
@@ -313,6 +362,15 @@ fn javascript_direct_export_facts(
 ) -> Result<(BTreeSet<String>, BTreeMap<String, String>)> {
     let mut names = BTreeSet::new();
     let mut local_names = BTreeMap::new();
+    // A top-level `module.exports = <value>` replacement abandons the
+    // `exports` alias and any export object it replaced. `exports.*` member
+    // assignments therefore never reach the exported object once a
+    // replacement exists, and object-literal or `module.exports.*` member
+    // exports that precede the final replacement are shadowed; only
+    // `module.exports.*` member assignments after the final replacement
+    // attach to the exported object.
+    let last_module_exports_replacement =
+        last_javascript_module_exports_replacement(root, source, check)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
@@ -323,9 +381,23 @@ fn javascript_direct_export_facts(
             // identifier-valued property names, and `exports.name = ...` /
             // `module.exports.name = ...` member assignments export the
             // assigned local symbol; other assignment shapes fail closed in
-            // the helpers below.
-            commonjs_object_export_facts(statement, source, &mut names, &mut local_names)?;
-            commonjs_exports_member_export_facts(statement, source, &mut names, &mut local_names)?;
+            // the helpers below. A `module.exports = <value>` replacement
+            // shadows the `exports` alias and earlier export objects, so only
+            // the final replacement's object exports and the member
+            // assignments that attach to it survive.
+            if is_javascript_module_exports_replacement_statement(statement, source)? {
+                if Some(statement.start_byte()) == last_module_exports_replacement {
+                    commonjs_object_export_facts(statement, source, &mut names, &mut local_names)?;
+                }
+            } else {
+                commonjs_exports_member_export_facts(
+                    statement,
+                    source,
+                    last_module_exports_replacement,
+                    &mut names,
+                    &mut local_names,
+                )?;
+            }
             continue;
         }
         if statement.kind() != "export_statement" {
@@ -489,6 +561,7 @@ fn commonjs_object_export_facts(
 fn commonjs_exports_member_export_facts(
     statement: Node<'_>,
     source: &str,
+    last_module_exports_replacement: Option<usize>,
     names: &mut BTreeSet<String>,
     local_names: &mut BTreeMap<String, String>,
 ) -> Result<()> {
@@ -510,10 +583,24 @@ fn commonjs_exports_member_export_facts(
     // Only `exports.name` and `module.exports.name` mutate the exported
     // namespace; other member objects (and `exports[name]` / `exports["name"]`
     // which parse as subscript expressions) fail closed.
-    let is_exports_object = (object.kind() == "identifier"
-        && node_text(object, source)?.trim() == "exports")
-        || is_module_exports_member(object, source)?;
-    if !is_exports_object {
+    // A top-level `module.exports = <value>` replacement abandons the
+    // `exports` alias, so `exports.name = ...` assignments never reach the
+    // exported object and must not count as exports; they fail closed instead
+    // of guessing. `module.exports.name = ...` assignments attach to the
+    // export object only when they run after the final replacement; earlier
+    // ones mutate an object that gets replaced.
+    let is_exports_alias =
+        object.kind() == "identifier" && node_text(object, source)?.trim() == "exports";
+    let is_module_exports_object = is_module_exports_member(object, source)?;
+    if !is_exports_alias && !is_module_exports_object {
+        return Ok(());
+    }
+    if is_exports_alias && last_module_exports_replacement.is_some() {
+        return Ok(());
+    }
+    if is_module_exports_object
+        && last_module_exports_replacement.is_some_and(|offset| statement.start_byte() < offset)
+    {
         return Ok(());
     }
     let Some(property) = left.child_by_field_name("property") else {
@@ -690,25 +777,27 @@ pub(crate) fn javascript_module_default_export_local_name(
 ) -> Result<Option<String>> {
     let mut esm_names = BTreeSet::new();
     let mut cjs_default_names = BTreeSet::new();
-    let mut has_module_exports_replacement = false;
+    let last_module_exports_replacement =
+        last_javascript_module_exports_replacement(root, source, None)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if statement.kind() == "expression_statement" {
             // A top-level `module.exports = <value>` assignment replaces the
             // exported object; the `exports` alias keeps pointing at the old
-            // object, so any `exports.*` / `module.exports.*` member
-            // assignments are shadowed and must not count as exports.
-            if let Some(expression) = statement.named_child(0)
-                && expression.kind() == "assignment_expression"
-                && is_javascript_module_exports_assignment(expression, source)?
-            {
-                has_module_exports_replacement = true;
+            // object, so `exports.default` member assignments no longer reach
+            // the exported object and `module.exports.default` assignments
+            // only count when they attach to the final replacement.
+            if is_javascript_module_exports_replacement_statement(statement, source)? {
                 continue;
             }
             // CommonJS `exports.default = helper` / `module.exports.default =
             // helper` member assignments expose a `default` member equivalent
             // to the module's default export for interop consumers.
-            if let Some(name) = javascript_cjs_default_member_assigned_name(statement, source)? {
+            if let Some(name) = javascript_cjs_default_member_assigned_name(
+                statement,
+                source,
+                last_module_exports_replacement,
+            )? {
                 cjs_default_names.insert(name);
             }
             continue;
@@ -721,9 +810,7 @@ pub(crate) fn javascript_module_default_export_local_name(
         }
     }
     let mut names = esm_names;
-    if !has_module_exports_replacement {
-        names.extend(cjs_default_names);
-    }
+    names.extend(cjs_default_names);
     // A module may declare at most one default export; anything else fails
     // closed instead of guessing.
     Ok((names.len() == 1)
@@ -739,6 +826,7 @@ pub(crate) fn javascript_module_default_export_local_name(
 fn javascript_cjs_default_member_assigned_name(
     statement: Node<'_>,
     source: &str,
+    last_module_exports_replacement: Option<usize>,
 ) -> Result<Option<String>> {
     let expression = if statement.kind() == "expression_statement" {
         statement.named_child(0)
@@ -762,11 +850,22 @@ fn javascript_cjs_default_member_assigned_name(
     };
     // Only `exports.default` and `module.exports.default` mutate the exported
     // namespace's default member; other member objects (and `exports["default"]`
-    // which parses as a subscript expression) fail closed.
-    let is_exports_object = (object.kind() == "identifier"
-        && node_text(object, source)?.trim() == "exports")
-        || is_module_exports_member(object, source)?;
-    if !is_exports_object {
+    // which parses as a subscript expression) fail closed. A `module.exports =
+    // <value>` replacement abandons the `exports` alias, and `module.exports`
+    // member assignments only attach to the final export object when they run
+    // after the replacement, so shadowed defaults name no symbol.
+    let is_exports_alias =
+        object.kind() == "identifier" && node_text(object, source)?.trim() == "exports";
+    let is_module_exports_object = is_module_exports_member(object, source)?;
+    if !is_exports_alias && !is_module_exports_object {
+        return Ok(None);
+    }
+    if is_exports_alias && last_module_exports_replacement.is_some() {
+        return Ok(None);
+    }
+    if is_module_exports_object
+        && last_module_exports_replacement.is_some_and(|offset| statement.start_byte() < offset)
+    {
         return Ok(None);
     }
     let Some(property) = left.child_by_field_name("property") else {
@@ -2072,21 +2171,25 @@ const escaped = require("./escaped\\name");
     }
 
     #[test]
-    fn collects_commonjs_object_export_names_conservatively() {
-        let source = r#"
-module.exports = { helper };
-module.exports = { first: first, second };
-"#;
+    fn collects_final_commonjs_object_export_names_conservatively() {
+        // The final `module.exports = { ... }` replacement shadows any export
+        // object it replaced, so only the final object's properties survive;
+        // aliased pairs still map through the exported-name to local-name
+        // mapping.
+        let source =
+            "module.exports = { helper };\nmodule.exports = { first: localFirst, second };\n";
         let document = parse_document(Path::new("sample.cjs"), source).unwrap();
 
         let names = javascript_named_export_names(document.tree.root_node(), source, None).unwrap();
         assert_eq!(
             names,
-            BTreeSet::from([
-                "first".to_string(),
-                "helper".to_string(),
-                "second".to_string(),
-            ])
+            BTreeSet::from(["first".to_string(), "second".to_string()])
+        );
+        let local_names =
+            javascript_export_local_names(document.tree.root_node(), source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("first".to_string(), "localFirst".to_string())])
         );
     }
 
@@ -2205,6 +2308,93 @@ exports.Klass = class Klass {};
                 "source {source:?} must fail closed, local_names: {local_names:?}"
             );
         }
+    }
+
+    #[test]
+    fn shadows_exports_alias_members_after_module_exports_replacement() {
+        // A `module.exports = <value>` replacement abandons the `exports`
+        // alias, so `exports.*` member assignments (before or after the
+        // replacement) never reach the exported object and fail closed.
+        for source in [
+            "exports.helper = helper;\nmodule.exports = app;\n",
+            "module.exports = app;\nexports.helper = helper;\n",
+        ] {
+            let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+            let root = document.tree.root_node();
+            let names = javascript_named_export_names(root, source, None).unwrap();
+            assert!(
+                names.is_empty(),
+                "source {source:?} must fail closed, names: {names:?}"
+            );
+            let local_names = javascript_export_local_names(root, source, None).unwrap();
+            assert!(
+                local_names.is_empty(),
+                "source {source:?} must fail closed, local_names: {local_names:?}"
+            );
+        }
+        // The replacement's own object exports survive; only the abandoned
+        // `exports` alias members are shadowed.
+        let source = "exports.helper = helper;\nmodule.exports = { app };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(names, BTreeSet::from(["app".to_string()]));
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert!(local_names.is_empty());
+    }
+
+    #[test]
+    fn keeps_module_exports_member_assignments_attached_after_final_replacement() {
+        // The express-style pattern assigns members onto the final
+        // `module.exports` object after the callable replacement, so those
+        // members are real exports; assignments before the final replacement
+        // mutate an object that gets replaced and fail closed.
+        let express = "function app() {}\nfunction extraFn() {}\nmodule.exports = app;\nmodule.exports.extra = extraFn;\n";
+        let document = parse_document(Path::new("sample.cjs"), express).unwrap();
+        let root = document.tree.root_node();
+        let names = javascript_named_export_names(root, express, None).unwrap();
+        assert_eq!(names, BTreeSet::from(["extra".to_string()]));
+        let local_names = javascript_export_local_names(root, express, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("extra".to_string(), "extraFn".to_string())])
+        );
+
+        let shadowed = "function app() {}\nfunction extraFn() {}\nmodule.exports.extra = extraFn;\nmodule.exports = app;\n";
+        let document = parse_document(Path::new("sample.cjs"), shadowed).unwrap();
+        let root = document.tree.root_node();
+        let names = javascript_named_export_names(root, shadowed, None).unwrap();
+        assert!(
+            names.is_empty(),
+            "pre-replacement member assignments must fail closed, names: {names:?}"
+        );
+        let local_names = javascript_export_local_names(root, shadowed, None).unwrap();
+        assert!(local_names.is_empty());
+    }
+
+    #[test]
+    fn shadows_default_member_before_and_keeps_default_member_after_replacement() {
+        // `exports.default` is abandoned with the `exports` alias once a
+        // replacement exists, while `module.exports.default` attaches to the
+        // final export object when assigned after the replacement.
+        let shadowed = "function helper() {}\nfunction app() {}\nexports.default = helper;\nmodule.exports = app;\n";
+        let document = parse_document(Path::new("sample.cjs"), shadowed).unwrap();
+        let root = document.tree.root_node();
+        assert_eq!(
+            javascript_module_default_export_local_name(root, shadowed).unwrap(),
+            None,
+            "shadowed exports.default must not name the default export"
+        );
+
+        let attached =
+            "function helper() {}\nmodule.exports = app;\nmodule.exports.default = helper;\n";
+        let document = parse_document(Path::new("sample.cjs"), attached).unwrap();
+        let root = document.tree.root_node();
+        assert_eq!(
+            javascript_module_default_export_local_name(root, attached).unwrap(),
+            Some("helper".to_owned()),
+            "module.exports.default after the final replacement names the default"
+        );
     }
 
     #[test]
