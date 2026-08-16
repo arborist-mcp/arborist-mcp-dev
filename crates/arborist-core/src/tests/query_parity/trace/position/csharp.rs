@@ -41535,3 +41535,142 @@ class Outer<T> {
         "Demo::HelperA::Run persisted unexpected FailClosedMissing"
     );
 }
+
+#[test]
+fn traces_csharp_cross_namespace_direct_constructed_generic_inherited_static_factory_declaring_base_caller_edges_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using OtherAlias = Other.Derived<HelperA>;
+class HelperA {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+}
+class Derived<T> : Base<T> { }
+class Caller {
+    int SameNsDirectMake() { return Derived<HelperA>.Make().Run(1); }
+    int SameNsDirectMakeVar() { var h = Derived<HelperA>.Make(); return h.Run(1); }
+    int CrossNsDirectMake() { return Other.Derived<HelperA>.Make().Run(1); }
+    int CrossNsDirectMakeVar() { var h = Other.Derived<HelperA>.Make(); return h.Run(1); }
+    int AliasMake() { return OtherAlias.Make().Run(1); }
+    int AliasMakeVar() { var h = OtherAlias.Make(); return h.Run(1); }
+    int FailClosedMissing() { return Other.Derived<HelperA>.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class HelperB { public int Run(int value) => value; }
+class Base<U> {
+    protected static U Make() => default;
+}
+class Derived<T> : Base<T> { }
+",
+    )
+    .unwrap();
+
+    // A constructed generic static factory spelled directly on a
+    // cross-namespace type (`Other.Derived<HelperA>.Make()`) and through a
+    // file-scoped alias (`OtherAlias.Make()`) both dispatch the inherited
+    // static factory to its nearest declaring class ancestor, so the
+    // declaring base method's caller graph includes both the direct and the
+    // alias spellings (including `var` initializers) while a same-namespace
+    // direct spelling resolves to its own base chain; a member the base
+    // chain does not declare (`Other.Derived<HelperA>.Missing()`) fails
+    // closed.
+    let cross_base_make_live =
+        trace_symbol_graph(&dir, "Other::Base::Make", TraceDirection::Callers).unwrap();
+    let mut cross_callers = cross_base_make_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    cross_callers.sort();
+    assert_eq!(
+        cross_callers,
+        vec![
+            "Demo::Caller::AliasMake",
+            "Demo::Caller::AliasMakeVar",
+            "Demo::Caller::CrossNsDirectMake",
+            "Demo::Caller::CrossNsDirectMakeVar",
+        ],
+        "Other::Base::Make live"
+    );
+    assert!(
+        !cross_base_make_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Other::Base::Make live unexpected FailClosedMissing"
+    );
+
+    let same_base_make_live =
+        trace_symbol_graph(&dir, "Demo::Base::Make", TraceDirection::Callers).unwrap();
+    let mut same_callers = same_base_make_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    same_callers.sort();
+    assert_eq!(
+        same_callers,
+        vec![
+            "Demo::Caller::SameNsDirectMake",
+            "Demo::Caller::SameNsDirectMakeVar",
+        ],
+        "Demo::Base::Make live"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let cross_base_make_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Base::Make", TraceDirection::Callers)
+            .unwrap();
+    let mut cross_persisted_callers = cross_base_make_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    cross_persisted_callers.sort();
+    assert_eq!(
+        cross_persisted_callers,
+        vec![
+            "Demo::Caller::AliasMake",
+            "Demo::Caller::AliasMakeVar",
+            "Demo::Caller::CrossNsDirectMake",
+            "Demo::Caller::CrossNsDirectMakeVar",
+        ],
+        "Other::Base::Make persisted"
+    );
+    assert!(
+        !cross_base_make_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "Other::Base::Make persisted unexpected FailClosedMissing"
+    );
+
+    let same_base_make_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Base::Make", TraceDirection::Callers)
+            .unwrap();
+    let mut same_persisted_callers = same_base_make_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    same_persisted_callers.sort();
+    assert_eq!(
+        same_persisted_callers,
+        vec![
+            "Demo::Caller::SameNsDirectMake",
+            "Demo::Caller::SameNsDirectMakeVar",
+        ],
+        "Demo::Base::Make persisted"
+    );
+}
