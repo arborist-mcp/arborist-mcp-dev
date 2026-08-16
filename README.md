@@ -38,7 +38,8 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   conservative direct-call tracing through local named imports, named re-export chains,
   default imports that name a module's default export, namespace member calls that
   follow the bound module's named and star re-export chains and default exports,
-  star re-export chains, static local dependency refresh, structural patching, and
+  namespace-object calls that resolve CommonJS callable exports, star re-export
+  chains, static local dependency refresh, structural patching, and
   queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
@@ -555,10 +556,10 @@ for response shapes, error behavior, and examples.
   semantic skeletons, conservative direct-call tracing through local named imports,
   named re-export chains, default imports that name a module's default export,
   namespace member calls that follow the bound module's named and star re-export
-  chains and default exports, star re-export chains for named imports, static
+  chains and default exports, namespace-object calls that resolve CommonJS
+  callable exports, star re-export chains for named imports, static
   local module dependency refresh, and structural patching with syntax-level
-  validation; direct namespace-object calls and language-specific
-  reference-binding validation remain deferred.
+  validation; language-specific reference-binding validation remains deferred.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
   It traces unshadowed bare direct calls to functions in the same source-file module, qualified direct
@@ -675,9 +676,7 @@ Remaining larger work includes:
 - Extending Kotlin trace resolution beyond conservative same-package, imported, and companion-object bindings,
   plus language-specific Kotlin patch binding validation, only after dedicated fixtures establish safe
   behavior.
-- Resolving direct JavaScript/TypeScript namespace-object calls
-  (`ns(...)`, CommonJS-interop only) plus language-specific patch binding
-  validation.
+- Language-specific JavaScript/TypeScript patch binding validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond overload-aware callable identities to

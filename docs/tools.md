@@ -29,7 +29,8 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   conservative direct-call tracing through local named imports, named re-export chains,
   default imports that name a module's default export, namespace member calls that
   follow the bound module's named and star re-export chains and default exports,
-  star re-export chains, static local dependency refresh, structural patching, and
+  namespace-object calls that resolve CommonJS callable exports, star re-export
+  chains, static local dependency refresh, structural patching, and
   queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
