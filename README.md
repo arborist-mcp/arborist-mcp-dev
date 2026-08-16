@@ -579,8 +579,10 @@ for response shapes, error behavior, and examples.
   file or in one matching production source in the same directory and package, plus unambiguous direct calls
   through local package imports using an explicit alias or the imported package's declared name, and calls through a
   named composite literal such as `Counter{}.Value()`, `(&Counter{}).Value()`, or `Box[int]{}.Value()` to one matching production method in the same local package; a direct named type-conversion receiver such as `Scalar(value).Value()`, `(*Scalar)(value).Value()`, `(Scalar)(value).Value()`, or `Box[int](value).Value()` when its base type is one unique same-package production `type` specification; a direct named type-assertion receiver such as `value.(Scalar).Value()` when `Scalar` is one unique same-package production `type` specification; a simple local alias receiver such as `type Alias = Counter; Alias{}.Value()`, `Alias(value).Value()`, or `value.(Alias).Value()` when its alias chain reaches one unique same-package production named `type` declaration without a cycle; or an unshadowed named local receiver, local-type parameter, or directly declared function-body local variable. If the conversion-shaped receiver name has no matching local type specification, it retains a direct factory-function dependency rather than guessing a method target. Same-package production sources refresh conservatively as a group. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags,
-  general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable;
-  patching remains capability-gated.
+  general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable.
+  Structural patching targets Go functions, methods, and type specifications and aliases by semantic
+  path or source position with syntax-level validation; language-specific patch binding validation
+  remains deferred.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
@@ -626,8 +628,9 @@ conservative declaration indexing, local module dependency refresh, conservative
 inline-module-qualified direct-call graph tracing, position identity, and structural patch
 targeting with syntax-level validation. Go now has parsing, raw
 Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
-static local-package dependency refresh under the nearest valid simple `go.mod` module path, and
-same-file bare plus unambiguous local-package imported-function direct-call graph tracing. Java
+static local-package dependency refresh under the nearest valid simple `go.mod` module path,
+same-file bare plus unambiguous local-package imported-function direct-call graph tracing, and
+structural patch targeting with syntax-level validation. Java
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for explicit local type imports, single-member `import static` imports, and
@@ -646,8 +649,9 @@ Remaining larger work includes:
 
 - Adding carefully-scoped Rust inline-module, Cargo, and import trace resolution beyond current
   bindings, plus language-specific Rust patch binding validation.
-- Extending Go package/import trace resolution beyond direct local function calls only after
-  dedicated fixtures establish safe behavior.
+- Extending Go package/import trace resolution beyond direct local function calls, plus
+  language-specific Go patch binding validation, only after dedicated fixtures establish safe
+  behavior.
 - Extending Java trace resolution beyond unique same-type calls and explicitly imported local static
   methods only after dedicated fixtures establish safe behavior.
 - Completing JavaScript/TypeScript default and namespace module resolution plus

@@ -58,8 +58,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `Counter{}.Value()`, `(&Counter{}).Value()`, or `Box[int]{}.Value()` to one matching production method in the
   same local package; a direct named type-conversion receiver such as `Scalar(value).Value()`, `(*Scalar)(value).Value()`, `(Scalar)(value).Value()`, or `Box[int](value).Value()` when its base type is one unique same-package production `type` specification; a direct named type-assertion receiver such as `value.(Scalar).Value()` when `Scalar` is one unique same-package production `type` specification; a simple local alias receiver such as `type Alias = Counter; Alias{}.Value()`, `Alias(value).Value()`, or `value.(Alias).Value()` when its alias chain reaches one unique same-package production named `type` declaration without a cycle; or an unshadowed named local receiver, local-type parameter, or directly declared function-body local variable. If the conversion-shaped receiver name has no matching local type specification, it retains a direct factory-function dependency rather than guessing a method target. Module-root imports, external
   modules, `replace`, `go.work`, vendoring, build tags,
-  general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable;
-  patch operations return explicit unsupported-operation errors.
+  general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable.
+  Structural patching targets Go functions, methods, and type specifications and aliases by semantic
+  path or source position with syntax-level validation; language-specific patch binding validation
+  remains deferred.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
