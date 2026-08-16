@@ -148,6 +148,18 @@ fn collect_javascript_named_import_module_paths(
                 imported_name == "<unsupported>",
             );
         }
+    } else if matches!(node.kind(), "lexical_declaration" | "variable_declaration") {
+        for (local_name, imported_name, module_path) in
+            javascript_require_declaration_bindings(node, path, source, file_overrides)?
+        {
+            insert_javascript_module_binding(
+                bindings,
+                local_name,
+                imported_name,
+                module_path,
+                false,
+            );
+        }
     }
 
     let mut cursor = node.walk();
@@ -803,6 +815,101 @@ fn collect_javascript_static_module_specifiers(
     Ok(())
 }
 
+/// Returns the `(local_name, imported_name, module_path)` bindings introduced
+/// by `const`/`let`/`var` declarations whose initializer is a direct
+/// `require("./module")` call. Identifier patterns bind the whole module
+/// namespace (`const ns = require(...)`); object patterns bind named members
+/// (`const { helper } = require(...)` and `const { helper: alias } = ...`).
+/// Dynamic require arguments, unsupported patterns, and unresolvable module
+/// specifiers fail closed: the caller records an unresolved binding.
+fn javascript_require_declaration_bindings(
+    node: Node<'_>,
+    path: &Path,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<Vec<(String, String, Option<PathBuf>)>> {
+    let mut bindings = Vec::new();
+    let mut cursor = node.walk();
+    for declarator in node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator")
+    {
+        let Some(value) = declarator.child_by_field_name("value") else {
+            continue;
+        };
+        if value.kind() != "call_expression" {
+            continue;
+        }
+        let Some(specifier) = direct_require_specifier(value, source)? else {
+            continue;
+        };
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(path, &specifier, file_overrides);
+        let Some(pattern) = declarator.child_by_field_name("name") else {
+            continue;
+        };
+        let mut pattern_bindings = Vec::new();
+        collect_require_pattern_bindings(pattern, source, &mut pattern_bindings)?;
+        for (local_name, imported_name) in pattern_bindings {
+            bindings.push((local_name, imported_name, module_path.clone()));
+        }
+    }
+    Ok(bindings)
+}
+
+/// Collects `(local_name, imported_name)` pairs from a variable declarator
+/// pattern bound to a `require` call. An identifier binds the module namespace
+/// (`"<namespace>"`); an object pattern binds each simple named member,
+/// keeping the imported spelling so aliases resolve to the right symbol.
+/// Defaults, rest elements, nested patterns, and array patterns are left
+/// unbound and fail closed.
+fn collect_require_pattern_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut Vec<(String, String)>,
+) -> Result<()> {
+    match node.kind() {
+        "identifier" => {
+            let local_name = node_text(node, source)?.trim().to_owned();
+            if !local_name.is_empty() {
+                bindings.push((local_name, "<namespace>".to_owned()));
+            }
+        }
+        "object_pattern" => {
+            let mut cursor = node.walk();
+            for member in node.named_children(&mut cursor) {
+                match member.kind() {
+                    "shorthand_property_identifier_pattern" => {
+                        let local_name = node_text(member, source)?.trim().to_owned();
+                        if !local_name.is_empty() {
+                            bindings.push((local_name.clone(), local_name));
+                        }
+                    }
+                    "pair_pattern" => {
+                        let Some(key) = member.child_by_field_name("key") else {
+                            continue;
+                        };
+                        let Some(value) = member.child_by_field_name("value") else {
+                            continue;
+                        };
+                        if value.kind() != "identifier" {
+                            continue;
+                        }
+                        let imported_name = node_text(key, source)?.trim().to_owned();
+                        let local_name = node_text(value, source)?.trim().to_owned();
+                        if !imported_name.is_empty() && !local_name.is_empty() {
+                            bindings.push((local_name, imported_name));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn direct_require_specifier(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(function) = node.child_by_field_name("function") else {
         return Ok(None);
@@ -1353,6 +1460,143 @@ const escaped = require("./escaped\\name");
             vec![helper_path]
         );
         assert!(!reexports.contains_key("other"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn binds_require_namespace_and_destructured_members_to_local_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-bindings-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let importer = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        let helper_path = helper.clone();
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source =
+            "const ns = require(\"./helper\");\nconst { helper, other } = require(\"./helper\");\n";
+        let document = parse_document(&importer, source).unwrap();
+
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let namespace = bindings.get("ns").expect("require namespace binding");
+        assert_eq!(namespace.imported_name, "<namespace>");
+        assert!(!namespace.unresolved);
+        assert_eq!(
+            namespace.module_paths,
+            BTreeSet::from([helper_path.clone()])
+        );
+        let destructured = bindings.get("helper").expect("require member binding");
+        assert_eq!(destructured.imported_name, "helper");
+        assert!(!destructured.unresolved);
+        assert_eq!(
+            destructured.module_paths,
+            BTreeSet::from([helper_path.clone()])
+        );
+        assert_eq!(
+            bindings.get("other").map(|binding| &binding.module_paths),
+            Some(&BTreeSet::from([helper_path]))
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn binds_require_aliased_members_to_their_imported_spelling() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-alias-bindings-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let importer = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        let helper_path = helper.clone();
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "const { helper: bound } = require(\"./helper\");\n";
+        let document = parse_document(&importer, source).unwrap();
+
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let binding = bindings.get("bound").expect("aliased require binding");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(binding.module_paths, BTreeSet::from([helper_path]));
+        assert!(!bindings.contains_key("helper"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_require_bindings_fail_closed_for_dynamic_and_missing_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-fail-closed-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let importer = root.join("caller.ts");
+        let source =
+            "const dynamic = require(moduleName);\nconst missing = require(\"./missing\");\n";
+        let document = parse_document(&importer, source).unwrap();
+
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            !bindings.contains_key("dynamic"),
+            "dynamic require arguments must not create bindings"
+        );
+        let missing = bindings
+            .get("missing")
+            .expect("missing local module still records a binding");
+        assert!(missing.unresolved);
+        assert!(missing.module_paths.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_require_unsupported_patterns_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-unsupported-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let importer = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "const [first] = require(\"./helper\");\nconst { helper: bound = fallback } = require(\"./helper\");\nconst { ...rest } = require(\"./helper\");\nconst { nested: { deep } } = require(\"./helper\");\n";
+        let document = parse_document(&importer, source).unwrap();
+
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            bindings.is_empty(),
+            "unsupported require patterns must fail closed, bindings: {bindings:?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }
