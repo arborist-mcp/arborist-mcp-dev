@@ -3182,4 +3182,259 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn resolves_module_valued_export_member_binding_to_cjs_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports.helper = require(\"./impl.cjs\");\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("module-valued member should resolve to the callable export");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_module_valued_object_literal_export_member_binding_to_cjs_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-object-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("object-literal module-valued member should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_module_valued_export_member_binding_to_reexported_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-member-alias-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.run = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports.helper = require(\"./impl.cjs\").run;\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("module-valued member alias should resolve to the re-exported member");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_module_valued_export_member_bindings_fail_closed_for_ambiguous_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        for (name, source) in [
+            (
+                "first.cjs",
+                "function first() {}\nmodule.exports = first;\n",
+            ),
+            (
+                "second.cjs",
+                "function second() {}\nmodule.exports = second;\n",
+            ),
+        ] {
+            fs::write(root.join(name), source).unwrap();
+        }
+        fs::write(
+            &bridge,
+            "module.exports.helper = require(\"./first.cjs\");\nmodule.exports.helper = require(\"./second.cjs\");\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "ambiguous module-valued members must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_module_valued_export_member_bindings_fail_closed_for_missing_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "module.exports.helper = require(\"./missing.cjs\");\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "missing module-valued aliases must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_module_valued_export_member_bindings_fail_closed_for_non_callable_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-non-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let obj_path = root.join("obj.cjs");
+        fs::write(
+            &obj_path,
+            "function other() {}\nmodule.exports = { other };\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "module.exports.helper = require(\"./obj.cjs\");\n").unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "non-callable module-valued aliases must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_module_valued_export_member_bindings_fail_closed_for_cycles() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.cjs");
+        let second = root.join("second.cjs");
+        fs::write(
+            &first,
+            "module.exports.helper = require(\"./second.cjs\").other;\n",
+        )
+        .unwrap();
+        fs::write(
+            &second,
+            "module.exports.other = require(\"./first.cjs\").helper;\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&first),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "cyclic module-valued member aliases must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
