@@ -26,8 +26,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.tpp`, `.tcc`, `.ipp`, `.inl`,
   `.hpp`, `.hh`, `.hxx`, `.h++` — semantic skeletons, indexing, tracing, patching, and queries.
 - JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
-  conservative direct-call tracing, static local dependency refresh, structural patching,
-  and queries.
+  conservative direct-call tracing through local named imports, named re-export chains,
+  and default imports that name a module's default export, static local dependency
+  refresh, structural patching, and queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
