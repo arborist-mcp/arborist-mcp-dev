@@ -41395,3 +41395,143 @@ class Caller {
         "Demo::HelperA::Run persisted unexpected FailClosedMissing"
     );
 }
+
+#[test]
+fn traces_csharp_direct_constructed_generic_receiver_inherited_static_factory_and_field_chains_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+using OtherAlias = Other.Derived<HelperA>;
+using OtherNestedAlias = Other.Outer<HelperA>.Inner<HelperA>;
+class HelperA {
+    public int Run(int value) => value;
+}
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static U StaticField;
+}
+class Derived<T> : Base<T> { }
+class Caller {
+    int SameNsDirectMake() { return Derived<HelperA>.Make().Run(1); }
+    int SameNsDirectMakeVar() { var h = Derived<HelperA>.Make(); return h.Run(1); }
+    int SameNsDirectField() { return Derived<HelperA>.StaticField.Run(1); }
+    int SameNsDirectFieldVar() { var h = Derived<HelperA>.StaticField; return h.Run(1); }
+    int CrossNsDirectMake() { return Other.Derived<HelperA>.Make().Run(1); }
+    int CrossNsDirectMakeVar() { var h = Other.Derived<HelperA>.Make(); return h.Run(1); }
+    int CrossNsDirectField() { return Other.Derived<HelperA>.StaticField.Run(1); }
+    int CrossNsDirectFieldVar() { var h = Other.Derived<HelperA>.StaticField; return h.Run(1); }
+    int AliasMake() { return OtherAlias.Make().Run(1); }
+    int AliasMakeVar() { var h = OtherAlias.Make(); return h.Run(1); }
+    int AliasField() { return OtherAlias.StaticField.Run(1); }
+    int AliasFieldVar() { var h = OtherAlias.StaticField; return h.Run(1); }
+    int AliasMakeB() { return OtherAlias.MakeB().Run(1); }
+    int NestedOuterField() { return OtherNestedAlias.StaticOuterField.Run(1); }
+    int NestedInnerFieldVar() { var h = OtherNestedAlias.StaticInnerField; return h.Run(1); }
+    int FailClosedMissing() { return OtherAlias.MissingField.Run(1); }
+    int FailClosedMissingVar() { var h = OtherAlias.MissingField; return h.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class HelperB {
+    public int Run(int value) => value;
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static U StaticField;
+    protected static HelperB MakeB() => default;
+}
+class Derived<T> : Base<T> { }
+class Outer<T> {
+    public class Inner<U> : Base<U> { }
+    public class Base<U> {
+        protected static T StaticOuterField;
+        protected static U StaticInnerField;
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A constructed generic receiver spelled directly on the call site, such
+    // as `Derived<HelperA>.Make()` or `Other.Derived<HelperA>.StaticField`,
+    // dispatches inherited static factories and fields through the unique
+    // class/record ancestor chain and substitutes the spelled concrete
+    // arguments for the base's type parameters, so direct calls and `var`
+    // initializers both trace to the substituted receiver type's method.
+    // File-scoped aliases to a cross-namespace constructed generic base
+    // (`using OtherAlias = Other.Derived<HelperA>;`) and nested aliases
+    // (`using OtherNestedAlias = Other.Outer<HelperA>.Inner<HelperA>;`)
+    // behave the same way, and a member the base chain does not declare
+    // (`OtherAlias.MissingField`) fails closed.
+    let expected = vec![
+        "Demo::Caller::AliasField",
+        "Demo::Caller::AliasFieldVar",
+        "Demo::Caller::AliasMake",
+        "Demo::Caller::AliasMakeVar",
+        "Demo::Caller::CrossNsDirectField",
+        "Demo::Caller::CrossNsDirectFieldVar",
+        "Demo::Caller::CrossNsDirectMake",
+        "Demo::Caller::CrossNsDirectMakeVar",
+        "Demo::Caller::NestedInnerFieldVar",
+        "Demo::Caller::NestedOuterField",
+        "Demo::Caller::SameNsDirectField",
+        "Demo::Caller::SameNsDirectFieldVar",
+        "Demo::Caller::SameNsDirectMake",
+        "Demo::Caller::SameNsDirectMakeVar",
+    ];
+    let live = trace_symbol_graph(&dir, "Demo::HelperA::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(callers, expected, "Demo::HelperA::Run live");
+    assert!(
+        !live.callers.iter().any(|candidate| candidate.symbol_id
+            == "Demo::Caller::FailClosedMissing"
+            || candidate.symbol_id == "Demo::Caller::FailClosedMissingVar"),
+        "Demo::HelperA::Run live unexpected FailClosedMissing"
+    );
+
+    let live_b = trace_symbol_graph(&dir, "Other::HelperB::Run", TraceDirection::Callers).unwrap();
+    let mut callers_b = live_b
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    callers_b.sort();
+    assert_eq!(
+        callers_b,
+        vec!["Demo::Caller::AliasMakeB"],
+        "Other::HelperB::Run live"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::HelperA::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut persisted_callers = persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    persisted_callers.sort();
+    assert_eq!(persisted_callers, expected, "Demo::HelperA::Run persisted");
+    assert!(
+        !persisted.callers.iter().any(|candidate| candidate.symbol_id
+            == "Demo::Caller::FailClosedMissing"
+            || candidate.symbol_id == "Demo::Caller::FailClosedMissingVar"),
+        "Demo::HelperA::Run persisted unexpected FailClosedMissing"
+    );
+}
