@@ -1715,13 +1715,14 @@ fn resolve_reference_path_with_deadline<'a>(
     let scoped_cpp_direct_call =
         language_id == Some(LanguageId::Cpp) && call_arity.is_some() && !qualified_cpp_reference;
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
-        cpp_qualified_reference_path_groups(
+        let path_group_candidates = cpp_qualified_reference_path_groups(
             lookup_name,
             source_symbol,
             raw_symbols,
             file_overrides,
             include_targets_cache,
-        )
+            deadline,
+        )?
         .into_iter()
         .find_map(|qualified_paths| {
             let candidates = symbol_indexes_for_paths_with_template_fallback(
@@ -1729,19 +1730,23 @@ fn resolve_reference_path_with_deadline<'a>(
                 semantic_path_index,
             );
             (!candidates.is_empty()).then_some(candidates)
-        })
-        .or_else(|| {
-            cpp_type_alias_member_candidates(
-                lookup_name,
-                source_symbol,
-                raw_symbols,
-                semantic_path_index,
-                file_overrides,
-                include_targets_cache,
-            )
-        })
-        .map(|candidates| (candidates, false))
-        .unwrap_or_default()
+        });
+        match path_group_candidates {
+            Some(candidates) => (candidates, false),
+            None => (
+                cpp_type_alias_member_candidates(
+                    lookup_name,
+                    source_symbol,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    include_targets_cache,
+                    deadline,
+                )?
+                .unwrap_or_default(),
+                false,
+            ),
+        }
     } else if scoped_cpp_direct_call {
         let scoped_candidates = cpp_unqualified_call_candidate_groups(
             lookup_name,
@@ -1749,7 +1754,8 @@ fn resolve_reference_path_with_deadline<'a>(
             raw_symbols,
             file_overrides,
             include_targets_cache,
-        )
+            deadline,
+        )?
         .into_iter()
         .find_map(|paths| {
             let candidates =
@@ -1870,7 +1876,8 @@ fn resolve_reference_path_with_deadline<'a>(
             semantic_path_index,
             file_overrides,
             include_targets_cache,
-        );
+            deadline,
+        )?;
         let callable_candidates = hinted_candidates
             .iter()
             .copied()
@@ -24197,5 +24204,130 @@ mod tests {
             csharp_array_factory_call_root_spelling("makeItems()[0]x"),
             None
         );
+    }
+
+    #[test]
+    fn cpp_path_group_walkers_check_cooperative_deadlines() {
+        use super::super::path_groups::{
+            cpp_qualified_reference_path_group, cpp_qualified_reference_path_groups,
+            cpp_unqualified_call_candidate_groups,
+        };
+        use super::super::type_alias::cpp_type_alias_member_candidates;
+
+        let source_symbol = IndexedSymbol {
+            extension_receiver: None,
+            symbol_id: "caller".to_string(),
+            semantic_path: "caller".to_string(),
+            base_name: "caller".to_string(),
+            scope_path: None,
+            file_path: "caller.cpp".to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            reference_facts: Vec::new(),
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        };
+        let expired = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+        let mut cache = CIncludeTargetsCache::new();
+        let mut cache_expired = CIncludeTargetsCache::new();
+        let empty_index = BTreeMap::new();
+
+        // Without a deadline the walkers still expand conservatively.
+        let paths = cpp_qualified_reference_path_group(
+            "api::target".to_string(),
+            std::slice::from_ref(&source_symbol),
+            &source_symbol,
+            None,
+            &mut cache,
+            None,
+        )
+        .unwrap();
+        assert_eq!(paths, vec!["api::target".to_string()]);
+
+        // An expired deadline aborts each walker at its first bounded check
+        // instead of letting it complete or panic.
+        for (phase, result) in [
+            (
+                "path group",
+                cpp_qualified_reference_path_group(
+                    "api::target".to_string(),
+                    std::slice::from_ref(&source_symbol),
+                    &source_symbol,
+                    None,
+                    &mut cache_expired,
+                    Some(&expired),
+                )
+                .map(|_| ()),
+            ),
+            (
+                "path groups",
+                cpp_qualified_reference_path_groups(
+                    "api::target",
+                    &source_symbol,
+                    std::slice::from_ref(&source_symbol),
+                    None,
+                    &mut cache_expired,
+                    Some(&expired),
+                )
+                .map(|_| ()),
+            ),
+            (
+                "unqualified scopes",
+                cpp_unqualified_call_candidate_groups(
+                    "helper",
+                    &source_symbol,
+                    std::slice::from_ref(&source_symbol),
+                    None,
+                    &mut cache_expired,
+                    Some(&expired),
+                )
+                .map(|_| ()),
+            ),
+            (
+                "type alias members",
+                cpp_type_alias_member_candidates(
+                    "Alias::member",
+                    &source_symbol,
+                    std::slice::from_ref(&source_symbol),
+                    &empty_index,
+                    None,
+                    &mut cache_expired,
+                    Some(&expired),
+                )
+                .map(|_| ()),
+            ),
+        ] {
+            let error = result.expect_err("expired deadline must abort the walker");
+            assert!(
+                error
+                    .to_string()
+                    .contains("workspace scan timeout exceeded"),
+                "{phase}: {error}"
+            );
+        }
+
+        // A live (non-expired) deadline does not abort normal expansion.
+        let live_deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() + Duration::from_secs(30)),
+            timeout_ms: Some(30_000),
+        };
+        let paths = cpp_qualified_reference_path_group(
+            "api::target".to_string(),
+            std::slice::from_ref(&source_symbol),
+            &source_symbol,
+            None,
+            &mut cache,
+            Some(&live_deadline),
+        )
+        .unwrap();
+        assert_eq!(paths, vec!["api::target".to_string()]);
     }
 }

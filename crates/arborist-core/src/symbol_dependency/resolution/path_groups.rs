@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use anyhow::Result;
+
 use super::super::c::{
     CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
 };
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(super) fn cpp_qualified_reference_path_groups(
     reference_name: &str,
@@ -11,19 +14,23 @@ pub(super) fn cpp_qualified_reference_path_groups(
     raw_symbols: &[IndexedSymbol],
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
-) -> Vec<Vec<String>> {
-    cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
-        .into_iter()
-        .map(|reference_path| {
-            cpp_qualified_reference_path_group(
-                reference_path,
-                raw_symbols,
-                source_symbol,
-                file_overrides,
-                include_targets_cache,
-            )
-        })
-        .collect()
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<Vec<String>>> {
+    let mut groups = Vec::new();
+    for reference_path in cpp_lexical_qualified_reference_paths(reference_name, source_symbol) {
+        if let Some(deadline) = deadline {
+            deadline.check("expanding C++ qualified reference path groups")?;
+        }
+        groups.push(cpp_qualified_reference_path_group(
+            reference_path,
+            raw_symbols,
+            source_symbol,
+            file_overrides,
+            include_targets_cache,
+            deadline,
+        )?);
+    }
+    Ok(groups)
 }
 
 pub(super) fn cpp_unqualified_call_candidate_groups(
@@ -32,7 +39,8 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
     raw_symbols: &[IndexedSymbol],
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
-) -> Vec<Vec<String>> {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<Vec<String>>> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &source_symbol.file_path,
         source_symbol.byte_range.0,
@@ -51,69 +59,71 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_else(|| vec![String::new()]);
-    scopes
-        .into_iter()
-        .map(|length| {
-            let scope = length;
-            let scoped_reference_path = if scope.is_empty() {
-                reference_name.to_string()
-            } else {
-                format!("{scope}::{reference_name}")
-            };
-            let mut paths = if scope.is_empty() {
-                vec![reference_name.to_string()]
-            } else {
-                vec![format!("{scope}::{reference_name}")]
-            };
-            for directive in raw_symbols.iter().filter(|symbol| {
-                symbol.node_kind == "using_declaration"
-                    && if scope.is_empty() {
-                        symbol.scope_path.is_none()
-                    } else {
-                        symbol.scope_path.as_deref() == Some(scope.as_str())
-                    }
-                    && cpp_symbol_is_visible_before(symbol, source_symbol, include_context.as_ref())
-            }) {
-                let Some(target) = cpp_using_namespace_target(directive) else {
-                    if directive.semantic_path != scoped_reference_path {
-                        continue;
-                    }
-                    let Some(target) = cpp_using_declaration_target(directive) else {
-                        continue;
-                    };
-                    paths.extend(
-                        cpp_lexical_qualified_reference_paths(&target, directive)
-                            .into_iter()
-                            .flat_map(|path| {
-                                cpp_qualified_reference_path_group(
-                                    path,
-                                    raw_symbols,
-                                    directive,
-                                    file_overrides,
-                                    include_targets_cache,
-                                )
-                            }),
-                    );
+    let mut groups = Vec::new();
+    for scope in scopes {
+        if let Some(deadline) = deadline {
+            deadline.check("expanding C++ unqualified call candidate scopes")?;
+        }
+        let scoped_reference_path = if scope.is_empty() {
+            reference_name.to_string()
+        } else {
+            format!("{scope}::{reference_name}")
+        };
+        let mut paths = if scope.is_empty() {
+            vec![reference_name.to_string()]
+        } else {
+            vec![format!("{scope}::{reference_name}")]
+        };
+        for directive in raw_symbols.iter().filter(|symbol| {
+            symbol.node_kind == "using_declaration"
+                && if scope.is_empty() {
+                    symbol.scope_path.is_none()
+                } else {
+                    symbol.scope_path.as_deref() == Some(scope.as_str())
+                }
+                && cpp_symbol_is_visible_before(symbol, source_symbol, include_context.as_ref())
+        }) {
+            let Some(target) = cpp_using_namespace_target(directive) else {
+                if directive.semantic_path != scoped_reference_path {
+                    continue;
+                }
+                let Some(target) = cpp_using_declaration_target(directive) else {
                     continue;
                 };
-                paths.extend(
-                    cpp_lexical_qualified_reference_paths(&target, directive)
-                        .into_iter()
-                        .flat_map(|path| {
-                            cpp_qualified_reference_path_group(
-                                path,
-                                raw_symbols,
-                                directive,
-                                file_overrides,
-                                include_targets_cache,
-                            )
-                        })
-                        .map(|path| format!("{path}::{reference_name}")),
-                );
+                let mut expanded = Vec::new();
+                for path in cpp_lexical_qualified_reference_paths(&target, directive) {
+                    expanded.extend(cpp_qualified_reference_path_group(
+                        path,
+                        raw_symbols,
+                        directive,
+                        file_overrides,
+                        include_targets_cache,
+                        deadline,
+                    )?);
+                }
+                paths.extend(expanded);
+                continue;
+            };
+            let mut expanded = Vec::new();
+            for path in cpp_lexical_qualified_reference_paths(&target, directive) {
+                expanded.extend(cpp_qualified_reference_path_group(
+                    path,
+                    raw_symbols,
+                    directive,
+                    file_overrides,
+                    include_targets_cache,
+                    deadline,
+                )?);
             }
-            paths
-        })
-        .collect()
+            paths.extend(
+                expanded
+                    .into_iter()
+                    .map(|path| format!("{path}::{reference_name}")),
+            );
+        }
+        groups.push(paths);
+    }
+    Ok(groups)
 }
 
 pub(super) fn cpp_symbol_is_visible_before(
@@ -132,7 +142,8 @@ pub(super) fn cpp_qualified_reference_path_group(
     visibility_source: &IndexedSymbol,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
-) -> Vec<String> {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<String>> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &visibility_source.file_path,
         visibility_source.byte_range.0,
@@ -145,6 +156,9 @@ pub(super) fn cpp_qualified_reference_path_group(
     let mut visited = BTreeSet::new();
 
     while let Some(path) = pending.pop_front() {
+        if let Some(deadline) = deadline {
+            deadline.check("expanding C++ reference path group")?;
+        }
         if !visited.insert(path.clone()) {
             continue;
         }
@@ -173,7 +187,7 @@ pub(super) fn cpp_qualified_reference_path_group(
         }
     }
 
-    paths
+    Ok(paths)
 }
 
 pub(super) fn cpp_lexical_qualified_reference_paths(

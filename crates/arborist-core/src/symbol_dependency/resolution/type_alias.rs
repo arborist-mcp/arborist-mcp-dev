@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
+use anyhow::Result;
+
 use super::super::c::{
     CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
 };
 use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 use super::path_groups::{
     cpp_lexical_qualified_reference_paths, cpp_qualified_reference_path_group,
@@ -24,15 +27,19 @@ pub(super) fn cpp_type_alias_member_candidates(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
-) -> Option<Vec<usize>> {
-    let (alias_name, member_name) = reference_name.rsplit_once("::")?;
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<Vec<usize>>> {
+    let Some((alias_name, member_name)) = reference_name.rsplit_once("::") else {
+        return Ok(None);
+    };
     let alias_indexes = cpp_qualified_reference_path_groups(
         alias_name,
         source_symbol,
         raw_symbols,
         file_overrides,
         include_targets_cache,
-    )
+        deadline,
+    )?
     .into_iter()
     .flat_map(|paths| symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index))
     .collect::<Vec<_>>();
@@ -43,13 +50,14 @@ pub(super) fn cpp_type_alias_member_candidates(
         semantic_path_index,
         file_overrides,
         include_targets_cache,
-    )
+        deadline,
+    )?
     .into_iter()
     .map(|index| format!("{}::{member_name}", raw_symbols[index].semantic_path))
     .collect::<Vec<_>>();
     let candidates =
         symbol_indexes_for_paths_with_template_fallback(&member_paths, semantic_path_index);
-    (!candidates.is_empty()).then_some(candidates)
+    Ok((!candidates.is_empty()).then_some(candidates))
 }
 
 pub(super) fn cpp_constructor_path(type_path: &str) -> Option<String> {
@@ -66,7 +74,8 @@ pub(super) fn cpp_type_alias_target_indexes(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
-) -> Vec<usize> {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<usize>> {
     let include_context = c_include_context_for_file_before_with_overrides(
         &source_symbol.file_path,
         source_symbol.byte_range.0,
@@ -89,6 +98,9 @@ pub(super) fn cpp_type_alias_target_indexes(
     let mut target_indexes = BTreeSet::new();
 
     while let Some(alias_index) = pending.pop_front() {
+        if let Some(deadline) = deadline {
+            deadline.check("expanding C++ type alias targets")?;
+        }
         if !visited_aliases.insert(alias_index) {
             continue;
         }
@@ -104,7 +116,8 @@ pub(super) fn cpp_type_alias_target_indexes(
                 alias,
                 file_overrides,
                 include_targets_cache,
-            ) {
+                deadline,
+            )? {
                 for target_index in
                     symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
                 {
@@ -125,7 +138,7 @@ pub(super) fn cpp_type_alias_target_indexes(
         }
     }
 
-    target_indexes.into_iter().collect()
+    Ok(target_indexes.into_iter().collect())
 }
 
 pub(super) fn is_cpp_constructible_type(symbol: &IndexedSymbol) -> bool {
