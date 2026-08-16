@@ -39441,3 +39441,131 @@ class Caller : Outer<Helper>.Mid<Helper> {
         "unexpected persisted caller for missing member"
     );
 }
+
+#[test]
+fn traces_csharp_bare_inherited_field_member_chain_multidimensional_element_access_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class PlainBase {
+    protected Helper holder;
+    protected static Helper[,] MATRIX = default;
+    protected static Helper[][] JAGGED = default;
+    protected Helper[,] InstanceMatrix = default;
+}
+class PlainCaller : PlainBase {
+    int InstanceChain() { return holder.entry.Run(1); }
+    int StaticMatrixChain() { return MATRIX[0,0].entry.Run(1); }
+    int StaticJaggedChain() { return JAGGED[0][0].entry.Run(1); }
+    int InstanceMatrixChain() { return InstanceMatrix[0,0].entry.Run(1); }
+}
+class GenericBase<T> {
+    protected static T[,] OUTER_MATRIX = default;
+}
+class FixedCaller : GenericBase<Helper> {
+    int OuterStaticChain() { return OUTER_MATRIX[0,0].entry.Run(1); }
+}
+class Outer<T> {
+    class Mid<U> : Base<U> {
+    }
+    class Base<U> {
+        protected static U[,] MATRIX = default;
+        protected static T[,] OUTER_MATRIX = default;
+    }
+}
+class NestedCaller : Outer<Helper>.Mid<Helper> {
+    int InnerStaticChain() { return MATRIX[0,0].entry.Run(1); }
+    int OuterStaticChain() { return OUTER_MATRIX[0,0].entry.Run(1); }
+    int FailClosedMissing() { return MISSING[0,0].entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A bare inherited member-chain call rooted at an instance or static
+    // field/property declared on a class/record ancestor such as
+    // `holder.entry.Run(1)` or `MATRIX[0,0].entry.Run(1)` strips one array
+    // component layer per element-access group on the root (so `Helper[,]`
+    // indexed with `[0,0]` and `Helper[][]` indexed with `[0][0]` pin the
+    // element component `Helper`) before walking the remaining instance hops,
+    // with the outer generic argument substituted through a fixed constructed
+    // base (`FixedCaller : GenericBase<Helper>`) and a constructed nested
+    // generic base (`NestedCaller : Outer<Helper>.Mid<Helper>` with
+    // `Base<U>` nested in `Outer<T>`), so both `U[,]` and `T[,]` roots reach
+    // `Helper`. A root the base chain does not declare (`MISSING`) fails
+    // closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let callers = run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::PlainCaller::InstanceChain",
+        "Demo::PlainCaller::StaticMatrixChain",
+        "Demo::PlainCaller::StaticJaggedChain",
+        "Demo::PlainCaller::InstanceMatrixChain",
+        "Demo::FixedCaller::OuterStaticChain",
+        "Demo::NestedCaller::InnerStaticChain",
+        "Demo::NestedCaller::OuterStaticChain",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller} in {callers:?}"
+        );
+    }
+    assert!(
+        !run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::NestedCaller::FailClosedMissing"),
+        "unexpected live caller for missing member"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::PlainCaller::InstanceChain",
+        "Demo::PlainCaller::StaticMatrixChain",
+        "Demo::PlainCaller::StaticJaggedChain",
+        "Demo::PlainCaller::InstanceMatrixChain",
+        "Demo::FixedCaller::OuterStaticChain",
+        "Demo::NestedCaller::InnerStaticChain",
+        "Demo::NestedCaller::OuterStaticChain",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+    assert!(
+        !run_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::NestedCaller::FailClosedMissing"),
+        "unexpected persisted caller for missing member"
+    );
+}

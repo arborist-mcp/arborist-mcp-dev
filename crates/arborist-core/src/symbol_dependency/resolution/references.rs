@@ -634,6 +634,30 @@ fn resolve_reference_path_with_deadline<'a>(
             CSharpInstanceReceiverResolution::Blocked => return Ok(None),
             CSharpInstanceReceiverResolution::NoBinding => {}
         }
+        // A dotted call rooted at a bare inherited member such as
+        // `MATRIX[0,0].entry.Run(1)` or `holder.entry.Run(1)` where the
+        // leading field/property (with an optional element-access suffix) is
+        // declared on a class/record ancestor of the enclosing type resolves
+        // the root through the same inherited-then-static-imported rules as
+        // bare `var` initializer and `foreach` roots, walks any remaining
+        // hops, and dispatches the final member as an instance call; it runs
+        // before the static-imported and static type-call paths so an
+        // inherited member shadows a same-named static import or type call.
+        if let Some(symbol_id) = resolve_csharp_bare_inherited_member_chain_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
+
         // A bare factory-call root with an element-access suffix such as
         // `makeItems()[0].helper(...)` resolves the leading call through the
         // same factory rules as a `var` initializer and dispatches the
@@ -6027,6 +6051,116 @@ fn resolve_csharp_static_imported_member_chain_call(
     };
     resolve_csharp_instance_method_on_binding(
         source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
+/// Resolves a bare inherited member-chain call such as
+/// `MATRIX[0,0].entry.Run(1)` or `holder.entry.Run(1)` where the leading
+/// member (a field or property with an optional element-access suffix) is
+/// declared on a class/record ancestor of the enclosing type rather than
+/// bound locally or declared on the enclosing type itself. The leading
+/// member resolves through the same inherited-then-static-imported rules as
+/// bare `var` initializer and `foreach` roots (the nearest declaring
+/// ancestor pins the declared array type, stripping one component layer per
+/// element-access group, so an inherited static or instance `Helper[,]`
+/// member indexed with `[0,0]` pins the element component `Helper`), then
+/// any remaining hops walk the same member-chain rules before the final
+/// member dispatches as an instance call. Unknown or unresolvable roots,
+/// primitive or non-array roots, unresolvable hops, and missing or static
+/// final members fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# bare inherited member-chain call inputs explicit"
+)]
+fn resolve_csharp_bare_inherited_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((root_spelling, member_chain)) = reference_name.split_once('.') else {
+        return Ok(None);
+    };
+    if root_spelling.is_empty() || member_chain.is_empty() {
+        return Ok(None);
+    }
+    let (root_member, root_depth) = match csharp_array_access_member_name(root_spelling) {
+        Some(member_name) => match csharp_array_access_depth(root_spelling) {
+            Some(depth) => (member_name.to_string(), depth),
+            None => return Ok(None),
+        },
+        None => (root_spelling.to_string(), 0),
+    };
+    if !is_safe_csharp_identifier(&root_member) {
+        return Ok(None);
+    }
+    let mut hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let Some(final_member) = hops.pop() else {
+        return Ok(None);
+    };
+    let Some(root_binding) = resolve_csharp_unbound_bare_member_array_component_binding(
+        source_symbol,
+        &root_member,
+        root_depth,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if hops.is_empty() {
+        return resolve_csharp_instance_method_on_binding(
+            source_symbol,
+            &root_binding,
+            final_member,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        );
+    }
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        source_symbol,
+        root_binding,
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        dispatch_source_symbol,
         &binding,
         final_member,
         raw_symbols,
