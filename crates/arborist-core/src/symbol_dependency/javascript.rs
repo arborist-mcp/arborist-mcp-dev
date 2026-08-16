@@ -1494,4 +1494,158 @@ mod tests {
         }
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn resolves_require_namespace_binding_for_references() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-namespace-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "export function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace member should resolve through the require binding");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_require_destructured_member_binding_for_references() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-destructured-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "export function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "const { helper: bound } = require(\"./helper\");\nexport function caller() { return bound(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "bound",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("destructured require binding should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_require_namespace_object_call_binding_for_commonjs_callable_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-object-call-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let legacy = root.join("legacy.cjs");
+        fs::write(&legacy, "function helper() {}\nmodule.exports = helper;\n").unwrap();
+        fs::write(
+            &caller,
+            "const legacy = require(\"./legacy.cjs\");\nexport function caller() { return legacy(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "legacy",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&legacy)])
+        );
+        let callable = resolve_javascript_namespace_object_call_binding(
+            binding.module_paths.iter().next().unwrap(),
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("CommonJS callable export should resolve");
+        assert_eq!(callable.imported_name, "helper");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_require_missing_module_bindings_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-missing-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        fs::write(
+            &caller,
+            "const ns = require(\"./missing\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("missing module still records a binding");
+        assert!(binding.unresolved);
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
 }

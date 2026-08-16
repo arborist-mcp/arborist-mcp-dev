@@ -1188,3 +1188,104 @@ fn keeps_javascript_namespace_object_calls_fail_closed_for_non_callable_commonjs
         live.callees
     );
 }
+
+#[test]
+fn traces_javascript_require_namespace_member_call_edge_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const ns = require(\"./helper\");\nexport function caller(value: number): number { return ns.helper(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 16 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_javascript_require_namespace_object_call_edge_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let legacy = dir.join("legacy.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &legacy,
+        "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const legacy = require(\"./legacy.cjs\");\nexport function caller(value: number): number { return legacy(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 9 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &legacy, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &legacy,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn keeps_javascript_require_missing_module_calls_fail_closed() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &caller,
+        "const ns = require(\"./missing\");\nexport function caller(value: number): number { return ns.helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "missing require targets must fail closed, callees: {:?}",
+        live.callees
+    );
+}
