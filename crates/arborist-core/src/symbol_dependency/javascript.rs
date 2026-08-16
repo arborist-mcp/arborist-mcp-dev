@@ -387,6 +387,59 @@ pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_nam
     crate::language::javascript_module_default_export_local_name(document.tree.root_node(), &source)
 }
 
+/// Resolves the binding for a bare call to `module_path`'s namespace object
+/// (`ns(...)` in CommonJS interop) when the module exports a single callable
+/// value through `module.exports = ...`. The returned binding's `imported_name`
+/// is the callable's local name in the module. `None` means the module is not a
+/// CommonJS callable export (including ESM-only `.mjs`/`.mts` modules), and
+/// namespace-object calls must fail closed for it.
+pub(in crate::symbol_dependency) fn resolve_javascript_namespace_object_call_binding(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaScriptImportBinding>> {
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript CommonJS callable export module")?;
+    }
+    // `.mjs` and `.mts` are ESM-only: their namespace objects are never
+    // callable even when the source text mentions `module.exports`.
+    let extension = Path::new(module_path)
+        .extension()
+        .and_then(|extension| extension.to_str());
+    if matches!(extension, Some("mjs" | "mts")) {
+        return Ok(None);
+    }
+    let path = Path::new(module_path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalize_path(path)))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros(
+                "parsing JavaScript/TypeScript CommonJS callable export module",
+            )?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
+    let Some(callable_name) = crate::language::javascript_module_callable_export_local_name(
+        document.tree.root_node(),
+        &source,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(JavaScriptImportBinding {
+        imported_name: callable_name,
+        module_paths: BTreeSet::from([module_path.to_owned()]),
+        unresolved: false,
+    }))
+}
+
 /// Resolves the binding that defines `member_name` when it is accessed as a
 /// member of `module_path`'s namespace object. Direct named exports resolve to
 /// the module itself; named re-export and star re-export chains are followed
@@ -526,6 +579,7 @@ mod tests {
         javascript_import_context_for_file_with_overrides_and_deadline,
         resolve_javascript_named_import_binding_for_reference,
         resolve_javascript_namespace_member_binding,
+        resolve_javascript_namespace_object_call_binding,
     };
     use crate::language::normalize_path;
 
@@ -1301,6 +1355,143 @@ mod tests {
             binding.is_none(),
             "anonymous default exports must fail closed"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_object_call_binding_for_commonjs_callable_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-callable-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        fs::write(
+            &module,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+
+        let binding =
+            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
+                .unwrap()
+                .expect("CommonJS callable export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_object_call_binding_for_named_function_expression() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-function-expression-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.cjs");
+        fs::write(
+            &module,
+            "module.exports = function helper(value) { return value; };\n",
+        )
+        .unwrap();
+
+        let binding =
+            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
+                .unwrap()
+                .expect("named function expression export should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_object_call_binding_fail_closed_for_esm_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-binding-esm-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for (name, source) in [
+            ("default.ts", "export default function helper() {}\n"),
+            ("named.ts", "export function helper() {}\n"),
+        ] {
+            let module = root.join(name);
+            fs::write(&module, source).unwrap();
+            let binding = resolve_javascript_namespace_object_call_binding(
+                &normalize_path(&module),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "ESM modules must stay fail-closed for namespace-object calls, source: {source:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_object_call_binding_fail_closed_for_esm_only_extensions() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-binding-mjs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.mjs");
+        fs::write(&module, "function helper() {}\nmodule.exports = helper;\n").unwrap();
+
+        let binding =
+            resolve_javascript_namespace_object_call_binding(&normalize_path(&module), None, None)
+                .unwrap();
+        assert!(
+            binding.is_none(),
+            ".mjs namespace objects are never callable and must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_object_call_binding_fail_closed_for_non_callable_exports() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-binding-non-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for (name, source) in [
+            ("anonymous.ts", "module.exports = function () {}\n"),
+            (
+                "object.ts",
+                "function helper() {}\nmodule.exports = { helper };\n",
+            ),
+            ("value.ts", "const helper = 42;\nmodule.exports = helper;\n"),
+            (
+                "conflict.ts",
+                "function first() {}\nfunction second() {}\nmodule.exports = first;\nmodule.exports = second;\n",
+            ),
+            ("arrow.ts", "module.exports = () => 1;\n"),
+        ] {
+            let module = root.join(name);
+            fs::write(&module, source).unwrap();
+            let binding = resolve_javascript_namespace_object_call_binding(
+                &normalize_path(&module),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "non-callable exports must fail closed, source: {source:?}"
+            );
+        }
         let _ = fs::remove_dir_all(root);
     }
 }

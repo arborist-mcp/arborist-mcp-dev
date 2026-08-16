@@ -485,6 +485,151 @@ fn javascript_default_export_name(statement: Node<'_>, source: &str) -> Result<O
     Ok(None)
 }
 
+/// Returns the local name of the callable a CommonJS module exports through a
+/// top-level `module.exports = ...` assignment when it can be resolved
+/// conservatively: a named function expression (`module.exports = function
+/// helper() {}`) or an identifier naming a module-level callable declaration
+/// (`function helper() {}` or `const helper = () => {}`). Anonymous function
+/// expressions, non-function exports, and modules with conflicting or absent
+/// `module.exports` assignments fail closed (`None`). ESM-only modules have no
+/// such assignment and also return `None`, so namespace-object calls stay
+/// fail-closed for them.
+pub(crate) fn javascript_module_callable_export_local_name(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let mut names = BTreeSet::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(name) = javascript_module_exports_callable_name(statement, source, root)? {
+            names.insert(name);
+        }
+    }
+    // A module may export at most one callable value; anything else fails
+    // closed instead of guessing.
+    Ok((names.len() == 1)
+        .then(|| names.iter().next().cloned())
+        .flatten())
+}
+
+fn javascript_module_exports_callable_name(
+    statement: Node<'_>,
+    source: &str,
+    root: Node<'_>,
+) -> Result<Option<String>> {
+    let expression = if statement.kind() == "expression_statement" {
+        statement.named_child(0)
+    } else {
+        None
+    };
+    let Some(assignment) = expression else {
+        return Ok(None);
+    };
+    if assignment.kind() != "assignment_expression"
+        || !is_javascript_module_exports_assignment(assignment, source)?
+    {
+        return Ok(None);
+    }
+    let Some(value) = assignment.child_by_field_name("right") else {
+        return Ok(None);
+    };
+    match value.kind() {
+        // `module.exports = helper;` names a module-level symbol; only a
+        // callable declaration makes the module itself callable.
+        "identifier" => {
+            let name = node_text(value, source)?.trim().to_owned();
+            if name.is_empty() || !javascript_module_level_callable_declared(root, source, &name)? {
+                return Ok(None);
+            }
+            Ok(Some(name))
+        }
+        // A named function expression carries the exported callable's local
+        // name; anonymous expressions fail closed because they name no symbol.
+        "function_expression" | "generator_function" => {
+            let Some(name) = value.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            if name.is_missing() {
+                return Ok(None);
+            }
+            let name = node_text(name, source)?.trim().to_owned();
+            Ok((!name.is_empty()).then_some(name))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn is_javascript_module_exports_assignment(assignment: Node<'_>, source: &str) -> Result<bool> {
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(false);
+    };
+    if left.kind() != "member_expression" {
+        return Ok(false);
+    }
+    let Some(object) = left.child_by_field_name("object") else {
+        return Ok(false);
+    };
+    if object.kind() != "identifier" || node_text(object, source)?.trim() != "module" {
+        return Ok(false);
+    }
+    let Some(property) = left.child_by_field_name("property") else {
+        return Ok(false);
+    };
+    Ok(
+        property.kind() == "property_identifier"
+            && node_text(property, source)?.trim() == "exports",
+    )
+}
+
+fn javascript_module_level_callable_declared(
+    root: Node<'_>,
+    source: &str,
+    name: &str,
+) -> Result<bool> {
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        let declared_name = match statement.kind() {
+            "function_declaration" | "generator_function_declaration" => {
+                statement.child_by_field_name("name").and_then(|name| {
+                    node_text(name, source)
+                        .ok()
+                        .map(|text| text.trim().to_owned())
+                })
+            }
+            "lexical_declaration" | "variable_declaration" => {
+                let mut declarator_cursor = statement.walk();
+                let mut declared_name = None;
+                for declarator in statement.named_children(&mut declarator_cursor) {
+                    if declarator.kind() != "variable_declarator" {
+                        continue;
+                    }
+                    if !declarator
+                        .child_by_field_name("value")
+                        .is_some_and(|value| {
+                            matches!(value.kind(), "arrow_function" | "function_expression")
+                        })
+                    {
+                        continue;
+                    }
+                    if let Some(name_node) = declarator.child_by_field_name("name")
+                        && let Ok(text) = node_text(name_node, source)
+                        && !text.trim().is_empty()
+                    {
+                        declared_name = Some(text.trim().to_owned());
+                        break;
+                    }
+                }
+                declared_name
+            }
+            _ => None,
+        };
+        if declared_name.as_deref() == Some(name) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn insert_javascript_module_binding(
     bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
     local_name: String,
@@ -749,7 +894,8 @@ mod tests {
     use anyhow::bail;
 
     use super::{
-        javascript_module_default_export_local_name, javascript_named_export_names,
+        javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
+        javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
         javascript_star_reexport_module_paths_with_overrides_and_check,
@@ -946,6 +1092,52 @@ const escaped = require("./escaped\\name");
             let document = parse_document(Path::new("sample.ts"), source).unwrap();
             assert_eq!(
                 javascript_module_default_export_local_name(document.tree.root_node(), source)
+                    .unwrap(),
+                expected.map(str::to_string),
+                "source: {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_module_callable_export_local_names_conservatively() {
+        for (source, expected) in [
+            (
+                "function helper() {}\nmodule.exports = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "const helper = () => 1;\nmodule.exports = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "const helper = function () {}\nmodule.exports = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nmodule.exports = function helper() {}\n",
+                Some("helper"),
+            ),
+            (
+                "module.exports = function* generate() {}\n",
+                Some("generate"),
+            ),
+            ("export default function helper() {}\n", None),
+            ("export function helper() {}\n", None),
+            ("module.exports = function () {}\n", None),
+            ("module.exports = () => 1;\n", None),
+            ("function helper() {}\nmodule.exports = { helper };\n", None),
+            ("const helper = 42;\nmodule.exports = helper;\n", None),
+            (
+                "function first() {}\nfunction second() {}\nmodule.exports = first;\nmodule.exports = second;\n",
+                None,
+            ),
+            ("module.exports.helper = function helper() {}\n", None),
+            ("exports.helper = function helper() {}\n", None),
+        ] {
+            let document = parse_document(Path::new("sample.ts"), source).unwrap();
+            assert_eq!(
+                javascript_module_callable_export_local_name(document.tree.root_node(), source)
                     .unwrap(),
                 expected.map(str::to_string),
                 "source: {source:?}"

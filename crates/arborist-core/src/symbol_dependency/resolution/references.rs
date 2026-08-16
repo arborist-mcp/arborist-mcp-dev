@@ -39,7 +39,7 @@ use super::super::javascript::{
     JavaScriptImportBinding, JavaScriptImportContext,
     resolve_javascript_module_default_export_name,
     resolve_javascript_named_import_binding_for_reference,
-    resolve_javascript_namespace_member_binding,
+    resolve_javascript_namespace_member_binding, resolve_javascript_namespace_object_call_binding,
 };
 use super::super::kotlin::{
     KotlinImportContext, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
@@ -235,6 +235,18 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             ReferenceLanguageDetails::JavaScript(details) => Some(details),
             _ => None,
         };
+        // Bare JavaScript/TypeScript identifier references are recorded only
+        // for call expressions, so a non-empty arity set signals a direct
+        // call such as `ns(...)`. The general call-arity path stays C++ and
+        // JVM-only; the namespace-object call branch below uses this signal
+        // instead of CallResolutionContext.
+        let javascript_direct_call = matches!(
+            language_id,
+            Some(LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx)
+        ) && reference
+            .call_arities
+            .as_ref()
+            .is_some_and(|arities| !arities.is_empty());
         if matches!(
             language_id,
             Some(LanguageId::Cpp | LanguageId::Java | LanguageId::CSharp | LanguageId::Kotlin)
@@ -261,6 +273,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     javascript_reference_details,
                     language_id,
                     call_context,
+                    javascript_direct_call,
                     symbol,
                     raw_symbols,
                     name_index,
@@ -288,6 +301,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             javascript_reference_details,
             language_id,
             CallResolutionContext::non_call(),
+            javascript_direct_call,
             symbol,
             raw_symbols,
             name_index,
@@ -322,6 +336,7 @@ fn resolve_reference_path_with_deadline<'a>(
     javascript_reference_details: Option<&JavaScriptReferenceDetails>,
     language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
+    javascript_direct_call: bool,
     source_symbol: &'a IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
@@ -1672,6 +1687,25 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         Vec::new()
     };
+    // A bare call to a namespace import (`ns(...)`) resolves only when the
+    // bound module exports a single CommonJS callable through
+    // `module.exports = ...`; ESM namespace objects are never callable, so
+    // missing or non-callable exports fail closed instead of falling back.
+    let javascript_namespace_object_call_candidates = if javascript_direct_call
+        && let Some(binding) = javascript_import_binding.as_ref()
+        && !binding.unresolved
+        && binding.imported_name == "<namespace>"
+    {
+        javascript_namespace_object_call_candidate_indexes(
+            raw_symbols,
+            name_index,
+            &binding.module_paths,
+            file_overrides,
+            deadline,
+        )?
+    } else {
+        Vec::new()
+    };
     let candidate_lookup_name = javascript_import_binding
         .as_ref()
         .map(|binding| binding.imported_name.as_str())
@@ -1733,6 +1767,8 @@ fn resolve_reference_path_with_deadline<'a>(
         // Namespace member calls resolve only within the bound module; unknown
         // members fail closed instead of falling back to same-named symbols.
         (javascript_namespace_candidates, false)
+    } else if !javascript_namespace_object_call_candidates.is_empty() {
+        (javascript_namespace_object_call_candidates, false)
     } else if !javascript_default_import_candidates.is_empty() {
         (javascript_default_import_candidates, false)
     } else {
@@ -23880,6 +23916,44 @@ fn javascript_default_import_candidate_indexes(
             module_path,
             &mut candidates,
         );
+    }
+    Ok(candidates.into_iter().collect())
+}
+
+fn javascript_namespace_object_call_candidate_indexes(
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    module_paths: &BTreeSet<String>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<usize>> {
+    if module_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidates = BTreeSet::new();
+    for module_path in module_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving JavaScript/TypeScript namespace-object call")?;
+        }
+        // The namespace object is callable only when the bound module exports
+        // a single CommonJS callable value; other modules fail closed.
+        let Some(binding) = resolve_javascript_namespace_object_call_binding(
+            module_path,
+            file_overrides,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        for exporting_path in &binding.module_paths {
+            collect_javascript_member_candidates_in_module(
+                raw_symbols,
+                name_index,
+                &binding.imported_name,
+                exporting_path,
+                &mut candidates,
+            );
+        }
     }
     Ok(candidates.into_iter().collect())
 }
