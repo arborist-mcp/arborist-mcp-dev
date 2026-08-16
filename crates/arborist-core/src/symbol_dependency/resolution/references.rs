@@ -880,14 +880,16 @@ fn resolve_reference_path_with_deadline<'a>(
                     csharp_global_import_context,
                 ));
             }
-            return Ok(resolve_csharp_namespace_imported_nested_static_method(
+            if let Some(symbol_id) = resolve_csharp_namespace_imported_nested_static_method(
                 raw_symbols,
                 semantic_path_index,
                 &namespace_imports,
                 nested_type_path,
                 method_name,
                 call_arity,
-            ));
+            ) {
+                return Ok(Some(symbol_id));
+            }
         }
         if let Some((method_name, binding)) = resolve_csharp_type_alias_binding_for_reference(
             &source_symbol.file_path,
@@ -1014,6 +1016,38 @@ fn resolve_reference_path_with_deadline<'a>(
                 method_name,
                 call_arity,
             ));
+        }
+        if let Some(target_path) = csharp_namespace_absolute_dotted_static_target_path(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? && let Some((type_path, method_name)) = target_path.rsplit_once("::")
+        {
+            // A type-qualified static method on a namespace-absolute dotted
+            // type such as `Other.Derived.Make()` or
+            // `Other.Derived<HelperA>.Make()` (with the generic argument
+            // lists stripped by the caller) resolves through the
+            // receiver-type binding rules, and the nearest declaring
+            // class/record ancestor pins the target like the simple-type
+            // branch above.
+            return resolve_csharp_type_qualified_static_method(
+                source_symbol,
+                type_path,
+                method_name,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         let (method_name, has_explicit_this_receiver) =
             if let Some(method_name) = reference_name.strip_prefix("this.") {
@@ -4806,6 +4840,37 @@ fn resolve_csharp_factory_static_method<'a>(
             method_name,
             factory_arity,
         )
+    } else if let Some(target_path) = csharp_namespace_absolute_dotted_static_target_path(
+        source_symbol,
+        factory_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? && let Some((type_path, method_name)) = target_path.rsplit_once("::")
+    {
+        // A factory on a namespace-absolute dotted type such as
+        // `Other.Derived.Make()` or `Other.Derived<HelperA>.Make()` names a
+        // top-level namespace root rather than a relative, imported, or
+        // alias-rooted path, so the receiver type resolves through the
+        // existing receiver-type binding rules and the nearest declaring
+        // class/record ancestor pins the static target like the simple-type
+        // branch above.
+        resolve_csharp_type_qualified_static_method(
+            source_symbol,
+            type_path,
+            method_name,
+            factory_arity,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else {
         None
     };
@@ -13817,6 +13882,64 @@ fn csharp_namespace_relative_dotted_static_target_path(
             current_path.rsplit_once("::").map(|(parent, _)| parent)
         };
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# namespace-absolute dotted type resolution inputs explicit"
+)]
+fn csharp_namespace_absolute_dotted_static_target_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((type_path, method_name)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if type_path.is_empty()
+        || !type_path.contains('.')
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || method_name == "this"
+        || type_path.starts_with("global::")
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return Ok(None);
+    }
+    let Some(binding) = resolve_csharp_receiver_type_binding(
+        source_symbol,
+        type_path,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if binding.alias_name.is_some() {
+        return Ok(None);
+    }
+    let Some(target_type_path) = csharp_dispatchable_type_path(
+        source_symbol,
+        raw_symbols,
+        &binding,
+        csharp_is_type_declaration,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{target_type_path}::{method_name}")))
 }
 
 #[allow(
