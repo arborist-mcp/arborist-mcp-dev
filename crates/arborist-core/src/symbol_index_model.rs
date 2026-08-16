@@ -16,6 +16,7 @@ pub(crate) enum ReferenceLanguageDetails {
     Cpp(CppReferenceDetails),
     Go(GoReferenceDetails),
     Rust(RustReferenceDetails),
+    JavaScript(JavaScriptReferenceDetails),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,6 +37,14 @@ pub(crate) struct GoReferenceDetails {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RustReferenceDetails {
     pub(crate) import_root: Option<RustImportRoot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct JavaScriptReferenceDetails {
+    /// Module namespace receiver for member calls such as `ns.helper(...)`,
+    /// where `ns` is a local `import * as ns from "..."` binding.
+    #[serde(default)]
+    pub(crate) namespace_receiver: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

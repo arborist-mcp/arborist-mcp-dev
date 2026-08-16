@@ -9,13 +9,20 @@ use crate::semantic::javascript::{
     is_javascript_symbol_node, javascript_parameters, javascript_return_type,
     javascript_semantic_path, javascript_signature, javascript_symbol_name,
 };
-use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::symbol_index_model::{
+    IndexedSymbol, JavaScriptReferenceDetails, ReferenceFact, ReferenceLanguageDetails,
+    symbol_base_name,
+};
 use crate::symbol_reference_compat::reference_facts_from_legacy;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 type ReferenceNames = BTreeSet<String>;
 type CallAritiesByName = BTreeMap<String, BTreeSet<usize>>;
-type DirectCalls = (ReferenceNames, CallAritiesByName);
+/// Namespace-import member calls keyed by `(receiver, member)` with the arities
+/// observed for that spelling, so `ns.helper(value)` records the member name
+/// `helper` plus its namespace receiver `ns`.
+type NamespaceMemberCalls = BTreeMap<(String, String), BTreeSet<usize>>;
+type DirectCalls = (ReferenceNames, CallAritiesByName, NamespaceMemberCalls);
 
 pub(crate) fn index_javascript_symbols_with_deadline(
     path: &Path,
@@ -64,8 +71,19 @@ fn indexed_symbol(
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let (references_by_name, call_arities_by_name) = collect_direct_calls(node, source, deadline)?;
-    let reference_facts = reference_facts_from_legacy(&references_by_name, &call_arities_by_name);
+    let (references_by_name, call_arities_by_name, namespace_member_calls) =
+        collect_direct_calls(node, source, deadline)?;
+    let mut reference_facts =
+        reference_facts_from_legacy(&references_by_name, &call_arities_by_name);
+    reference_facts.extend(namespace_member_calls.into_iter().map(
+        |((receiver, member), arities)| ReferenceFact {
+            spelling: member,
+            call_arities: Some(arities),
+            language_details: ReferenceLanguageDetails::JavaScript(JavaScriptReferenceDetails {
+                namespace_receiver: Some(receiver),
+            }),
+        },
+    ));
 
     Ok(Some(IndexedSymbol {
         extension_receiver: None,
@@ -94,6 +112,7 @@ fn collect_direct_calls(
 ) -> Result<DirectCalls> {
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
+    let mut namespace_member_calls = BTreeMap::new();
     let root = symbol_node
         .child_by_field_name("body")
         .or_else(|| symbol_node.child_by_field_name("value"));
@@ -104,9 +123,10 @@ fn collect_direct_calls(
             deadline,
             &mut references,
             &mut call_arities_by_name,
+            &mut namespace_member_calls,
         )?;
     }
-    Ok((references, call_arities_by_name))
+    Ok((references, call_arities_by_name, namespace_member_calls))
 }
 
 fn collect_direct_calls_from_node(
@@ -115,6 +135,7 @@ fn collect_direct_calls_from_node(
     deadline: Option<&WorkspaceScanDeadline>,
     references: &mut ReferenceNames,
     call_arities_by_name: &mut CallAritiesByName,
+    namespace_member_calls: &mut NamespaceMemberCalls,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting JavaScript/TypeScript direct calls")?;
@@ -139,6 +160,31 @@ fn collect_direct_calls_from_node(
                 .or_default()
                 .insert(arity);
         }
+    } else if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && function.kind() == "member_expression"
+        && let Some(object) = function.child_by_field_name("object")
+        && object.kind() == "identifier"
+        && let Some(property) = function.child_by_field_name("property")
+        && property.kind() == "property_identifier"
+        && let Ok(receiver) = node_text(object, source)
+        && let Ok(member) = node_text(property, source)
+    {
+        let receiver = receiver.trim();
+        let member = member.trim();
+        if !receiver.is_empty() && !member.is_empty() {
+            let arity = node
+                .child_by_field_name("arguments")
+                .map(|arguments| {
+                    let mut cursor = arguments.walk();
+                    arguments.named_children(&mut cursor).count()
+                })
+                .unwrap_or(0);
+            namespace_member_calls
+                .entry((receiver.to_string(), member.to_string()))
+                .or_default()
+                .insert(arity);
+        }
     }
 
     let mut cursor = node.walk();
@@ -146,7 +192,14 @@ fn collect_direct_calls_from_node(
         if is_javascript_symbol_node(child) {
             continue;
         }
-        collect_direct_calls_from_node(child, source, deadline, references, call_arities_by_name)?;
+        collect_direct_calls_from_node(
+            child,
+            source,
+            deadline,
+            references,
+            call_arities_by_name,
+            namespace_member_calls,
+        )?;
     }
     Ok(())
 }
@@ -158,6 +211,7 @@ mod tests {
 
     use super::index_javascript_symbols_with_deadline;
     use crate::language::parse_document;
+    use crate::symbol_index_model::ReferenceLanguageDetails;
 
     #[test]
     fn extracts_javascript_and_typescript_callable_symbols_and_direct_calls() {
@@ -212,5 +266,30 @@ mod tests {
                 assert_eq!(helper.return_type.as_deref(), Some("number"));
             }
         }
+    }
+
+    #[test]
+    fn collects_namespace_member_call_facts() {
+        let source = "import * as ns from \"./helper\";\nexport function caller(value) { return ns.helper(value) + ns.helper(value, 2); }\n";
+        let path = Path::new("caller.ts");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_javascript_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+        assert!(caller.references_by_name.is_empty());
+        assert_eq!(caller.reference_facts.len(), 1);
+        let fact = &caller.reference_facts[0];
+        assert_eq!(fact.spelling, "helper");
+        assert_eq!(fact.call_arities, Some(BTreeSet::from([1, 2])));
+        assert!(matches!(
+            &fact.language_details,
+            ReferenceLanguageDetails::JavaScript(details)
+                if details.namespace_receiver.as_deref() == Some("ns")
+        ));
     }
 }

@@ -68,6 +68,7 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
+use crate::symbol_index_model::JavaScriptReferenceDetails;
 use crate::symbol_index_model::{
     GoReferenceDetails, IndexedSymbol, ReferenceLanguageDetails, RustImportRoot,
 };
@@ -218,6 +219,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                 ),
                 ReferenceLanguageDetails::Go(_) => (false, false, false),
                 ReferenceLanguageDetails::Rust(_) => (false, false, false),
+                ReferenceLanguageDetails::JavaScript(_) => (false, false, false),
             };
         let rust_import_root = match &reference.language_details {
             ReferenceLanguageDetails::Rust(details) => details.import_root.as_ref(),
@@ -225,6 +227,10 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
         };
         let go_reference_details = match &reference.language_details {
             ReferenceLanguageDetails::Go(details) => Some(details),
+            _ => None,
+        };
+        let javascript_reference_details = match &reference.language_details {
+            ReferenceLanguageDetails::JavaScript(details) => Some(details),
             _ => None,
         };
         if matches!(
@@ -250,6 +256,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     &reference.spelling,
                     rust_import_root,
                     go_reference_details,
+                    javascript_reference_details,
                     language_id,
                     call_context,
                     symbol,
@@ -276,6 +283,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             &reference.spelling,
             rust_import_root,
             go_reference_details,
+            javascript_reference_details,
             language_id,
             CallResolutionContext::non_call(),
             symbol,
@@ -309,6 +317,7 @@ fn resolve_reference_path_with_deadline<'a>(
     reference_name: &str,
     rust_import_root: Option<&RustImportRoot>,
     go_reference_details: Option<&GoReferenceDetails>,
+    javascript_reference_details: Option<&JavaScriptReferenceDetails>,
     language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
     source_symbol: &'a IndexedSymbol,
@@ -1632,6 +1641,33 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         Vec::new()
     };
+    let javascript_namespace_receiver =
+        javascript_reference_details.and_then(|details| details.namespace_receiver.as_deref());
+    let javascript_namespace_candidates = if let Some(receiver) = javascript_namespace_receiver {
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &source_symbol.file_path,
+            receiver,
+            file_overrides,
+            javascript_import_contexts_by_file,
+            deadline,
+        )?;
+        if let Some(binding) = binding
+            && !binding.unresolved
+            && binding.imported_name == "<namespace>"
+        {
+            javascript_module_member_candidate_indexes(
+                raw_symbols,
+                name_index,
+                reference_name,
+                &binding.module_paths,
+                deadline,
+            )?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     let candidate_lookup_name = javascript_import_binding
         .as_ref()
         .map(|binding| binding.imported_name.as_str())
@@ -1689,6 +1725,10 @@ fn resolve_reference_path_with_deadline<'a>(
                 false,
             ),
         }
+    } else if javascript_namespace_receiver.is_some() {
+        // Namespace member calls resolve only within the bound module; unknown
+        // members fail closed instead of falling back to same-named symbols.
+        (javascript_namespace_candidates, false)
     } else if !javascript_default_import_candidates.is_empty() {
         (javascript_default_import_candidates, false)
     } else {
@@ -23829,15 +23869,57 @@ fn javascript_default_import_candidate_indexes(
         else {
             continue;
         };
-        if let Some(indexes) = name_index.get(&default_name) {
-            for index in indexes.iter().copied() {
-                if raw_symbols[index].file_path == *module_path {
-                    candidates.insert(index);
-                }
+        collect_javascript_member_candidates_in_module(
+            raw_symbols,
+            name_index,
+            &default_name,
+            module_path,
+            &mut candidates,
+        );
+    }
+    Ok(candidates.into_iter().collect())
+}
+
+fn javascript_module_member_candidate_indexes(
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    member_name: &str,
+    module_paths: &BTreeSet<String>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<usize>> {
+    if module_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidates = BTreeSet::new();
+    for module_path in module_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving JavaScript/TypeScript namespace member")?;
+        }
+        collect_javascript_member_candidates_in_module(
+            raw_symbols,
+            name_index,
+            member_name,
+            module_path,
+            &mut candidates,
+        );
+    }
+    Ok(candidates.into_iter().collect())
+}
+
+fn collect_javascript_member_candidates_in_module(
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    member_name: &str,
+    module_path: &str,
+    candidates: &mut BTreeSet<usize>,
+) {
+    if let Some(indexes) = name_index.get(member_name) {
+        for index in indexes.iter().copied() {
+            if raw_symbols[index].file_path == *module_path {
+                candidates.insert(index);
             }
         }
     }
-    Ok(candidates.into_iter().collect())
 }
 
 fn javascript_module_default_export_name_for_path(

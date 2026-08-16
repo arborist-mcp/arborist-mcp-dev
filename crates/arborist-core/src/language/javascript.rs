@@ -218,20 +218,16 @@ fn collect_default_and_namespace_import_bindings(
         if local_name.is_empty() {
             continue;
         }
-        // Default imports resolve to the target module's default export;
-        // namespace imports remain capability-gated until a dedicated
-        // namespace-resolution slice establishes their contract.
-        let unresolved = imported_name == "<namespace>";
+        // Default imports resolve to the target module's default export and
+        // namespace imports bind the whole target module so member calls such
+        // as `ns.helper(...)` can resolve within it; non-local module paths
+        // still fail closed inside insert_javascript_module_binding.
         insert_javascript_module_binding(
             bindings,
             local_name,
             imported_name.to_owned(),
-            if unresolved {
-                None
-            } else {
-                module_path.clone()
-            },
-            unresolved,
+            module_path.clone(),
+            false,
         );
     }
     Ok(())
@@ -688,7 +684,7 @@ const escaped = require("./escaped\\name");
     }
 
     #[test]
-    fn binds_default_imports_and_keeps_namespace_imports_unsupported() {
+    fn binds_default_and_namespace_imports_to_local_modules() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-default-bindings-{}",
             std::process::id()
@@ -732,8 +728,16 @@ const escaped = require("./escaped\\name");
             );
         }
         let namespace = imports.get("namespace").unwrap();
-        assert!(namespace.unresolved);
-        assert!(namespace.module_paths.is_empty());
+        assert_eq!(namespace.imported_name, "<namespace>");
+        assert!(!namespace.unresolved);
+        assert_eq!(
+            namespace
+                .module_paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![helper_path.clone()]
+        );
 
         let forwarded = reexports.get("forwarded").unwrap();
         assert_eq!(forwarded.imported_name, "default");
