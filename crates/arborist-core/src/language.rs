@@ -35,6 +35,7 @@ pub(crate) use java::{
 pub(crate) use javascript::{
     javascript_export_local_names, javascript_local_module_dependency_paths,
     javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
+    javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check,

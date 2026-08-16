@@ -963,6 +963,72 @@ fn insert_javascript_module_binding(
     }
 }
 
+/// Returns the local module paths a CommonJS module re-exports wholesale
+/// through top-level `module.exports = require("./module")` assignments. The
+/// module's namespace is the target module's export object, so named members,
+/// default members, and callable-object calls resolve within the target.
+/// Dynamic require arguments, non-require values, and unresolvable local
+/// specifiers fail closed and contribute no path.
+pub(crate) fn javascript_module_reexport_module_paths_with_overrides_and_check(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeSet<PathBuf>> {
+    let mut module_paths = BTreeSet::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if let Some(module_path) =
+            javascript_module_reexport_target(statement, path, source, file_overrides)?
+        {
+            module_paths.insert(module_path);
+        }
+    }
+    Ok(module_paths)
+}
+
+/// Returns the local module path a top-level statement re-exports wholesale
+/// through `module.exports = require("./module")`, or `None` for other shapes.
+fn javascript_module_reexport_target(
+    statement: Node<'_>,
+    path: &Path,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<Option<PathBuf>> {
+    let expression = if statement.kind() == "expression_statement" {
+        statement.named_child(0)
+    } else {
+        None
+    };
+    let Some(assignment) = expression else {
+        return Ok(None);
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(None);
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(None);
+    };
+    if !is_module_exports_member(left, source)? {
+        return Ok(None);
+    }
+    let Some(right) = assignment.child_by_field_name("right") else {
+        return Ok(None);
+    };
+    let Some(specifier) = direct_require_specifier(right, source)? else {
+        return Ok(None);
+    };
+    Ok(resolve_local_javascript_module_path_with_overrides(
+        path,
+        &specifier,
+        file_overrides,
+    ))
+}
+
 /// Returns whether the statement is a star re-export (`export * from "./x"`).
 /// `export * as ns from "./x"` is a namespace re-export and is not included.
 fn is_javascript_star_reexport_statement(node: Node<'_>) -> bool {
@@ -1287,7 +1353,9 @@ mod tests {
 
     use super::{
         javascript_export_local_names, javascript_module_callable_export_local_name,
-        javascript_module_default_export_local_name, javascript_named_export_names,
+        javascript_module_default_export_local_name,
+        javascript_module_reexport_module_paths_with_overrides_and_check,
+        javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
         javascript_star_reexport_module_paths_with_overrides_and_check,
@@ -2086,6 +2154,73 @@ exports.Klass = class Klass {};
         assert_eq!(binding.imported_name, "<namespace>");
         assert!(binding.unresolved);
         assert!(binding.module_paths.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn collects_module_reexport_require_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        std::fs::write(&impl_path, "exports.helper = function helper() {}\n").unwrap();
+        let source = "module.exports = require(\"./impl.cjs\");\n";
+        let document = parse_document(&module, source).unwrap();
+
+        let paths = javascript_module_reexport_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![crate::language::normalize_path(&impl_path)]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_non_require_module_exports_shapes_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-reexport-shapes-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("bridge.cjs");
+        for source in [
+            // Non-require values and member assignments do not re-export the
+            // whole module.
+            "module.exports = { helper };\n",
+            "module.exports = function helper() {}\n",
+            "module.exports = helper;\n",
+            "exports.helper = require(\"./impl.cjs\");\n",
+            // Dynamic require arguments fail closed.
+            "module.exports = require(specifier);\n",
+        ] {
+            let document = parse_document(&module, source).unwrap();
+            let paths = javascript_module_reexport_module_paths_with_overrides_and_check(
+                &module,
+                document.tree.root_node(),
+                source,
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                paths.is_empty(),
+                "source {source:?} must fail closed, paths: {paths:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 }
