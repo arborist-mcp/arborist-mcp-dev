@@ -36,8 +36,7 @@ use super::super::java::{
     resolve_java_type_import_binding_for_name,
 };
 use super::super::javascript::{
-    JavaScriptImportBinding, JavaScriptImportContext,
-    resolve_javascript_module_default_export_name,
+    JavaScriptImportBinding, JavaScriptImportContext, resolve_javascript_default_import_local_name,
     resolve_javascript_named_import_binding_for_reference,
     resolve_javascript_namespace_member_binding, resolve_javascript_namespace_object_call_binding,
 };
@@ -23924,7 +23923,7 @@ fn javascript_default_import_candidate_indexes(
             deadline.check("resolving JavaScript/TypeScript default import")?;
         }
         let Some(default_name) =
-            resolve_javascript_module_default_export_name(module_path, file_overrides, deadline)?
+            resolve_javascript_default_import_local_name(module_path, file_overrides, deadline)?
         else {
             continue;
         };

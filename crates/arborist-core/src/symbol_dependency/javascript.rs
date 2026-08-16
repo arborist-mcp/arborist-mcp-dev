@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, javascript_export_local_names,
+    ParsedDocument, detect_language, javascript_export_local_names,
     javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
@@ -446,18 +446,14 @@ fn unresolved_named_module_binding(imported_name: &str) -> JavaScriptImportBindi
     }
 }
 
-/// Returns the local name of `module_path`'s default export when it is a
-/// named declaration (`export default function foo() {}`,
-/// `export default foo;`, or `export { foo as default };`); anonymous default
-/// exports return `None` and fail closed.
-pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_name(
+/// Reads and parses a JavaScript/TypeScript module with the cooperative parse
+/// deadline applied when one is supplied.
+fn read_javascript_module_document(
     module_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
-    if let Some(deadline) = deadline {
-        deadline.check("reading JavaScript/TypeScript default export module")?;
-    }
+    deadline_label: &'static str,
+) -> Result<(String, ParsedDocument)> {
     let path = Path::new(module_path);
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalize_path(path)))
@@ -468,13 +464,75 @@ pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_nam
         parse_document_with_timeout(
             path,
             &source,
-            deadline
-                .remaining_timeout_micros("parsing JavaScript/TypeScript default export module")?,
+            deadline.remaining_timeout_micros(deadline_label)?,
         )?
     } else {
         parse_document(path, &source)?
     };
+    Ok((source, document))
+}
+
+/// Returns the local name of `module_path`'s default export when it is a
+/// named declaration (`export default function foo() {}`,
+/// `export default foo;`, `export { foo as default };`) or a CommonJS
+/// `exports.default = ...` / `module.exports.default = ...` member assignment
+/// naming a module-level symbol; anonymous default exports, conflicting
+/// default declarations, and modules with absent default exports return `None`
+/// and fail closed. The CommonJS callable `module.exports = ...` export is not
+/// a `.default` member and is intentionally excluded here.
+pub(in crate::symbol_dependency) fn resolve_javascript_module_default_export_name(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript default export module")?;
+    }
+    let (source, document) = read_javascript_module_document(
+        module_path,
+        file_overrides,
+        deadline,
+        "parsing JavaScript/TypeScript default export module",
+    )?;
     crate::language::javascript_module_default_export_local_name(document.tree.root_node(), &source)
+}
+
+/// Returns the local name a default import (`import name from "./module")`
+/// binds when the module's default export can be resolved conservatively. The
+/// module's ESM default export or CommonJS `exports.default` /
+/// `module.exports.default` member assignment names the target; when neither
+/// exists, a CommonJS callable `module.exports = <callable>` export is the
+/// default import target under interop semantics. Ambiguous or absent default
+/// exports return `None` and fail closed.
+pub(in crate::symbol_dependency) fn resolve_javascript_default_import_local_name(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript default import module")?;
+    }
+    let (source, document) = read_javascript_module_document(
+        module_path,
+        file_overrides,
+        deadline,
+        "parsing JavaScript/TypeScript default import module",
+    )?;
+    let root = document.tree.root_node();
+    let mut names = BTreeSet::new();
+    if let Some(name) = crate::language::javascript_module_default_export_local_name(root, &source)?
+    {
+        names.insert(name);
+    }
+    if names.is_empty()
+        && let Some(name) =
+            crate::language::javascript_module_callable_export_local_name(root, &source)?
+    {
+        names.insert(name);
+    }
+    Ok((names.len() == 1)
+        .then(|| names.iter().next().cloned())
+        .flatten())
 }
 
 /// Resolves the binding for a bare call to `module_path`'s namespace object
@@ -712,6 +770,7 @@ mod tests {
 
     use super::{
         javascript_import_context_for_file_with_overrides_and_deadline,
+        resolve_javascript_default_import_local_name,
         resolve_javascript_named_import_binding_for_reference,
         resolve_javascript_namespace_member_binding,
         resolve_javascript_namespace_object_call_binding,
@@ -2345,6 +2404,280 @@ mod tests {
         assert!(
             member.is_none(),
             "cyclic wholesale re-export chains must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_cjs_default_member_default_import_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-default-member-import-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import helper from \"./impl.cjs\";\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import binding should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        assert_eq!(
+            resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
+                .unwrap(),
+            Some("helper".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_cjs_callable_default_import_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-callable-default-import-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("server.cjs");
+        fs::write(&impl_path, "module.exports = function app() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "import app from \"./server.cjs\";\nexport function caller() { return app(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "app",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("callable default import binding should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        assert_eq!(
+            resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
+                .unwrap(),
+            Some("app".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_cjs_callable_default_import_over_shadowed_default_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-callable-shadow-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let impl_path = root.join("server.cjs");
+        // The `module.exports = ...` replacement shadows the earlier
+        // `exports.default` member assignment, so the callable stays the
+        // default import target.
+        fs::write(
+            &impl_path,
+            "function helper() {}\nfunction app() {}\nexports.default = helper;\nmodule.exports = app;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
+                .unwrap(),
+            Some("app".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_ambiguous_cjs_default_imports_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-default-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for (name, source) in [
+            // Competing .default member assignments are ambiguous.
+            (
+                "conflict.cjs",
+                "function a() {}\nfunction b() {}\nexports.default = a;\nexports.default = b;\n",
+            ),
+            // Anonymous .default values name no symbol.
+            ("anonymous.cjs", "exports.default = function () {};\n"),
+            // Non-symbol .default values name no module-level symbol.
+            ("value.cjs", "exports.default = 42;\n"),
+        ] {
+            let module = root.join(name);
+            fs::write(&module, source).unwrap();
+            assert_eq!(
+                resolve_javascript_default_import_local_name(&normalize_path(&module), None, None,)
+                    .unwrap(),
+                None,
+                "source {source:?} must fail closed"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_default_member_through_cjs_default_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-default-member-namespace-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./impl.cjs\";\nexport function caller() { return ns.default(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "default",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("cjs default member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_default_member_through_cjs_callable_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-callable-default-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "module.exports = function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./impl.cjs\";\nexport function caller() { return ns.default(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "default",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap();
+        assert!(
+            member.is_none(),
+            "a callable module.exports does not expose a .default member"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_wholesale_chain_to_cjs_default_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-default-wholesale-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "module.exports = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "import helper from \"./bridge.cjs\";\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import binding should resolve through the chain");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        assert_eq!(
+            resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
+                .unwrap(),
+            Some("helper".to_owned())
         );
         let _ = fs::remove_dir_all(root);
     }
