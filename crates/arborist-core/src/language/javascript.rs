@@ -190,6 +190,24 @@ fn collect_javascript_named_reexport_module_paths(
                 imported_name == "<unsupported>",
             );
         }
+        // `export * as ns from "./module"` re-exports the target module's
+        // namespace under the exported name; member calls on it resolve
+        // within the target module like a namespace import.
+        if let Some(namespace_export) = node
+            .named_children(&mut node.walk())
+            .find(|child| child.kind() == "namespace_export")
+            && let Some(namespace_name) = namespace_export.named_child(0)
+            && let Ok(namespace_name) = node_text(namespace_name, source)
+            && !namespace_name.trim().is_empty()
+        {
+            insert_javascript_module_binding(
+                bindings,
+                namespace_name.trim().to_owned(),
+                "<namespace>".to_owned(),
+                module_path,
+                false,
+            );
+        }
     }
 
     let mut cursor = node.walk();
@@ -1105,5 +1123,44 @@ const escaped = require("./escaped\\name");
                 "source: {source:?}"
             );
         }
+    }
+
+    #[test]
+    fn binds_namespace_reexports_to_local_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-reexports-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        let helper_path = crate::language::normalize_path(&helper);
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "export * as ns from \"./helper\";\nexport * from \"./other\";\n";
+        let document = parse_document(&bridge, source).unwrap();
+
+        let reexports = javascript_named_reexport_module_paths_with_overrides_and_check(
+            &bridge,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let ns = reexports
+            .get("ns")
+            .expect("namespace re-export should be recorded");
+        assert_eq!(ns.imported_name, "<namespace>");
+        assert!(!ns.unresolved);
+        assert_eq!(
+            ns.module_paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![helper_path]
+        );
+        assert!(!reexports.contains_key("other"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

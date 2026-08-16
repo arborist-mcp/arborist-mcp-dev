@@ -807,4 +807,83 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn resolves_namespace_reexports_to_target_module() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-reexport-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { ns } from \"./bridge\";\nns.helper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * as ns from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert_eq!(binding.imported_name, "<namespace>");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_reexports_with_missing_targets_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-reexport-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { ns } from \"./bridge\";\nns.helper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * as ns from \"./missing\";\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert!(binding.unresolved);
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
 }
