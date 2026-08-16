@@ -768,7 +768,7 @@ For every adapter with `REFERENCE_TRACE`, test that:
 
 ### 17.4 Fuzzing and resource limits
 
-New grammars and language-specific Tree-sitter queries should be added to the existing fuzz and deadline strategy. At minimum, malformed input and queries must not panic, bypass capture limits, or ignore parse deadlines. New source walkers must check existing cooperative deadlines at bounded intervals.
+New grammars and language-specific Tree-sitter queries should be added to the existing fuzz and deadline strategy. At minimum, malformed input and queries must not panic, bypass capture limits, or ignore parse deadlines. New source walkers must check existing cooperative deadlines at bounded intervals. C++ qualified/unqualified reference path and type-alias resolution walkers now check these deadlines at bounded intervals.
 
 ## 18. Observability And Diagnostics
 

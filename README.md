@@ -682,4 +682,5 @@ Remaining larger work includes:
 - Extending C++ semantic support beyond overload-aware callable identities to
   fuller language-aware overload resolution and remaining grammar coverage.
 - Adding broader fuzz/property coverage and cancellation for remaining native
-  symbol-resolution operations.
+  symbol-resolution operations (C++ qualified/unqualified reference path and
+  type-alias walkers now check cooperative scan deadlines).
