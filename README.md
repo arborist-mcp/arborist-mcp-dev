@@ -36,9 +36,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   `.hpp`, `.hh`, `.hxx`, `.h++` — semantic skeletons, indexing, tracing, patching, and queries.
 - JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
   conservative direct-call tracing through local named imports, named re-export chains,
-  default imports that name a module's default export, and namespace-import
-  member calls, star re-export chains, static local dependency refresh, structural
-  patching, and queries.
+  default imports that name a module's default export, namespace-import member calls
+  and namespace re-export chains, star re-export chains, static local dependency
+  refresh, structural patching, and queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing,
@@ -553,9 +553,10 @@ for response shapes, error behavior, and examples.
 - JavaScript, TypeScript, and TSX Tree-sitter parsing, query execution,
   semantic skeletons, conservative direct-call tracing through local named imports,
   named re-export chains, default imports that name a module's default export,
-  namespace-import member calls, star re-export chains, static local module
-  dependency refresh, and structural patching with syntax-level validation; bare
-  namespace usage and language-specific reference-binding validation remain deferred.
+  namespace-import member calls and namespace re-export chains, star re-export
+  chains, static local module dependency refresh, and structural patching with
+  syntax-level validation; bare namespace usage and language-specific
+  reference-binding validation remain deferred.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
   It traces unshadowed bare direct calls to functions in the same source-file module, qualified direct
