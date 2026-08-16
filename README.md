@@ -37,8 +37,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
   conservative direct-call tracing through local named imports, named re-export chains,
   default imports that name a module's default export, namespace member calls that
-  follow the bound module's named and star re-export chains, star re-export chains,
-  static local dependency refresh, structural patching, and queries.
+  follow the bound module's named and star re-export chains and default exports,
+  star re-export chains, static local dependency refresh, structural patching, and
+  queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing,
@@ -554,9 +555,10 @@ for response shapes, error behavior, and examples.
   semantic skeletons, conservative direct-call tracing through local named imports,
   named re-export chains, default imports that name a module's default export,
   namespace member calls that follow the bound module's named and star re-export
-  chains, star re-export chains for named imports, static local module dependency
-  refresh, and structural patching with syntax-level validation; bare namespace
-  usage and language-specific reference-binding validation remain deferred.
+  chains and default exports, star re-export chains for named imports, static
+  local module dependency refresh, and structural patching with syntax-level
+  validation; direct namespace-object calls and language-specific
+  reference-binding validation remain deferred.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
   It traces unshadowed bare direct calls to functions in the same source-file module, qualified direct
@@ -673,8 +675,9 @@ Remaining larger work includes:
 - Extending Kotlin trace resolution beyond conservative same-package, imported, and companion-object bindings,
   plus language-specific Kotlin patch binding validation, only after dedicated fixtures establish safe
   behavior.
-- Completing JavaScript/TypeScript bare namespace usage resolution plus
-  language-specific patch binding validation.
+- Resolving direct JavaScript/TypeScript namespace-object calls
+  (`ns(...)`, CommonJS-interop only) plus language-specific patch binding
+  validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond overload-aware callable identities to
