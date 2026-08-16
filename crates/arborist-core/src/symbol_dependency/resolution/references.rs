@@ -799,14 +799,19 @@ fn resolve_reference_path_with_deadline<'a>(
             if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
                 return Ok(None);
             }
-            return Ok(resolve_csharp_imported_nested_static_method(
+            return resolve_csharp_imported_nested_static_method(
+                source_symbol,
                 raw_symbols,
                 semantic_path_index,
                 &binding,
                 &nested_type_path,
                 &method_name,
                 call_arity,
-            ));
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         if let Some(csharp_global_import_context) = csharp_global_import_context
             && let Some((nested_type_path, method_name, binding)) =
@@ -821,14 +826,19 @@ fn resolve_reference_path_with_deadline<'a>(
             if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
                 return Ok(None);
             }
-            return Ok(resolve_csharp_imported_nested_static_method(
+            return resolve_csharp_imported_nested_static_method(
+                source_symbol,
                 raw_symbols,
                 semantic_path_index,
                 &binding,
                 &nested_type_path,
                 &method_name,
                 call_arity,
-            ));
+                Some(csharp_global_import_context),
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         if let Some((type_path, _)) = reference_name.rsplit_once('.')
             && type_path.contains('.')
@@ -4796,20 +4806,26 @@ fn resolve_csharp_factory_static_method<'a>(
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
-    )? {
-        resolve_csharp_candidate(
+    )? && let Some((type_path, method_name)) = target_path.rsplit_once("::")
+    {
+        // An alias-rooted dotted factory such as
+        // `OuterAlias.Inner<HelperB>.Make()` names a nested type under the
+        // alias target, so the receiver type resolves through the existing
+        // receiver-type binding rules and the nearest declaring
+        // class/record ancestor pins the static target like the
+        // simple-type branch above.
+        resolve_csharp_type_qualified_static_method(
+            source_symbol,
+            type_path,
+            method_name,
+            factory_arity,
             raw_symbols,
             semantic_path_index,
-            &target_path,
-            Some(source_symbol),
-            factory_arity,
-            CSharpCandidateRequirements {
-                node_kind: "method_declaration",
-                require_static: true,
-                require_instance: false,
-                require_same_file: false,
-            },
-        )
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if let Some((type_name, method_name)) = factory_name.split_once('.')
         && !type_name.is_empty()
         && type_name != "this"
@@ -14085,11 +14101,19 @@ fn resolve_csharp_alias_to_dotted_type_path(
     if alias_name.is_empty()
         || rest.is_empty()
         || !is_safe_csharp_identifier(alias_name)
-        || rest
-            .split('.')
-            .any(|segment| !is_safe_csharp_identifier(segment))
         || !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols)
     {
+        return Ok(None);
+    }
+    // The alias-relative spelling may include constructed generic segments
+    // such as `Inner<HelperB>` in `OuterAlias.Inner<HelperB>`, so normalize
+    // the rest like a plain constructed receiver spelling (strip balanced
+    // type-argument lists and join with `::`) to match the indexed type
+    // declaration; malformed spellings fail closed.
+    let Some(rest_semantic_path) = crate::language::csharp_generic_type_semantic_path(rest) else {
+        return Ok(None);
+    };
+    if rest_semantic_path.is_empty() {
         return Ok(None);
     }
     let binding = match resolve_csharp_type_alias_binding_for_name(
@@ -14118,7 +14142,7 @@ fn resolve_csharp_alias_to_dotted_type_path(
         }
     };
     let mut target_type_path = binding.semantic_type_path;
-    for segment in rest.split('.') {
+    for segment in rest_semantic_path.split("::") {
         target_type_path.push_str("::");
         target_type_path.push_str(segment);
     }
@@ -14499,14 +14523,23 @@ fn resolve_csharp_static_type_imported_method(
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# alias-rooted nested static method resolution inputs explicit"
+)]
 fn resolve_csharp_imported_nested_static_method(
+    source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     binding: &CSharpTypeAliasBinding,
     nested_type_path: &str,
     method_name: &str,
     call_arity: usize,
-) -> Option<String> {
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
     let mut type_path = binding.semantic_type_path.clone();
     for segment in std::iter::once("").chain(nested_type_path.split("::")) {
         if !segment.is_empty() {
@@ -14521,22 +14554,25 @@ fn resolve_csharp_imported_nested_static_method(
             .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
             .count();
         if type_candidates != 1 {
-            return None;
+            return Ok(None);
         }
     }
-    let target_path = format!("{type_path}::{method_name}");
-    resolve_csharp_candidate(
+    // An alias-rooted nested static member such as
+    // `OuterAlias.Inner<HelperB>.VoidMethod()` dispatches through the
+    // nested type's unique class/record ancestor chain, so an inherited
+    // member pins the nearest declaring base method like the simple-type
+    // branches above.
+    resolve_csharp_type_qualified_static_method(
+        source_symbol,
+        &type_path,
+        method_name,
+        call_arity,
         raw_symbols,
         semantic_path_index,
-        &target_path,
-        None,
-        call_arity,
-        CSharpCandidateRequirements {
-            node_kind: "method_declaration",
-            require_static: true,
-            require_instance: false,
-            require_same_file: false,
-        },
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
     )
 }
 
