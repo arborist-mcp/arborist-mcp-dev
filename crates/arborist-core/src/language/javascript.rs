@@ -273,10 +273,13 @@ fn collect_javascript_star_reexport_module_paths(
 /// Collects the names a module source declares as direct named exports:
 /// declaration exports (`export function foo`, `export const foo`,
 /// `export class Foo`, TypeScript `export interface Foo`/`export type Foo`),
-/// `export { foo }` / `export { foo as bar }` clauses without a source, and
+/// `export { foo }` / `export { foo as bar }` clauses without a source,
 /// CommonJS `module.exports = { ... }` object-literal properties that name a
-/// local identifier. Re-export forms (`export ... from "./module"`) and
-/// default exports are not direct named exports and are excluded.
+/// local identifier, and CommonJS `exports.name = ...` /
+/// `module.exports.name = ...` member assignments that name a local symbol.
+/// Re-export forms (`export ... from "./module"`), default exports, computed
+/// or string property access, and anonymous assigned values are not direct
+/// named exports and are excluded.
 pub(crate) fn javascript_named_export_names(
     root: Node<'_>,
     source: &str,
@@ -286,10 +289,12 @@ pub(crate) fn javascript_named_export_names(
 }
 
 /// Collects the exported-name to local-name mappings for aliased direct
-/// exports: `export { local as exported }` clauses and CommonJS
+/// exports: `export { local as exported }` clauses, CommonJS
 /// `module.exports = { exported: local }` pairs whose value is a local
-/// identifier. Namespace member resolution uses these so `ns.exported(...)`
-/// resolves to the declaring local symbol.
+/// identifier, and CommonJS `exports.exported = local` /
+/// `module.exports.exported = local` assignments whose value is a differently
+/// named local symbol. Namespace member resolution uses these so
+/// `ns.exported(...)` resolves to the declaring local symbol.
 pub(crate) fn javascript_export_local_names(
     root: Node<'_>,
     source: &str,
@@ -314,9 +319,12 @@ fn javascript_direct_export_facts(
         }
         if statement.kind() == "expression_statement" {
             // CommonJS `module.exports = { ... }` object literals export their
-            // identifier-valued property names; other assignment shapes fail
-            // closed in commonjs_object_export_facts.
+            // identifier-valued property names, and `exports.name = ...` /
+            // `module.exports.name = ...` member assignments export the
+            // assigned local symbol; other assignment shapes fail closed in
+            // the helpers below.
             commonjs_object_export_facts(statement, source, &mut names, &mut local_names)?;
+            commonjs_exports_member_export_facts(statement, source, &mut names, &mut local_names)?;
             continue;
         }
         if statement.kind() != "export_statement" {
@@ -465,6 +473,93 @@ fn commonjs_object_export_facts(
         }
     }
     Ok(())
+}
+
+/// Records the names a CommonJS module exports through top-level member
+/// assignments on the `exports` object (`exports.helper = ...`) or the
+/// `module.exports` object (`module.exports.helper = ...`). The exported name
+/// maps to the assigned value's local symbol when the value is an identifier
+/// (`exports.helper = helper`), a named function/generator expression
+/// (`exports.helper = function helper() {}`), or a named class expression;
+/// anonymous functions/classes, arrow functions, calls, and other non-symbol
+/// values fail closed because they name no module-level symbol. Computed and
+/// string property access (`exports[name]`, `exports["name"]`) also fails
+/// closed.
+fn commonjs_exports_member_export_facts(
+    statement: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    local_names: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let Some(assignment) = statement.named_child(0) else {
+        return Ok(());
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(());
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(());
+    };
+    if left.kind() != "member_expression" {
+        return Ok(());
+    }
+    let Some(object) = left.child_by_field_name("object") else {
+        return Ok(());
+    };
+    // Only `exports.name` and `module.exports.name` mutate the exported
+    // namespace; other member objects (and `exports[name]` / `exports["name"]`
+    // which parse as subscript expressions) fail closed.
+    let is_exports_object = (object.kind() == "identifier"
+        && node_text(object, source)?.trim() == "exports")
+        || is_module_exports_member(object, source)?;
+    if !is_exports_object {
+        return Ok(());
+    }
+    let Some(property) = left.child_by_field_name("property") else {
+        return Ok(());
+    };
+    if property.kind() != "property_identifier" {
+        return Ok(());
+    }
+    let exported_name = node_text(property, source)?.trim().to_owned();
+    if exported_name.is_empty() {
+        return Ok(());
+    }
+    let Some(value) = assignment.child_by_field_name("right") else {
+        return Ok(());
+    };
+    let Some(local_name) = javascript_assigned_export_local_name(value, source)? else {
+        return Ok(());
+    };
+    names.insert(exported_name.clone());
+    if exported_name != local_name {
+        local_names.insert(exported_name, local_name);
+    }
+    Ok(())
+}
+
+/// Returns the local symbol name an assignment value names, or `None` when the
+/// value is anonymous or not a module-level symbol. Identifiers and named
+/// function/generator/class expressions name a symbol; anonymous functions,
+/// arrow functions, calls, and other expressions fail closed.
+fn javascript_assigned_export_local_name(value: Node<'_>, source: &str) -> Result<Option<String>> {
+    match value.kind() {
+        "identifier" => {
+            let name = node_text(value, source)?.trim().to_owned();
+            Ok((!name.is_empty()).then_some(name))
+        }
+        "function_expression" | "generator_function" | "class" => {
+            let Some(name) = value.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            if name.is_missing() {
+                return Ok(None);
+            }
+            let name = node_text(name, source)?.trim().to_owned();
+            Ok((!name.is_empty()).then_some(name))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Returns whether `node` is a `module.exports` member expression.
@@ -1801,5 +1896,65 @@ module.exports = { first: first, second };
             local_names,
             BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
         );
+    }
+
+    #[test]
+    fn collects_commonjs_exports_member_export_names() {
+        let source = r#"
+function helper(value) { return value; }
+exports.helper = helper;
+module.exports.direct = function direct(value) { return value; };
+exports.alias = localHelper;
+exports.generator = function* generator() { yield 1; };
+exports.Klass = class Klass {};
+"#;
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "helper".to_string(),
+                "direct".to_string(),
+                "alias".to_string(),
+                "generator".to_string(),
+                "Klass".to_string(),
+            ])
+        );
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("alias".to_string(), "localHelper".to_string())])
+        );
+    }
+
+    #[test]
+    fn keeps_anonymous_computed_and_non_symbol_exports_member_fail_closed() {
+        for source in [
+            // Anonymous values name no module-level symbol.
+            "exports.helper = () => {};\n",
+            "exports.helper = function () {};\n",
+            // Computed and string property access do not expose a static name.
+            "exports[helper] = helper;\n",
+            "exports[\"helper\"] = helper;\n",
+            // Non-symbol values and non-exports assignments export nothing.
+            "exports.helper = other.helper;\n",
+            "exports.helper = buildHelper();\n",
+            "const value = 1;\n",
+        ] {
+            let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+            let root = document.tree.root_node();
+            let names = javascript_named_export_names(root, source, None).unwrap();
+            assert!(
+                names.is_empty(),
+                "source {source:?} must fail closed, names: {names:?}"
+            );
+            let local_names = javascript_export_local_names(root, source, None).unwrap();
+            assert!(
+                local_names.is_empty(),
+                "source {source:?} must fail closed, local_names: {local_names:?}"
+            );
+        }
     }
 }
