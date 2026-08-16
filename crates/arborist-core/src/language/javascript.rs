@@ -67,6 +67,25 @@ pub(crate) fn javascript_named_reexport_module_paths_with_overrides_and_check(
     Ok(bindings)
 }
 
+pub(crate) fn javascript_star_reexport_module_paths_with_overrides_and_check(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeSet<PathBuf>> {
+    let mut module_paths = BTreeSet::new();
+    collect_javascript_star_reexport_module_paths(
+        path,
+        root,
+        source,
+        file_overrides,
+        check,
+        &mut module_paths,
+    )?;
+    Ok(module_paths)
+}
+
 pub(crate) fn resolve_local_javascript_module_path(
     current_path: &Path,
     specifier: &str,
@@ -185,6 +204,125 @@ fn collect_javascript_named_reexport_module_paths(
         )?;
     }
     Ok(())
+}
+
+fn collect_javascript_star_reexport_module_paths(
+    path: &Path,
+    node: Node<'_>,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+    module_paths: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
+    if let Some(check) = check {
+        check()?;
+    }
+    if is_javascript_star_reexport_statement(node)
+        && let Some(source_node) = node.child_by_field_name("source")
+        && let Some(specifier) = javascript_string_literal(source_node, source)?
+        && let Some(module_path) =
+            resolve_local_javascript_module_path_with_overrides(path, &specifier, file_overrides)
+    {
+        module_paths.insert(module_path);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_javascript_star_reexport_module_paths(
+            path,
+            child,
+            source,
+            file_overrides,
+            check,
+            module_paths,
+        )?;
+    }
+    Ok(())
+}
+
+/// Collects the names a module source declares as direct named exports:
+/// declaration exports (`export function foo`, `export const foo`,
+/// `export class Foo`, TypeScript `export interface Foo`/`export type Foo`),
+/// and `export { foo }` / `export { foo as bar }` clauses without a source.
+/// Re-export forms (`export ... from "./module"`) and default exports are not
+/// direct named exports and are excluded.
+pub(crate) fn javascript_named_export_names(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if statement.kind() != "export_statement" {
+            continue;
+        }
+        if statement.child_by_field_name("source").is_some() {
+            // `export { name as alias } from "./module"` and `export * from
+            // "./module"` are re-exports, not direct declarations.
+            continue;
+        }
+        if let Some(export_clause) = statement.named_child(0)
+            && export_clause.kind() == "export_clause"
+        {
+            let mut clause_cursor = export_clause.walk();
+            for specifier in export_clause.named_children(&mut clause_cursor) {
+                if specifier.kind() != "export_specifier" {
+                    continue;
+                }
+                let exported_node = specifier
+                    .child_by_field_name("alias")
+                    .or_else(|| specifier.child_by_field_name("name"));
+                if let Some(exported_node) = exported_node
+                    && let Ok(exported_name) = node_text(exported_node, source)
+                    && !exported_name.trim().is_empty()
+                {
+                    names.insert(exported_name.trim().to_owned());
+                }
+            }
+            continue;
+        }
+        // `export default ...` exports the name `default`, not the underlying
+        // declaration's name; the dedicated default-export helper owns it.
+        let text = node_text(statement, source)?.trim_start();
+        let is_default_export = text
+            .strip_prefix("export")
+            .is_some_and(|rest| rest.trim_start().starts_with("default"));
+        if is_default_export {
+            continue;
+        }
+        if let Some(declaration) = statement.child_by_field_name("declaration") {
+            // Function, class, interface, type-alias, and enum declarations
+            // carry their name directly; const/let/var declarations carry it
+            // on each variable declarator.
+            let mut declared_names = BTreeSet::new();
+            if let Some(declared_name) = declaration.child_by_field_name("name")
+                && matches!(declared_name.kind(), "identifier" | "type_identifier")
+                && let Ok(name) = node_text(declared_name, source)
+                && !name.trim().is_empty()
+            {
+                declared_names.insert(name.trim().to_owned());
+            }
+            let mut cursor = declaration.walk();
+            for child in declaration.named_children(&mut cursor) {
+                if child.kind() != "variable_declarator" {
+                    continue;
+                }
+                if let Some(declared_name) = child.child_by_field_name("name")
+                    && matches!(declared_name.kind(), "identifier" | "type_identifier")
+                    && let Ok(name) = node_text(declared_name, source)
+                    && !name.trim().is_empty()
+                {
+                    declared_names.insert(name.trim().to_owned());
+                }
+            }
+            names.extend(declared_names);
+        }
+    }
+    Ok(names)
 }
 
 fn collect_default_and_namespace_import_bindings(
@@ -373,6 +511,17 @@ fn insert_javascript_module_binding(
             binding.module_paths.clear();
         }
     }
+}
+
+/// Returns whether the statement is a star re-export (`export * from "./x"`).
+/// `export * as ns from "./x"` is a namespace re-export and is not included.
+fn is_javascript_star_reexport_statement(node: Node<'_>) -> bool {
+    if node.kind() != "export_statement" || node.child_by_field_name("source").is_none() {
+        return false;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .all(|child| child.kind() != "export_clause" && child.kind() != "namespace_export")
 }
 
 fn named_import_bindings(node: Node<'_>, source: &str) -> Result<Vec<(String, String)>> {
@@ -582,9 +731,10 @@ mod tests {
     use anyhow::bail;
 
     use super::{
-        javascript_module_default_export_local_name,
+        javascript_module_default_export_local_name, javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
+        javascript_star_reexport_module_paths_with_overrides_and_check,
         javascript_static_module_specifiers,
     };
     use crate::language::parse_document;
@@ -878,5 +1028,82 @@ const escaped = require("./escaped\\name");
             Some(&BTreeSet::from([helper]))
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn collects_star_reexport_module_paths_to_local_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-reexports-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        let first = root.join("first.ts");
+        let second = root.join("second.ts");
+        std::fs::write(&first, "export function first() {}\n").unwrap();
+        std::fs::write(&second, "export function second() {}\n").unwrap();
+        let source = "export * from \"./first\";\nexport * as ns from \"./second\";\nexport { first as renamed } from \"./first\";\n";
+        let document = parse_document(&bridge, source).unwrap();
+
+        let module_paths = javascript_star_reexport_module_paths_with_overrides_and_check(
+            &bridge,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            module_paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![crate::language::normalize_path(&first)]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn collects_direct_named_export_names_conservatively() {
+        for (source, expected) in [
+            (
+                "export function helper() {}\n",
+                BTreeSet::from(["helper".to_string()]),
+            ),
+            (
+                "export const helper = () => 1;\nexport class Counter {}\nexport interface Shape {}\n",
+                BTreeSet::from([
+                    "Counter".to_string(),
+                    "Shape".to_string(),
+                    "helper".to_string(),
+                ]),
+            ),
+            (
+                "export { helper };\n",
+                BTreeSet::from(["helper".to_string()]),
+            ),
+            (
+                "export { helper as forwarded };\n",
+                BTreeSet::from(["forwarded".to_string()]),
+            ),
+            (
+                "export { helper as default };\n",
+                BTreeSet::from(["default".to_string()]),
+            ),
+            ("export default function helper() {}\n", BTreeSet::new()),
+            ("export default helper;\n", BTreeSet::new()),
+            (
+                "export { helper } from \"./other\";\nexport * from \"./other\";\n",
+                BTreeSet::new(),
+            ),
+            ("function helper() {}\n", BTreeSet::new()),
+        ] {
+            let document = parse_document(Path::new("sample.ts"), source).unwrap();
+            assert_eq!(
+                javascript_named_export_names(document.tree.root_node(), source, None).unwrap(),
+                expected,
+                "source: {source:?}"
+            );
+        }
     }
 }

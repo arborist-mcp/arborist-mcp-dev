@@ -4,9 +4,11 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, javascript_named_import_module_paths_with_overrides_and_check,
-    javascript_named_reexport_module_paths_with_overrides_and_check, normalize_path,
-    parse_document, parse_document_with_timeout, read_source,
+    detect_language, javascript_named_export_names,
+    javascript_named_import_module_paths_with_overrides_and_check,
+    javascript_named_reexport_module_paths_with_overrides_and_check,
+    javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -22,6 +24,8 @@ pub(in crate::symbol_dependency) struct JavaScriptImportBinding {
 pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     pub(crate) named_import_bindings: BTreeMap<String, JavaScriptImportBinding>,
     pub(crate) named_reexport_bindings: BTreeMap<String, JavaScriptImportBinding>,
+    pub(crate) star_reexport_module_paths: BTreeSet<String>,
+    pub(crate) named_export_names: BTreeSet<String>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -115,6 +119,21 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
             )
         })
         .collect(),
+        star_reexport_module_paths: javascript_star_reexport_module_paths_with_overrides_and_check(
+            path,
+            document.tree.root_node(),
+            &source,
+            file_overrides,
+            Some(&check_traversal_deadline),
+        )?
+        .into_iter()
+        .map(|path| normalize_path(&path))
+        .collect(),
+        named_export_names: javascript_named_export_names(
+            document.tree.root_node(),
+            &source,
+            Some(&check_traversal_deadline),
+        )?,
     })
 }
 
@@ -183,6 +202,36 @@ fn resolve_named_module_binding(
                 deadline,
                 resolution_stack,
             )?
+        } else if binding.imported_name != "default" {
+            // `export * from "./module"` forwards the target's named exports,
+            // but never a module's default export.
+            match resolve_star_reexported_module_paths(
+                module_path,
+                &binding.imported_name,
+                file_overrides,
+                contexts_by_file,
+                deadline,
+                resolution_stack,
+            )? {
+                StarReexportLookup::Unresolved => {
+                    return Ok(unresolved_named_module_binding(&binding.imported_name));
+                }
+                StarReexportLookup::Found(paths) if paths.len() == 1 => JavaScriptImportBinding {
+                    imported_name: binding.imported_name.clone(),
+                    module_paths: paths,
+                    unresolved: false,
+                },
+                // Multiple defining modules make the star re-export ambiguous;
+                // fail closed instead of guessing.
+                StarReexportLookup::Found(_) => {
+                    return Ok(unresolved_named_module_binding(&binding.imported_name));
+                }
+                StarReexportLookup::Absent => JavaScriptImportBinding {
+                    imported_name: binding.imported_name.clone(),
+                    module_paths: BTreeSet::from([module_path.clone()]),
+                    unresolved: false,
+                },
+            }
         } else {
             JavaScriptImportBinding {
                 imported_name: binding.imported_name.clone(),
@@ -205,6 +254,98 @@ fn resolve_named_module_binding(
     }
 
     Ok(resolved.unwrap_or(binding))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StarReexportLookup {
+    /// The name is not reachable through the module's re-export machinery.
+    Absent,
+    /// The name is exported; the set holds the defining module paths (never
+    /// empty, and more than one entry means the export is ambiguous).
+    Found(BTreeSet<String>),
+    /// The re-export chain is broken, ambiguous, or cyclic and must fail
+    /// closed.
+    Unresolved,
+}
+
+/// Resolves the module paths that define `name` when it is exported by
+/// `module_path` through star re-exports, following named re-export chains
+/// and nested star re-exports transitively with cycle detection. Direct named
+/// exports shadow star re-exports of the same name, matching ESM semantics.
+fn resolve_star_reexported_module_paths(
+    module_path: &str,
+    name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    resolution_stack: &mut BTreeSet<(String, String)>,
+) -> Result<StarReexportLookup> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving JavaScript/TypeScript star re-export")?;
+    }
+    // `export *` never re-exports a module's default export.
+    if name == "default" {
+        return Ok(StarReexportLookup::Absent);
+    }
+    let module_context = javascript_import_context_from_cache(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    // A named re-export of the name is an explicit export and takes
+    // precedence over any star re-export of the same name.
+    if let Some(reexport_binding) = module_context.named_reexport_bindings.get(name) {
+        let resolved = resolve_named_module_binding(
+            reexport_binding.clone(),
+            file_overrides,
+            contexts_by_file,
+            deadline,
+            resolution_stack,
+        )?;
+        if resolved.unresolved || resolved.module_paths.is_empty() {
+            return Ok(StarReexportLookup::Unresolved);
+        }
+        return Ok(StarReexportLookup::Found(resolved.module_paths));
+    }
+    // A direct named export shadows star re-exports of the same name.
+    if module_context.named_export_names.contains(name) {
+        return Ok(StarReexportLookup::Found(BTreeSet::from([
+            module_path.to_owned()
+        ])));
+    }
+    if module_context.star_reexport_module_paths.is_empty() {
+        return Ok(StarReexportLookup::Absent);
+    }
+    let mut defining_paths = BTreeSet::new();
+    for star_target in &module_context.star_reexport_module_paths {
+        let resolution_key = (star_target.clone(), name.to_owned());
+        if !resolution_stack.insert(resolution_key.clone()) {
+            // A star re-export cycle must fail closed.
+            return Ok(StarReexportLookup::Unresolved);
+        }
+        match resolve_star_reexported_module_paths(
+            star_target,
+            name,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+            resolution_stack,
+        )? {
+            StarReexportLookup::Unresolved => {
+                resolution_stack.remove(&resolution_key);
+                return Ok(StarReexportLookup::Unresolved);
+            }
+            StarReexportLookup::Found(paths) => defining_paths.extend(paths),
+            StarReexportLookup::Absent => {}
+        }
+        resolution_stack.remove(&resolution_key);
+    }
+    Ok(if defining_paths.is_empty() {
+        StarReexportLookup::Absent
+    } else {
+        StarReexportLookup::Found(defining_paths)
+    })
 }
 
 fn unresolved_named_module_binding(imported_name: &str) -> JavaScriptImportBinding {
@@ -405,6 +546,265 @@ mod tests {
         .unwrap()
         .expect("named import should be recorded");
         assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn resolves_named_import_through_star_reexport_from_source_overrides() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-reexport-context-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./bridge\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        assert!(!binding.unresolved);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_star_reexport_through_named_reexport_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-named-chain-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let mid = root.join("mid.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./bridge\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * from \"./mid\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&mid),
+                "export { helper } from \"./helper\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        assert!(!binding.unresolved);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_star_reexport_to_direct_export_when_both_present() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-direct-shadow-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./bridge\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * from \"./helper\";\nexport function helper() {}\n".to_owned(),
+            ),
+            (
+                normalize_path(&helper),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        assert!(!binding.unresolved);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn treats_star_reexport_cycles_as_unresolved() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let first = root.join("first.ts");
+        let second = root.join("second.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./first\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&first),
+                "export * from \"./second\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&second),
+                "export * from \"./first\";\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn treats_ambiguous_star_reexports_as_unresolved() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let first = root.join("first.ts");
+        let second = root.join("second.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./bridge\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * from \"./first\";\nexport * from \"./second\";\n".to_owned(),
+            ),
+            (
+                normalize_path(&first),
+                "export function helper() {}\n".to_owned(),
+            ),
+            (
+                normalize_path(&second),
+                "export function helper() {}\n".to_owned(),
+            ),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_star_reexport_missing_exports_absent() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-star-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        let overrides = BTreeMap::from([
+            (
+                normalize_path(&caller),
+                "import { helper } from \"./bridge\";\nhelper();\n".to_owned(),
+            ),
+            (
+                normalize_path(&bridge),
+                "export * from \"./helper\";\n".to_owned(),
+            ),
+            (normalize_path(&helper), "function helper() {}\n".to_owned()),
+        ]);
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            Some(&overrides),
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import should be recorded");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

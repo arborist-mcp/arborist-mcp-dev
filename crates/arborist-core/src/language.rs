@@ -34,8 +34,9 @@ pub(crate) use java::{
 };
 pub(crate) use javascript::{
     javascript_local_module_dependency_paths, javascript_module_default_export_local_name,
-    javascript_named_import_module_paths_with_overrides_and_check,
+    javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
+    javascript_star_reexport_module_paths_with_overrides_and_check,
 };
 pub(crate) use kotlin::kotlin_local_file_dependency_paths;
 pub use parser::{
