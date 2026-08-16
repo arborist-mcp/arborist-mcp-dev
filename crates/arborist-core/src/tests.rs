@@ -63,6 +63,7 @@ mod persisted_index;
 mod python_overloads;
 mod query_parity;
 mod resolver_safety;
+mod rust_patching;
 mod skeleton;
 mod source_overlay;
 mod support;
