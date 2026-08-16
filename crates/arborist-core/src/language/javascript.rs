@@ -287,6 +287,13 @@ pub(crate) fn javascript_named_export_names(
         if let Some(check) = check {
             check()?;
         }
+        if statement.kind() == "expression_statement" {
+            // CommonJS `module.exports = { ... }` object literals export their
+            // shorthand/same-named property names; other assignment shapes
+            // fail closed in commonjs_object_export_names.
+            names.extend(commonjs_object_export_names(statement, source)?);
+            continue;
+        }
         if statement.kind() != "export_statement" {
             continue;
         }
@@ -353,6 +360,80 @@ pub(crate) fn javascript_named_export_names(
         }
     }
     Ok(names)
+}
+
+/// Collects the names a CommonJS module exports through a direct
+/// `module.exports = { ... }` object literal. Shorthand properties
+/// (`module.exports = { helper }`) and pairs whose value is a same-named
+/// identifier (`module.exports = { helper: helper }`) name an exported local
+/// symbol and resolve; aliased pairs, method definitions, computed and string
+/// keys, and non-object exports fail closed rather than guessing which local
+/// symbol a differently-named property exports.
+fn commonjs_object_export_names(statement: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    let Some(assignment) = statement.named_child(0) else {
+        return Ok(names);
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(names);
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(names);
+    };
+    if !is_module_exports_member(left, source)? {
+        return Ok(names);
+    }
+    let Some(right) = assignment.child_by_field_name("right") else {
+        return Ok(names);
+    };
+    if right.kind() != "object" {
+        return Ok(names);
+    }
+    let mut cursor = right.walk();
+    for property in right.named_children(&mut cursor) {
+        let exported_name = match property.kind() {
+            "shorthand_property_identifier" => node_text(property, source)?.trim().to_owned(),
+            "pair" => {
+                let Some(key) = property.child_by_field_name("key") else {
+                    continue;
+                };
+                let Some(value) = property.child_by_field_name("value") else {
+                    continue;
+                };
+                if value.kind() != "identifier" {
+                    continue;
+                }
+                let key_name = node_text(key, source)?.trim().to_owned();
+                let local_name = node_text(value, source)?.trim().to_owned();
+                if key_name != local_name {
+                    // An aliased property exports a different local symbol;
+                    // resolving it needs name mapping and fails closed.
+                    continue;
+                }
+                key_name
+            }
+            _ => continue,
+        };
+        if !exported_name.is_empty() {
+            names.insert(exported_name);
+        }
+    }
+    Ok(names)
+}
+
+/// Returns whether `node` is a `module.exports` member expression.
+fn is_module_exports_member(node: Node<'_>, source: &str) -> Result<bool> {
+    if node.kind() != "member_expression" {
+        return Ok(false);
+    }
+    let Some(object) = node.child_by_field_name("object") else {
+        return Ok(false);
+    };
+    let Some(property) = node.child_by_field_name("property") else {
+        return Ok(false);
+    };
+    Ok(node_text(object, source)?.trim() == "module"
+        && node_text(property, source)?.trim() == "exports")
 }
 
 fn collect_default_and_namespace_import_bindings(
@@ -1598,5 +1679,49 @@ const escaped = require("./escaped\\name");
             "unsupported require patterns must fail closed, bindings: {bindings:?}"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn collects_commonjs_object_export_names_conservatively() {
+        let source = r#"
+module.exports = { helper };
+module.exports = { first: first, second };
+"#;
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+
+        let names = javascript_named_export_names(document.tree.root_node(), source, None).unwrap();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "first".to_string(),
+                "helper".to_string(),
+                "second".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn keeps_aliased_and_expression_object_exports_fail_closed() {
+        for source in [
+            // Aliased pair exports a differently-named local symbol.
+            "module.exports = { helper: localHelper };\n",
+            // Method shorthand and computed/string keys are not same-named
+            // local symbol exports.
+            "module.exports = { helper() {} };\n",
+            "module.exports = { [name]: helper };\n",
+            "module.exports = { \"helper\": helper };\n",
+            // Non-object module.exports and unrelated assignments export
+            // nothing through this conservative path.
+            "module.exports = helper;\n",
+            "const value = 1;\n",
+        ] {
+            let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+            let names =
+                javascript_named_export_names(document.tree.root_node(), source, None).unwrap();
+            assert!(
+                names.is_empty(),
+                "source {source:?} must fail closed, names: {names:?}"
+            );
+        }
     }
 }
