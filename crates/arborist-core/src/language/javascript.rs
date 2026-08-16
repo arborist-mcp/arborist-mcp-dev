@@ -679,28 +679,107 @@ fn collect_import_equals_namespace_bindings(
 /// Returns the local declaration name of a module's default export when it can
 /// be resolved conservatively: a named `export default function`/`class`
 /// declaration, `export default <identifier>` naming a declared module-level
-/// symbol, or `export { localName as default }`. Anonymous default exports,
-/// expression defaults that do not name a declaration, and modules with
+/// symbol, `export { localName as default }`, or a CommonJS `exports.default =
+/// ...` / `module.exports.default = ...` member assignment naming a module-level
+/// symbol. Anonymous default exports, expression defaults that do not name a
+/// declaration, re-export forms with a source clause, and modules with
 /// conflicting or absent default exports fail closed (`None`).
 pub(crate) fn javascript_module_default_export_local_name(
     root: Node<'_>,
     source: &str,
 ) -> Result<Option<String>> {
-    let mut names = BTreeSet::new();
+    let mut esm_names = BTreeSet::new();
+    let mut cjs_default_names = BTreeSet::new();
+    let mut has_module_exports_replacement = false;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
+        if statement.kind() == "expression_statement" {
+            // A top-level `module.exports = <value>` assignment replaces the
+            // exported object; the `exports` alias keeps pointing at the old
+            // object, so any `exports.*` / `module.exports.*` member
+            // assignments are shadowed and must not count as exports.
+            if let Some(expression) = statement.named_child(0)
+                && expression.kind() == "assignment_expression"
+                && is_javascript_module_exports_assignment(expression, source)?
+            {
+                has_module_exports_replacement = true;
+                continue;
+            }
+            // CommonJS `exports.default = helper` / `module.exports.default =
+            // helper` member assignments expose a `default` member equivalent
+            // to the module's default export for interop consumers.
+            if let Some(name) = javascript_cjs_default_member_assigned_name(statement, source)? {
+                cjs_default_names.insert(name);
+            }
+            continue;
+        }
         if statement.kind() != "export_statement" {
             continue;
         }
         if let Some(name) = javascript_default_export_name(statement, source)? {
-            names.insert(name);
+            esm_names.insert(name);
         }
+    }
+    let mut names = esm_names;
+    if !has_module_exports_replacement {
+        names.extend(cjs_default_names);
     }
     // A module may declare at most one default export; anything else fails
     // closed instead of guessing.
     Ok((names.len() == 1)
         .then(|| names.iter().next().cloned())
         .flatten())
+}
+
+/// Returns the local symbol name a top-level CommonJS `exports.default = ...`
+/// or `module.exports.default = ...` member assignment names, or `None` for
+/// other statement shapes. The assigned value must name a module-level symbol;
+/// anonymous functions/classes, arrow functions, calls, and other non-symbol
+/// values fail closed.
+fn javascript_cjs_default_member_assigned_name(
+    statement: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let expression = if statement.kind() == "expression_statement" {
+        statement.named_child(0)
+    } else {
+        None
+    };
+    let Some(assignment) = expression else {
+        return Ok(None);
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(None);
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(None);
+    };
+    if left.kind() != "member_expression" {
+        return Ok(None);
+    }
+    let Some(object) = left.child_by_field_name("object") else {
+        return Ok(None);
+    };
+    // Only `exports.default` and `module.exports.default` mutate the exported
+    // namespace's default member; other member objects (and `exports["default"]`
+    // which parses as a subscript expression) fail closed.
+    let is_exports_object = (object.kind() == "identifier"
+        && node_text(object, source)?.trim() == "exports")
+        || is_module_exports_member(object, source)?;
+    if !is_exports_object {
+        return Ok(None);
+    }
+    let Some(property) = left.child_by_field_name("property") else {
+        return Ok(None);
+    };
+    if property.kind() != "property_identifier" || node_text(property, source)?.trim() != "default"
+    {
+        return Ok(None);
+    }
+    let Some(value) = assignment.child_by_field_name("right") else {
+        return Ok(None);
+    };
+    javascript_assigned_export_local_name(value, source)
 }
 
 fn javascript_default_export_name(statement: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -1548,6 +1627,45 @@ const escaped = require("./escaped\\name");
             ("export default class {}\n", None),
             ("export default 42;\n", None),
             ("export const helper = () => 1;\n", None),
+            // CommonJS interop default members name the assigned symbol.
+            (
+                "function helper() {}\nexports.default = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nmodule.exports.default = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nexports.default = helper;\nmodule.exports.default = helper;\n",
+                Some("helper"),
+            ),
+            // The same symbol named by both ESM and CommonJS forms is one
+            // default; competing symbols are ambiguous.
+            (
+                "function helper() {}\nexport default helper;\nexports.default = helper;\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nfunction other() {}\nexport default helper;\nexports.default = other;\n",
+                None,
+            ),
+            // Anonymous and non-symbol assigned values fail closed.
+            ("exports.default = function () {};\n", None),
+            ("exports.default = () => 1;\n", None),
+            ("exports.default = 42;\n", None),
+            // Only the `default` member counts as the default export.
+            ("function helper() {}\nexports.helper = helper;\n", None),
+            // A `module.exports = <value>` replacement shadows member
+            // assignments, so the .default member stops naming a default.
+            (
+                "function helper() {}\nexports.default = helper;\nmodule.exports = function app() {}\n",
+                None,
+            ),
+            (
+                "function helper() {}\nexports.default = helper;\nmodule.exports = { other: 1 };\n",
+                None,
+            ),
         ] {
             let document = parse_document(Path::new("sample.ts"), source).unwrap();
             assert_eq!(
