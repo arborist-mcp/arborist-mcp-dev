@@ -263,6 +263,14 @@ pub(crate) fn csharp_return_type(node: Node<'_>, source: &str) -> Option<String>
         .map(str::to_string)
 }
 
+pub(crate) fn csharp_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tree> {
+    // C# symbol nodes are complete declarations that include their attributes and modifiers.
+    // Replacing such a node therefore covers the whole declaration, so a replacement must
+    // reproduce any attributes or modifiers the user wants to keep; surrounding declarations
+    // and comments outside the node's byte range are left untouched.
+    node
+}
+
 fn csharp_file_scoped_namespace_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut cursor = root.walk();
     let namespaces = root
