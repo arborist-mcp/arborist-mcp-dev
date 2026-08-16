@@ -4708,20 +4708,26 @@ fn resolve_csharp_factory_static_method<'a>(
         factory_name,
         source_symbol,
         raw_symbols,
-    ) {
-        resolve_csharp_candidate(
+    ) && let Some((type_path, method_name)) = target_path.rsplit_once("::")
+    {
+        // A factory on a namespace-relative dotted type such as
+        // `Other.Derived.Make()` may be declared directly on the type or
+        // inherited through its unique class/record ancestor chain, so the
+        // nearest declaring ancestor pins the target like the simple-type
+        // branch above; a constructed generic receiver spelling keeps its
+        // arguments for the caller's return-type substitution.
+        resolve_csharp_type_qualified_static_method(
+            source_symbol,
+            type_path,
+            method_name,
+            factory_arity,
             raw_symbols,
             semantic_path_index,
-            &target_path,
-            Some(source_symbol),
-            factory_arity,
-            CSharpCandidateRequirements {
-                node_kind: "method_declaration",
-                require_static: true,
-                require_instance: false,
-                require_same_file: false,
-            },
-        )
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if let Some(target_path) = csharp_namespace_imported_dotted_static_target_path(
         source_symbol,
         factory_name,
@@ -5458,7 +5464,31 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             raw_symbols,
             semantic_path_index,
         ) {
-            Some(type_path) => (type_path, None),
+            Some(type_path) => {
+                // A constructed generic spelling such as `Derived<HelperA>`
+                // or `Other.Derived<HelperA>` resolves as a plain declared
+                // type but keeps its concrete type arguments so inherited
+                // static factories and fields declared with the base's type
+                // parameters substitute the spelling's arguments; plain
+                // non-generic spellings keep no binding.
+                let receiver_binding =
+                    if crate::language::csharp_generic_type_arguments(&type_name).is_some() {
+                        resolve_csharp_receiver_type_binding(
+                            source_symbol,
+                            &type_name,
+                            raw_symbols,
+                            semantic_path_index,
+                            csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                            csharp_global_import_context,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )?
+                    } else {
+                        None
+                    };
+                (type_path, receiver_binding)
+            }
             None => {
                 // A type prefix that does not resolve as a plain declared type
                 // may still resolve through the same alias and namespace-import
@@ -11499,7 +11529,7 @@ fn resolve_csharp_receiver_type_binding(
     let generic_arguments =
         crate::language::csharp_generic_type_arguments(type_name).unwrap_or_default();
     let binding = if !type_name.starts_with("global::")
-        && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
+        && let Some(semantic_path) = csharp_receiver_type_semantic_path(type_name)
         && semantic_path.contains("::")
     {
         let scoped_type_path = csharp_scoped_receiver_type_path(
@@ -11589,9 +11619,47 @@ fn resolve_csharp_receiver_type_binding(
     // the receiver's concrete arguments. Non-alias spellings keep the
     // spelling-derived arguments.
     if binding.alias_name.is_some() && generic_arguments.is_empty() {
-        binding.generic_arguments = binding.raw_generic_argument_spellings.clone();
+        // An alias target's concrete arguments are raw spellings in the
+        // alias's file scope (such as `HelperA` in
+        // `using Alias = Other.Derived<HelperA>;`), so resolve each spelling
+        // to its canonical semantic path before it is composed into member
+        // declared types; otherwise a cross-namespace declaring type cannot
+        // resolve the substituted spelling. Unresolvable spellings (built-in
+        // or unindexed types) stay unchanged and fail closed downstream.
+        binding.generic_arguments = binding
+            .raw_generic_argument_spellings
+            .iter()
+            .map(|spelling| {
+                csharp_resolve_receiver_type_argument_spelling(
+                    source_symbol,
+                    spelling,
+                    raw_symbols,
+                    semantic_path_index,
+                )
+                .unwrap_or_else(|| spelling.clone())
+            })
+            .collect();
     } else {
-        binding.generic_arguments = generic_arguments;
+        // A non-alias constructed generic spelling's concrete arguments are
+        // raw spellings in the receiver's file scope (such as `HelperA` in
+        // `Other.Derived<HelperA>`), so resolve each spelling to its
+        // canonical semantic path before it is composed into member declared
+        // types; otherwise a cross-namespace declaring type cannot resolve
+        // the substituted spelling. Unresolvable spellings (built-in,
+        // parameter, or unindexed types) stay unchanged and fail closed
+        // downstream.
+        binding.generic_arguments = generic_arguments
+            .iter()
+            .map(|spelling| {
+                csharp_resolve_receiver_type_argument_spelling(
+                    source_symbol,
+                    spelling,
+                    raw_symbols,
+                    semantic_path_index,
+                )
+                .unwrap_or_else(|| spelling.clone())
+            })
+            .collect();
     }
     // A dotted nested spelling such as `Outer<Helper>.Inner<Helper>` also
     // records the concrete type arguments of every enclosing segment
@@ -11624,7 +11692,23 @@ fn resolve_csharp_receiver_type_binding(
                 let chain_start = segments.len().saturating_sub(type_segment_count);
                 let enclosing_end = segments.len().saturating_sub(1);
                 if chain_start <= enclosing_end {
-                    segments[chain_start..enclosing_end].to_vec()
+                    segments[chain_start..enclosing_end]
+                        .iter()
+                        .map(|segment| {
+                            segment
+                                .iter()
+                                .map(|spelling| {
+                                    csharp_resolve_receiver_type_argument_spelling(
+                                        source_symbol,
+                                        spelling,
+                                        raw_symbols,
+                                        semantic_path_index,
+                                    )
+                                    .unwrap_or_else(|| spelling.clone())
+                                })
+                                .collect()
+                        })
+                        .collect()
                 } else {
                     Vec::new()
                 }
@@ -11639,7 +11723,20 @@ fn resolve_csharp_receiver_type_binding(
             .raw_enclosing_generic_argument_spellings
             .iter()
             .skip_while(|segment| segment.is_empty())
-            .cloned()
+            .map(|segment| {
+                segment
+                    .iter()
+                    .map(|spelling| {
+                        csharp_resolve_receiver_type_argument_spelling(
+                            source_symbol,
+                            spelling,
+                            raw_symbols,
+                            semantic_path_index,
+                        )
+                        .unwrap_or_else(|| spelling.clone())
+                    })
+                    .collect()
+            })
             .collect();
     }
     if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
@@ -12193,6 +12290,67 @@ fn csharp_scoped_receiver_type_path(
         [] => None,
         _ => None,
     }
+}
+
+/// Computes the semantic path for a receiver type spelling, accepting either
+/// a dot-qualified C# spelling such as `Other.Derived<HelperA>` (normalized
+/// through the language helper) or an already-normalized canonical semantic
+/// path such as `Demo::HelperA` produced by factory return-type substitution
+/// when the declaring type and the substituting receiver live in different
+/// namespaces.
+fn csharp_receiver_type_semantic_path(type_name: &str) -> Option<String> {
+    if type_name.contains("::") {
+        // An already-canonical spelling separates namespace and type segments
+        // with `::`; strip any balanced generic argument lists (such as the
+        // substituted `Box<Lib::Helper>` hop type) so the bare semantic path
+        // stays indexable, and normalize any residual dot-qualified segments.
+        let normalized = type_name.strip_prefix("global::").unwrap_or(type_name);
+        let mut stripped = String::with_capacity(normalized.len());
+        let mut depth = 0usize;
+        for character in normalized.chars() {
+            match character {
+                '<' => depth += 1,
+                '>' => depth = depth.checked_sub(1)?,
+                _ if depth == 0 => stripped.push(character),
+                _ => {}
+            }
+        }
+        if depth != 0 || stripped.is_empty() {
+            return None;
+        }
+        let semantic_path = stripped.replace('.', "::");
+        semantic_path
+            .split("::")
+            .all(|segment| !segment.is_empty())
+            .then_some(semantic_path)
+    } else {
+        crate::language::csharp_generic_type_semantic_path(type_name)
+    }
+}
+
+/// Resolves a concrete generic argument spelling from a type alias's target
+/// (such as `HelperA` in `using Alias = Other.Derived<HelperA>;`) to its
+/// canonical semantic type path in the alias's file scope, so substituted
+/// member declared types resolve in the declaring type's own namespace.
+/// Constructed generic spellings, unresolvable spellings, and primitive or
+/// unindexed types return `None` and keep the raw spelling unchanged.
+fn csharp_resolve_receiver_type_argument_spelling(
+    source_symbol: &IndexedSymbol,
+    spelling: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    if spelling.contains('<') {
+        return None;
+    }
+    let semantic_path = crate::language::csharp_generic_type_semantic_path(spelling)?;
+    csharp_scoped_receiver_type_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        &semantic_path,
+        csharp_is_type_declaration,
+    )
 }
 
 fn csharp_receiver_type_candidates(

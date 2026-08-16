@@ -168,7 +168,30 @@ fn collect_direct_same_type_calls_from_node(
         let mut cursor = arguments.walk();
         let arity = arguments.named_children(&mut cursor).count();
         references.insert(name.clone());
-        call_arities_by_name.entry(name).or_default().insert(arity);
+        call_arities_by_name
+            .entry(name.clone())
+            .or_default()
+            .insert(arity);
+        // A static type-qualified invocation whose receiver names a
+        // constructed generic type root, such as
+        // `Derived<HelperA>.StaticField.Run(1)`, also records the full chain
+        // spelling with the type arguments preserved so the resolver can
+        // substitute the receiver's concrete arguments into the inherited
+        // static member's declared type; the stripped dotted spelling
+        // (`Derived.StaticField.Run`) cannot recover those arguments. The
+        // extra chain fails closed when it is not a resolvable static-member
+        // chain, so static method calls on constructed types keep resolving
+        // through the stripped dotted spelling.
+        if let Some(chain_spelling) =
+            csharp_constructed_receiver_member_chain_spelling(function, source, bindings)?
+            && chain_spelling != name
+        {
+            references.insert(chain_spelling.clone());
+            call_arities_by_name
+                .entry(chain_spelling)
+                .or_default()
+                .insert(arity);
+        }
     }
 
     let mut cursor = node.walk();
@@ -475,6 +498,28 @@ fn csharp_instance_member_chain_spelling(
         segments = merged;
     }
     Ok(Some(segments.join(".")))
+}
+
+/// Emits the full chain spelling for a static type-qualified invocation
+/// whose receiver names a constructed generic type root, such as
+/// `Derived<HelperA>.StaticField.Run` from
+/// `Derived<HelperA>.StaticField.Run(1)`, so the resolver can substitute the
+/// receiver's concrete type arguments into inherited static member declared
+/// types. Receivers without a constructed generic root, malformed chains, and
+/// locally bound receivers produce no extra fact.
+fn csharp_constructed_receiver_member_chain_spelling(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Option<String>> {
+    let Some((receiver, _)) = csharp_member_hop_receiver_and_name(node) else {
+        return Ok(None);
+    };
+    let receiver_text = crate::language::node_text(receiver, source)?.trim();
+    if !receiver_text.contains('<') {
+        return Ok(None);
+    }
+    csharp_instance_member_chain_spelling(node, source, bindings, true)
 }
 
 fn csharp_direct_invocation_name(
