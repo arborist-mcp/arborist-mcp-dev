@@ -249,6 +249,14 @@ pub(crate) fn java_return_type(node: Node<'_>, source: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn java_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tree> {
+    // Java symbol nodes are complete declarations that include their modifiers and annotations.
+    // Replacing such a node therefore covers the whole declaration, so a replacement must
+    // reproduce any annotations or modifiers the user wants to keep; surrounding declarations
+    // and comments outside the node's byte range are left untouched.
+    node
+}
+
 fn java_full_declaration(node: Node<'_>, source: &str) -> Result<String> {
     Ok(node_text(node, source)?.trim().to_string())
 }

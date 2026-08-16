@@ -312,24 +312,17 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
 
     assert_eq!(descriptor.display_name, "Java");
     assert_eq!(descriptor.extensions, &["java"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "java-nested-import-receiver-trace-v40"
-    );
+    assert_eq!(descriptor.analysis_revision, "java-patch-targeting-v41");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
-    ] {
-        assert!(descriptor.capabilities.contains(capability));
-    }
-    for capability in [
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
-        assert!(!descriptor.capabilities.contains(capability));
+        assert!(descriptor.capabilities.contains(capability));
     }
 }
 

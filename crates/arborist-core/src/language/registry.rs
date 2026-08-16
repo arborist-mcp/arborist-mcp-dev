@@ -480,9 +480,11 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
             | LanguageCapabilities::FILE_DEPENDENCIES.0
-            | LanguageCapabilities::REFERENCE_TRACE.0,
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "java-nested-import-receiver-trace-v40",
+    analysis_revision: "java-patch-targeting-v41",
     grammar: java_grammar,
 };
 static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -1266,24 +1268,29 @@ impl LanguageAdapter for JavaAdapter {
     }
 
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
-        self.syntax.patch_replacement_node(node)
+        crate::semantic::java::java_patch_replacement_node(node)
     }
 
     fn normalize_patch_replacement(
         &self,
-        source: &str,
-        start_byte: usize,
-        end_byte: usize,
-        node_kind: &str,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
         new_code: &str,
     ) -> Result<String> {
-        self.syntax
-            .normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+        Ok(new_code.to_string())
     }
 
-    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
-        self.syntax
-            .replacement_preserves_required_wrappers(node_kind, replacement)
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        // Java modifiers and annotations are inside the replaced declaration node, so the
+        // replacement either preserves or intentionally replaces them; no outer wrapper is
+        // silently dropped.
+        true
     }
 
     fn reconcile_patch_symbol_id(
@@ -1298,19 +1305,14 @@ impl LanguageAdapter for JavaAdapter {
 
     fn collect_patch_reference_validation(
         &self,
-        path: &Path,
-        document: &ParsedDocument,
-        source: &str,
-        symbol_node: Node<'_>,
-        deadline: Option<&dyn DeadlineCheck>,
+        _path: &Path,
+        _document: &ParsedDocument,
+        _source: &str,
+        _symbol_node: Node<'_>,
+        _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
-            path,
-            document,
-            source,
-            symbol_node,
-            deadline,
-        )
+        // Java patch binding validation is deferred; the first slice validates syntax only.
+        Ok(crate::patching::ReferenceValidation::default())
     }
 
     fn query_capture_owner(
