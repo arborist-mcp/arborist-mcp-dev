@@ -33,7 +33,7 @@ pub(crate) use java::{
     java_local_explicit_type_imports, java_local_file_dependency_paths,
 };
 pub(crate) use javascript::{
-    javascript_local_module_dependency_paths,
+    javascript_local_module_dependency_paths, javascript_module_default_export_local_name,
     javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
 };

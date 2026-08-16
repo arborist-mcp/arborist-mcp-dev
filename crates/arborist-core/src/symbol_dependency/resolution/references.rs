@@ -36,7 +36,8 @@ use super::super::java::{
     resolve_java_type_import_binding_for_name,
 };
 use super::super::javascript::{
-    JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
+    JavaScriptImportBinding, JavaScriptImportContext,
+    resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
     KotlinImportContext, KotlinReceiverTypeBindings, kotlin_array_type_component_name,
@@ -63,7 +64,7 @@ use super::type_alias::{
 use crate::language::{
     JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
-    normalize_path, parse_document, read_source,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
@@ -1616,6 +1617,21 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         None
     };
+    let javascript_default_import_candidates = if let Some(binding) =
+        javascript_import_binding.as_ref()
+        && !binding.unresolved
+        && binding.imported_name == "default"
+    {
+        javascript_default_import_candidate_indexes(
+            file_overrides,
+            raw_symbols,
+            name_index,
+            binding,
+            deadline,
+        )?
+    } else {
+        Vec::new()
+    };
     let candidate_lookup_name = javascript_import_binding
         .as_ref()
         .map(|binding| binding.imported_name.as_str())
@@ -1673,6 +1689,8 @@ fn resolve_reference_path_with_deadline<'a>(
                 false,
             ),
         }
+    } else if !javascript_default_import_candidates.is_empty() {
+        (javascript_default_import_candidates, false)
     } else {
         let Some(candidates) = name_index.get(candidate_lookup_name) else {
             return Ok(None);
@@ -23789,6 +23807,64 @@ fn is_kotlin_type_declaration(symbol: &IndexedSymbol) -> bool {
         symbol.node_kind.as_str(),
         "class_declaration" | "interface_declaration" | "object_declaration" | "type_alias"
     )
+}
+
+fn javascript_default_import_candidate_indexes(
+    file_overrides: Option<&BTreeMap<String, String>>,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    binding: &JavaScriptImportBinding,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<usize>> {
+    if binding.unresolved || binding.module_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidates = BTreeSet::new();
+    for module_path in &binding.module_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving JavaScript/TypeScript default import")?;
+        }
+        let Some(default_name) =
+            javascript_module_default_export_name_for_path(module_path, file_overrides, deadline)?
+        else {
+            continue;
+        };
+        if let Some(indexes) = name_index.get(&default_name) {
+            for index in indexes.iter().copied() {
+                if raw_symbols[index].file_path == *module_path {
+                    candidates.insert(index);
+                }
+            }
+        }
+    }
+    Ok(candidates.into_iter().collect())
+}
+
+fn javascript_module_default_export_name_for_path(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let path = Path::new(module_path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript default import module")?;
+    }
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalize_path(path)))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline
+                .remaining_timeout_micros("parsing JavaScript/TypeScript default import module")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
+    crate::language::javascript_module_default_export_local_name(document.tree.root_node(), &source)
 }
 
 #[cfg(test)]

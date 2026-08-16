@@ -119,14 +119,14 @@ fn collect_javascript_named_import_module_paths(
                     file_overrides,
                 )
             });
-        collect_unsupported_import_bindings(node, source, bindings)?;
+        collect_default_and_namespace_import_bindings(node, source, module_path.clone(), bindings)?;
         for (imported_name, local_name) in named_import_bindings(node, source)? {
             insert_javascript_module_binding(
                 bindings,
                 local_name,
                 imported_name.clone(),
                 module_path.clone(),
-                imported_name == "default" || imported_name == "<unsupported>",
+                imported_name == "<unsupported>",
             );
         }
     }
@@ -168,7 +168,7 @@ fn collect_javascript_named_reexport_module_paths(
                 exported_name,
                 imported_name.clone(),
                 module_path.clone(),
-                imported_name == "default" || imported_name == "<unsupported>",
+                imported_name == "<unsupported>",
             );
         }
     }
@@ -187,9 +187,10 @@ fn collect_javascript_named_reexport_module_paths(
     Ok(())
 }
 
-fn collect_unsupported_import_bindings(
+fn collect_default_and_namespace_import_bindings(
     node: Node<'_>,
     source: &str,
+    module_path: Option<PathBuf>,
     bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
 ) -> Result<()> {
     let Some(import_clause) = node
@@ -217,15 +218,119 @@ fn collect_unsupported_import_bindings(
         if local_name.is_empty() {
             continue;
         }
+        // Default imports resolve to the target module's default export;
+        // namespace imports remain capability-gated until a dedicated
+        // namespace-resolution slice establishes their contract.
+        let unresolved = imported_name == "<namespace>";
         insert_javascript_module_binding(
             bindings,
             local_name,
             imported_name.to_owned(),
-            None,
-            true,
+            if unresolved {
+                None
+            } else {
+                module_path.clone()
+            },
+            unresolved,
         );
     }
     Ok(())
+}
+
+/// Returns the local declaration name of a module's default export when it can
+/// be resolved conservatively: a named `export default function`/`class`
+/// declaration, `export default <identifier>` naming a declared module-level
+/// symbol, or `export { localName as default }`. Anonymous default exports,
+/// expression defaults that do not name a declaration, and modules with
+/// conflicting or absent default exports fail closed (`None`).
+pub(crate) fn javascript_module_default_export_local_name(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let mut names = BTreeSet::new();
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if statement.kind() != "export_statement" {
+            continue;
+        }
+        if let Some(name) = javascript_default_export_name(statement, source)? {
+            names.insert(name);
+        }
+    }
+    // A module may declare at most one default export; anything else fails
+    // closed instead of guessing.
+    Ok((names.len() == 1)
+        .then(|| names.iter().next().cloned())
+        .flatten())
+}
+
+fn javascript_default_export_name(statement: Node<'_>, source: &str) -> Result<Option<String>> {
+    // `export { localName as default };` names a declared module-level symbol
+    // even though the statement text does not start with "export default".
+    // Re-export forms with a source clause are handled by the named
+    // re-export machinery and must not count as a local default export.
+    if let Some(export_clause) = statement.named_child(0)
+        && export_clause.kind() == "export_clause"
+        && statement.child_by_field_name("source").is_none()
+    {
+        let mut names = BTreeSet::new();
+        let mut clause_cursor = export_clause.walk();
+        for specifier in export_clause.named_children(&mut clause_cursor) {
+            if specifier.kind() != "export_specifier" {
+                continue;
+            }
+            let Some(alias) = specifier.child_by_field_name("alias") else {
+                continue;
+            };
+            if node_text(alias, source)?.trim() != "default" {
+                continue;
+            }
+            let Some(name) = specifier.child_by_field_name("name") else {
+                continue;
+            };
+            if let Ok(name) = node_text(name, source) {
+                let name = name.trim();
+                if !name.is_empty() {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        return Ok((names.len() == 1)
+            .then(|| names.iter().next().cloned())
+            .flatten());
+    }
+
+    let text = node_text(statement, source)?.trim_start();
+    let is_default_export = text
+        .strip_prefix("export")
+        .is_some_and(|rest| rest.trim_start().starts_with("default"));
+    if !is_default_export {
+        return Ok(None);
+    }
+
+    if let Some(declaration) = statement.child_by_field_name("declaration") {
+        // Named `export default function foo() {}` / `export default class Foo {}`
+        // declarations carry a stable name; anonymous declarations do not.
+        if let Some(name) = declaration.child_by_field_name("name")
+            && !name.is_missing()
+            && let Ok(name) = node_text(name, source)
+        {
+            let name = name.trim();
+            return Ok((!name.is_empty()).then(|| name.to_string()));
+        }
+        return Ok(None);
+    }
+
+    // `export default <identifier>;` names a declared module-level symbol.
+    if let Some(value) = statement.child_by_field_name("value")
+        && value.kind() == "identifier"
+        && let Ok(name) = node_text(value, source)
+    {
+        let name = name.trim();
+        return Ok((!name.is_empty()).then(|| name.to_string()));
+    }
+
+    Ok(None)
 }
 
 fn insert_javascript_module_binding(
@@ -481,6 +586,7 @@ mod tests {
     use anyhow::bail;
 
     use super::{
+        javascript_module_default_export_local_name,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
         javascript_static_module_specifiers,
@@ -582,7 +688,7 @@ const escaped = require("./escaped\\name");
     }
 
     #[test]
-    fn ignores_default_specifiers_when_collecting_named_bindings() {
+    fn binds_default_imports_and_keeps_namespace_imports_unsupported() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-default-bindings-{}",
             std::process::id()
@@ -591,6 +697,7 @@ const escaped = require("./escaped\\name");
         std::fs::create_dir_all(&root).unwrap();
         let module = root.join("module.ts");
         let helper = root.join("helper.ts");
+        let helper_path = crate::language::normalize_path(&helper);
         std::fs::write(&helper, "export default function helper() {}\n").unwrap();
         let source = "import selected from \"./helper\";\nimport * as namespace from \"./helper\";\nimport { default as selectedAlias } from \"./helper\";\nexport { default as forwarded } from \"./helper\";\n";
         let document = parse_document(&module, source).unwrap();
@@ -611,19 +718,67 @@ const escaped = require("./escaped\\name");
             None,
         )
         .unwrap();
-        for local_name in ["selected", "namespace", "selectedAlias"] {
-            assert!(
-                imports
-                    .get(local_name)
-                    .is_some_and(|binding| binding.module_paths.is_empty())
+        for local_name in ["selected", "selectedAlias"] {
+            let binding = imports.get(local_name).unwrap();
+            assert_eq!(binding.imported_name, "default");
+            assert!(!binding.unresolved);
+            assert_eq!(
+                binding
+                    .module_paths
+                    .iter()
+                    .map(|path| crate::language::normalize_path(path))
+                    .collect::<Vec<_>>(),
+                vec![helper_path.clone()]
             );
         }
-        assert!(
-            reexports
-                .get("forwarded")
-                .is_some_and(|binding| binding.module_paths.is_empty())
+        let namespace = imports.get("namespace").unwrap();
+        assert!(namespace.unresolved);
+        assert!(namespace.module_paths.is_empty());
+
+        let forwarded = reexports.get("forwarded").unwrap();
+        assert_eq!(forwarded.imported_name, "default");
+        assert!(!forwarded.unresolved);
+        assert_eq!(
+            forwarded
+                .module_paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![helper_path]
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_module_default_export_local_names_conservatively() {
+        for (source, expected) in [
+            ("export default function helper() {}\n", Some("helper")),
+            ("export default class Counter {}\n", Some("Counter")),
+            (
+                "function helper() {}\nexport default helper;\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nexport { helper as default };\n",
+                Some("helper"),
+            ),
+            (
+                "function helper() {}\nexport { helper as default } from \"./other\";\n",
+                None,
+            ),
+            ("export default function () {}\n", None),
+            ("export default class {}\n", None),
+            ("export default 42;\n", None),
+            ("export const helper = () => 1;\n", None),
+        ] {
+            let document = parse_document(Path::new("sample.ts"), source).unwrap();
+            assert_eq!(
+                javascript_module_default_export_local_name(document.tree.root_node(), source)
+                    .unwrap(),
+                expected.map(str::to_string),
+                "source: {source:?}"
+            );
+        }
     }
 
     #[test]
