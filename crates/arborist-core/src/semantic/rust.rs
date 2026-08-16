@@ -252,6 +252,14 @@ pub(crate) fn rust_return_type(node: Node<'_>, source: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn rust_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tree> {
+    // Rust semantic symbol nodes are complete items: visibility, qualifiers, signature, and
+    // body are part of the same node, while attribute items are separate sibling statements
+    // outside the item's byte range. Replacing the symbol node therefore preserves both
+    // attributes and any enclosing `impl` block or module structure.
+    node
+}
+
 fn rust_inherent_impl_scope_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if node.child_by_field_name("trait").is_some() {
         return Ok(None);

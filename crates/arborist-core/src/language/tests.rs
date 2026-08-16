@@ -334,30 +334,23 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
 }
 
 #[test]
-fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patching() {
+fn rust_adapter_exposes_skeleton_indexing_dependencies_tracing_and_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Rust).unwrap();
 
     assert_eq!(descriptor.display_name, "Rust");
     assert_eq!(descriptor.extensions, &["rs"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "rust-parent-qualified-call-trace-v10"
-    );
+    assert_eq!(descriptor.analysis_revision, "rust-patch-targeting-v11");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
-    ] {
-        assert!(descriptor.capabilities.contains(capability));
-    }
-    for capability in [
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
-        assert!(!descriptor.capabilities.contains(capability));
+        assert!(descriptor.capabilities.contains(capability));
     }
 }
 
