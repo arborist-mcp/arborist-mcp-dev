@@ -39317,3 +39317,127 @@ class Caller : Outer<Helper>.Mid<Helper> {
         );
     }
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_constructed_nested_generic_base_inherited_static_field_and_property_multidimensional_foreach_and_var_initializer_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Outer<T> {
+    class Mid<U> : Base<U> {
+    }
+    class Base<U> {
+        protected static U[,] MATRIX = default;
+        protected static T[,] OUTER_MATRIX = default;
+        protected U[,] Matrix => default;
+        protected T[,] OuterMatrix => default;
+    }
+}
+class Caller : Outer<Helper>.Mid<Helper> {
+    int StaticFieldVar() { var matrix = MATRIX; return matrix[0,0].entry.Run(1); }
+    int StaticFieldForeach() { foreach (var item in MATRIX) { return item.entry.Run(1); } return 0; }
+    int OuterStaticFieldVar() { var matrix = OUTER_MATRIX; return matrix[0,0].entry.Run(1); }
+    int OuterStaticFieldForeach() { foreach (var item in OUTER_MATRIX) { return item.entry.Run(1); } return 0; }
+    int PropertyVar() { var matrix = Matrix; return matrix[0,0].entry.Run(1); }
+    int PropertyForeach() { foreach (var item in Matrix) { return item.entry.Run(1); } return 0; }
+    int OuterPropertyVar() { var matrix = OuterMatrix; return matrix[0,0].entry.Run(1); }
+    int OuterPropertyForeach() { foreach (var item in OuterMatrix) { return item.entry.Run(1); } return 0; }
+    int QualifiedStaticVar() { var matrix = Caller.MATRIX; return matrix[0,0].entry.Run(1); }
+    int QualifiedOuterStaticVar() { var matrix = Caller.OUTER_MATRIX; return matrix[0,0].entry.Run(1); }
+    int FailClosedMissing() { var items = MISSING; return items[0,0].entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A bare inherited static field or property reached through a constructed
+    // nested generic base (`class Caller : Outer<Helper>.Mid<Helper>` with
+    // `Mid<U> : Base<U>` nested in `Outer<T>`) binds `foreach` loop
+    // variables and `var` initializer locals to the member's element
+    // component type after substituting both the outer and the inner generic
+    // arguments, so the inner-parameter `U[,] MATRIX`/`Matrix` and the
+    // outer-parameter `T[,] OUTER_MATRIX`/`OuterMatrix` all yield `Helper`;
+    // a type-qualified static root (`Caller.MATRIX`/`Caller.OUTER_MATRIX`)
+    // substitutes the same enclosing arguments. A member the base chain does
+    // not declare (`MISSING`) fails closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let callers = run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::StaticFieldVar",
+        "Demo::Caller::StaticFieldForeach",
+        "Demo::Caller::OuterStaticFieldVar",
+        "Demo::Caller::OuterStaticFieldForeach",
+        "Demo::Caller::PropertyVar",
+        "Demo::Caller::PropertyForeach",
+        "Demo::Caller::OuterPropertyVar",
+        "Demo::Caller::OuterPropertyForeach",
+        "Demo::Caller::QualifiedStaticVar",
+        "Demo::Caller::QualifiedOuterStaticVar",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller} in {callers:?}"
+        );
+    }
+    assert!(
+        !run_live
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "unexpected live caller for missing member"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::StaticFieldVar",
+        "Demo::Caller::StaticFieldForeach",
+        "Demo::Caller::OuterStaticFieldVar",
+        "Demo::Caller::OuterStaticFieldForeach",
+        "Demo::Caller::PropertyVar",
+        "Demo::Caller::PropertyForeach",
+        "Demo::Caller::OuterPropertyVar",
+        "Demo::Caller::OuterPropertyForeach",
+        "Demo::Caller::QualifiedStaticVar",
+        "Demo::Caller::QualifiedOuterStaticVar",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+    assert!(
+        !run_persisted
+            .callers
+            .iter()
+            .any(|candidate| candidate.symbol_id == "Demo::Caller::FailClosedMissing"),
+        "unexpected persisted caller for missing member"
+    );
+}
