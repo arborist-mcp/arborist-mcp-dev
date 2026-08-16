@@ -39764,3 +39764,278 @@ class NestedCaller : Outer<Helper>.Mid<Helper> {
         assert_eq!(persisted_callers, expected, "{factory} persisted");
     }
 }
+
+#[test]
+fn traces_csharp_outer_generic_parameter_constructed_nested_generic_base_type_qualified_inherited_static_factory_var_initializer_and_direct_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Base<U> {
+    protected static U Make() => default;
+    protected static U[,] MakeMatrix() => default;
+}
+class Derived<T> : Base<T> { }
+class Caller : Derived<Helper> {
+    int QualifiedFactory() { return Caller.Make().Run(1); }
+    int QualifiedFactoryVar() { var helper = Caller.Make(); return helper.Run(1); }
+    int QualifiedFactoryHop() { return Caller.Make().entry.Run(1); }
+    int QualifiedFactoryMatrixVar() { var helper = Caller.MakeMatrix(); return helper[0,0].Run(1); }
+    int QualifiedFactoryMatrixChain() { return Caller.MakeMatrix()[0,0].entry.Run(1); }
+    int FailClosedMissing() { return Caller.Missing().Run(1); }
+}
+class FixedCaller : Base<Helper> {
+    int FixedQualifiedVar() { var helper = FixedCaller.Make(); return helper.Run(1); }
+    int FixedQualifiedChain() { return FixedCaller.Make().entry.Run(1); }
+}
+class Outer<T> {
+    class Mid<U> : Base<U> {
+    }
+    class Base<U> {
+        protected static U Make() => default;
+        protected static T MakeOuter() => default;
+    }
+}
+class NestedCaller : Outer<Helper>.Mid<Helper> {
+    int NestedQualifiedInnerVar() { var helper = NestedCaller.Make(); return helper.Run(1); }
+    int NestedQualifiedInnerDirect() { return NestedCaller.Make().Run(1); }
+    int NestedQualifiedOuterVar() { var helper = NestedCaller.MakeOuter(); return helper.Run(1); }
+    int NestedQualifiedOuterDirect() { return NestedCaller.MakeOuter().Run(1); }
+    int NestedFailClosedMissing() { return NestedCaller.Missing().Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A type-qualified static factory call such as `Caller.Make()` where the
+    // factory is declared on a class/record ancestor dispatches through the
+    // qualified type's unique base chain, so a static factory inherited over a
+    // constructed generic base (`Caller : Derived<Helper>` with `Base<U>::Make`)
+    // or a constructed nested generic base (`NestedCaller : Outer<Helper>.Mid<Helper>`
+    // with `Outer<T>`'s nested `Base<U>`) resolves to the declaring base method
+    // and substitutes the composed arguments for both the last-segment parameter
+    // (`U`) and the outer enclosing parameter (`T`) in the declared return type,
+    // for var initializers, direct calls, member hops, and multi-dimensional
+    // element-access chains. A qualified method the base chain does not declare
+    // (`Caller.Missing()` / `NestedCaller.Missing()`) fails closed.
+    let run_live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let callers = run_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::QualifiedFactory",
+        "Demo::Caller::QualifiedFactoryMatrixVar",
+        "Demo::Caller::QualifiedFactoryVar",
+        "Demo::FixedCaller::FixedQualifiedVar",
+        "Demo::NestedCaller::NestedQualifiedInnerVar",
+        "Demo::NestedCaller::NestedQualifiedInnerDirect",
+        "Demo::NestedCaller::NestedQualifiedOuterVar",
+        "Demo::NestedCaller::NestedQualifiedOuterDirect",
+    ] {
+        assert!(
+            run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Helper Run caller {caller} in {callers:?}"
+        );
+    }
+    let entry_live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let entry_callers = entry_live
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::QualifiedFactoryHop",
+        "Demo::Caller::QualifiedFactoryMatrixChain",
+        "Demo::FixedCaller::FixedQualifiedChain",
+    ] {
+        assert!(
+            entry_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing live Entry Run caller {caller} in {entry_callers:?}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::NestedCaller::NestedFailClosedMissing",
+    ] {
+        assert!(
+            !run_live
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !entry_live
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected live caller for missing qualified factory {caller}"
+        );
+    }
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::QualifiedFactory",
+                "Demo::Caller::QualifiedFactoryHop",
+                "Demo::Caller::QualifiedFactoryVar",
+                "Demo::FixedCaller::FixedQualifiedChain",
+                "Demo::FixedCaller::FixedQualifiedVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeMatrix",
+            vec![
+                "Demo::Caller::QualifiedFactoryMatrixChain",
+                "Demo::Caller::QualifiedFactoryMatrixVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::NestedQualifiedInnerDirect",
+                "Demo::NestedCaller::NestedQualifiedInnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::NestedQualifiedOuterDirect",
+                "Demo::NestedCaller::NestedQualifiedOuterVar",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, factory, TraceDirection::Callers).unwrap();
+        let mut live_callers = live
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        live_callers.sort();
+        assert_eq!(live_callers, expected, "{factory} live");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let callers_persisted = run_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::QualifiedFactory",
+        "Demo::Caller::QualifiedFactoryMatrixVar",
+        "Demo::Caller::QualifiedFactoryVar",
+        "Demo::FixedCaller::FixedQualifiedVar",
+        "Demo::NestedCaller::NestedQualifiedInnerVar",
+        "Demo::NestedCaller::NestedQualifiedInnerDirect",
+        "Demo::NestedCaller::NestedQualifiedOuterVar",
+        "Demo::NestedCaller::NestedQualifiedOuterDirect",
+    ] {
+        assert!(
+            run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Helper Run caller {caller} in {callers_persisted:?}"
+        );
+    }
+    let entry_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let entry_callers_persisted = entry_persisted
+        .callers
+        .iter()
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    for caller in [
+        "Demo::Caller::QualifiedFactoryHop",
+        "Demo::Caller::QualifiedFactoryMatrixChain",
+        "Demo::FixedCaller::FixedQualifiedChain",
+    ] {
+        assert!(
+            entry_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Entry Run caller {caller} in {entry_callers_persisted:?}"
+        );
+    }
+    for caller in [
+        "Demo::Caller::FailClosedMissing",
+        "Demo::NestedCaller::NestedFailClosedMissing",
+    ] {
+        assert!(
+            !run_persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller)
+                && !entry_persisted
+                    .callers
+                    .iter()
+                    .any(|candidate| candidate.symbol_id == caller),
+            "unexpected persisted caller for missing qualified factory {caller}"
+        );
+    }
+
+    for (factory, expected) in [
+        (
+            "Demo::Base::Make",
+            vec![
+                "Demo::Caller::QualifiedFactory",
+                "Demo::Caller::QualifiedFactoryHop",
+                "Demo::Caller::QualifiedFactoryVar",
+                "Demo::FixedCaller::FixedQualifiedChain",
+                "Demo::FixedCaller::FixedQualifiedVar",
+            ],
+        ),
+        (
+            "Demo::Base::MakeMatrix",
+            vec![
+                "Demo::Caller::QualifiedFactoryMatrixChain",
+                "Demo::Caller::QualifiedFactoryMatrixVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::Make",
+            vec![
+                "Demo::NestedCaller::NestedQualifiedInnerDirect",
+                "Demo::NestedCaller::NestedQualifiedInnerVar",
+            ],
+        ),
+        (
+            "Demo::Outer::Base::MakeOuter",
+            vec![
+                "Demo::NestedCaller::NestedQualifiedOuterDirect",
+                "Demo::NestedCaller::NestedQualifiedOuterVar",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, factory, TraceDirection::Callers).unwrap();
+        let mut persisted_callers = persisted
+            .callers
+            .iter()
+            .map(|candidate| candidate.symbol_id.clone())
+            .collect::<Vec<_>>();
+        persisted_callers.sort();
+        assert_eq!(persisted_callers, expected, "{factory} persisted");
+    }
+}

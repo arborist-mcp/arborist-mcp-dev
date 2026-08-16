@@ -952,20 +952,25 @@ fn resolve_reference_path_with_deadline<'a>(
         }
         if let Some(target_path) =
             csharp_simple_type_static_target_path(reference_name, source_symbol, raw_symbols)
+            && let Some((type_path, method_name)) = target_path.rsplit_once("::")
         {
-            return Ok(resolve_csharp_candidate(
+            // A type-qualified static method such as `Caller.Make()` may be
+            // declared directly on the qualified type or inherited through
+            // its unique class/record ancestor chain; the nearest declaring
+            // ancestor pins the target, so an inherited static factory over a
+            // constructed generic base resolves to the declaring base method.
+            return resolve_csharp_type_qualified_static_method(
+                source_symbol,
+                type_path,
+                method_name,
+                call_arity,
                 raw_symbols,
                 semantic_path_index,
-                &target_path,
-                Some(source_symbol),
-                call_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            ));
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
         }
         if let Some((type_name, method_name)) = reference_name.split_once('.')
             && !type_name.is_empty()
@@ -4649,20 +4654,20 @@ fn resolve_csharp_factory_static_method<'a>(
         )
     } else if let Some(target_path) =
         csharp_simple_type_static_target_path(factory_name, source_symbol, raw_symbols)
+        && let Some((type_path, method_name)) = target_path.rsplit_once("::")
     {
-        resolve_csharp_candidate(
+        resolve_csharp_type_qualified_static_method(
+            source_symbol,
+            type_path,
+            method_name,
+            factory_arity,
             raw_symbols,
             semantic_path_index,
-            &target_path,
-            Some(source_symbol),
-            factory_arity,
-            CSharpCandidateRequirements {
-                node_kind: "method_declaration",
-                require_static: true,
-                require_instance: false,
-                require_same_file: false,
-            },
-        )
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     } else if let Some(target_path) = csharp_namespace_relative_dotted_static_target_path(
         factory_name,
         source_symbol,
@@ -5524,23 +5529,44 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 .copied()
                 .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
                 .collect::<Vec<_>>();
-            if method_indexes.is_empty() {
-                continue;
-            }
-            let Some(method_id) = resolve_csharp_candidate(
-                raw_symbols,
-                semantic_path_index,
-                &method_path,
-                Some(source_symbol),
-                hop_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            ) else {
-                return Ok(None);
+            let method_id = if method_indexes.is_empty() {
+                // A type with no direct static factory may still inherit one
+                // through its unique class/record ancestor chain, so
+                // `Caller.Make()` with `Caller : Derived<Helper>` and
+                // `Base<U>::Make` resolves to the declaring base method; a
+                // type without such a method defers to a longer type prefix.
+                match resolve_csharp_type_qualified_static_method(
+                    source_symbol,
+                    &type_path,
+                    &method_name,
+                    hop_arity,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )? {
+                    Some(symbol_id) => symbol_id,
+                    None => continue,
+                }
+            } else {
+                let Some(method_id) = resolve_csharp_candidate(
+                    raw_symbols,
+                    semantic_path_index,
+                    &method_path,
+                    Some(source_symbol),
+                    hop_arity,
+                    CSharpCandidateRequirements {
+                        node_kind: "method_declaration",
+                        require_static: true,
+                        require_instance: false,
+                        require_same_file: false,
+                    },
+                ) else {
+                    return Ok(None);
+                };
+                method_id
             };
             let Some(method_symbol) = raw_symbols
                 .iter()
@@ -5555,6 +5581,17 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 method_symbol,
                 &method_type_arguments,
                 return_type,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            let return_type = csharp_substitute_qualified_factory_return_type(
+                method_symbol,
+                &type_path,
+                &return_type,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -5620,23 +5657,44 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 .copied()
                 .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
                 .collect::<Vec<_>>();
-            if method_indexes.is_empty() {
-                continue;
-            }
-            let Some(method_id) = resolve_csharp_candidate(
-                raw_symbols,
-                semantic_path_index,
-                &method_path,
-                Some(source_symbol),
-                hop_arity,
-                CSharpCandidateRequirements {
-                    node_kind: "method_declaration",
-                    require_static: true,
-                    require_instance: false,
-                    require_same_file: false,
-                },
-            ) else {
-                return Ok(None);
+            let method_id = if method_indexes.is_empty() {
+                // A type with no direct static factory may still inherit one
+                // through its unique class/record ancestor chain, so
+                // `Caller.Make()` with `Caller : Derived<Helper>` and
+                // `Base<U>::Make` resolves to the declaring base method; a
+                // type without such a method defers to a longer type prefix.
+                match resolve_csharp_type_qualified_static_method(
+                    source_symbol,
+                    &type_path,
+                    &method_name,
+                    hop_arity,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )? {
+                    Some(symbol_id) => symbol_id,
+                    None => continue,
+                }
+            } else {
+                let Some(method_id) = resolve_csharp_candidate(
+                    raw_symbols,
+                    semantic_path_index,
+                    &method_path,
+                    Some(source_symbol),
+                    hop_arity,
+                    CSharpCandidateRequirements {
+                        node_kind: "method_declaration",
+                        require_static: true,
+                        require_instance: false,
+                        require_same_file: false,
+                    },
+                ) else {
+                    return Ok(None);
+                };
+                method_id
             };
             let Some(method_symbol) = raw_symbols
                 .iter()
@@ -5657,6 +5715,17 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 method_symbol,
                 &method_type_arguments,
                 return_type,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            let return_type = csharp_substitute_qualified_factory_return_type(
+                method_symbol,
+                &type_path,
+                &return_type,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -10326,6 +10395,54 @@ fn csharp_substitute_bare_inherited_factory_return_type(
     )
 }
 
+/// Substitutes a type-qualified factory method's declared return type when
+/// the method is inherited through the qualified type's unique class/record
+/// ancestor chain, so `Caller.Make()` on `Caller : Derived<Helper>` with
+/// `protected static U Make()` on `Base<U>` resolves the declared `U` return
+/// to `Helper`. The qualified type's binding seeds the composition walk with
+/// its own type path and empty concrete arguments; a method declared directly
+/// on the qualified type or a type outside its base chain keeps the declared
+/// return type unchanged and fails closed downstream when it names a type
+/// parameter.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# qualified factory return type substitution inputs explicit"
+)]
+fn csharp_substitute_qualified_factory_return_type(
+    method: &IndexedSymbol,
+    type_path: &str,
+    return_type: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<String> {
+    let binding = CSharpBaseTypeBinding {
+        semantic_type_path: type_path.to_string(),
+        is_global_qualified: true,
+        alias_name: None,
+        namespace_import_paths: Vec::new(),
+        generic_arguments: Vec::new(),
+        raw_generic_argument_spellings: Vec::new(),
+        enclosing_generic_arguments: Vec::new(),
+        raw_enclosing_generic_argument_spellings: Vec::new(),
+    };
+    substitute_csharp_method_return_type(
+        method,
+        &binding,
+        type_path,
+        return_type,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Substitutes a generic method's own type parameters with the explicit
 /// type-argument spellings from its call site, so `T Make<T>()` called as
 /// `Make<HelperA>()` resolves its declared return type `T` to `HelperA`.
@@ -12619,6 +12736,100 @@ fn csharp_base_method_target_path(
         };
         base_type_path = next_type_path;
     }
+}
+
+/// Resolves a type-qualified static method such as `Caller.Make()` or
+/// `FixedCaller.Make()` where the method may be declared directly on the
+/// qualified type or inherited through its unique class/record ancestor
+/// chain. The qualified type must resolve to exactly one class/record
+/// declaration; the nearest ancestor declaring the arity-matched static
+/// method pins the target, so a static factory inherited through a generic
+/// base (`Caller : Derived<Helper>` with `Base<U>::Make`) resolves to the
+/// declaring base method. Unknown or ambiguous types and missing, instance,
+/// or arity-mismatched methods return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# type-qualified static method resolution inputs explicit"
+)]
+fn resolve_csharp_type_qualified_static_method(
+    source_symbol: &IndexedSymbol,
+    type_path: &str,
+    method_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let direct_path = format!("{type_path}::{method_name}");
+    if let Some(symbol_id) = resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &direct_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: true,
+            require_instance: false,
+            require_same_file: false,
+        },
+    ) {
+        return Ok(Some(symbol_id));
+    }
+    let type_indexes = semantic_path_index
+        .get(type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+        .collect::<Vec<_>>();
+    if type_indexes.len() != 1 {
+        return Ok(None);
+    }
+    let type_symbol = &raw_symbols[type_indexes[0]];
+    let Some(base_binding) = csharp_base_type_binding_for_type(
+        type_symbol,
+        raw_symbols,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(target_path) = csharp_base_method_target_path(
+        type_symbol,
+        raw_symbols,
+        semantic_path_index,
+        &base_binding,
+        method_name,
+        call_arity,
+        true,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: true,
+            require_instance: false,
+            require_same_file: false,
+        },
+    ))
 }
 
 fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
