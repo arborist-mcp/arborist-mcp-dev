@@ -775,7 +775,7 @@ mod tests {
         resolve_javascript_namespace_member_binding,
         resolve_javascript_namespace_object_call_binding,
     };
-    use crate::language::normalize_path;
+    use crate::language::{normalize_path, resolve_local_javascript_module_path_with_overrides};
 
     #[test]
     fn import_context_reads_source_overrides() {
@@ -2865,6 +2865,240 @@ mod tests {
             resolve_javascript_default_import_local_name(&normalize_path(&impl_path), None, None,)
                 .unwrap(),
             Some("helper".to_owned())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_inline_require_member_specifier_to_export_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.ts");
+        fs::write(
+            &module,
+            "function helper(value: number): number { return value + 1; }\nexport { helper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "export function caller(value: number): number { return require(\"./module\").helper(value); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./module", None)
+                .expect("inline require specifier should resolve to a local module");
+        assert_eq!(
+            module_path,
+            std::path::PathBuf::from(&normalize_path(&module))
+        );
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("inline require member should resolve to the exported binding");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_inline_require_member_specifier_fail_closed_for_missing_module() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        fs::write(
+            &caller,
+            "export function caller() { return require(\"./missing\").helper(); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./missing", None);
+        assert!(
+            module_path.is_none(),
+            "missing inline require modules must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_inline_require_member_binding_fail_closed_for_non_exported_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-nonexported-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.ts");
+        fs::write(&module, "function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "export function caller() { return require(\"./module\").helper(); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./module", None)
+                .expect("inline require specifier should resolve");
+        assert_eq!(
+            module_path,
+            std::path::PathBuf::from(&normalize_path(&module))
+        );
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&module),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "non-exported inline require members must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_inline_require_object_call_binding_for_commonjs_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-object-call-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.cjs");
+        fs::write(
+            &module,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "export function caller(value) { return require(\"./module.cjs\")(value); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./module.cjs", None)
+                .expect("inline require specifier should resolve to a local module");
+        assert_eq!(
+            module_path,
+            std::path::PathBuf::from(&normalize_path(&module))
+        );
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("inline require object call should resolve to the CommonJS callable");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_inline_require_object_call_binding_fail_closed_for_esm_only_extensions() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-object-call-mjs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.mjs");
+        fs::write(&module, "function helper() {}\nmodule.exports = helper;\n").unwrap();
+        fs::write(
+            &caller,
+            "export function caller() { return require(\"./module.mjs\")(); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./module.mjs", None)
+                .expect("inline require specifier should resolve");
+        assert_eq!(
+            module_path,
+            std::path::PathBuf::from(&normalize_path(&module))
+        );
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            ".mjs namespace objects are never callable and must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_inline_require_object_call_binding_fail_closed_for_non_callable_exports() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-inline-require-object-call-non-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.cjs");
+        fs::write(
+            &module,
+            "function helper() {}\nmodule.exports = { helper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "export function caller() { return require(\"./module.cjs\")(); }\n",
+        )
+        .unwrap();
+
+        let module_path =
+            resolve_local_javascript_module_path_with_overrides(&caller, "./module.cjs", None)
+                .expect("inline require specifier should resolve");
+        assert_eq!(
+            module_path,
+            std::path::PathBuf::from(&normalize_path(&module))
+        );
+        let binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "non-callable inline require exports must fail closed"
         );
         let _ = fs::remove_dir_all(root);
     }

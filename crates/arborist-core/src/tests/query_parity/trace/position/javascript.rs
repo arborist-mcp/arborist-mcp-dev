@@ -1810,3 +1810,149 @@ fn traces_javascript_module_exports_attached_member_call_edge_at_position_in_liv
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].semantic_path, "caller");
 }
+
+#[test]
+fn traces_inline_require_member_call_edge_at_position_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "export function caller(value: number): number { return require(\"./helper\").helper(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 16 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_inline_require_object_call_edge_to_commonjs_callable_at_position_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "function helper(value: number): number { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "export function caller(value: number): number { return require(\"./helper.cjs\")(value); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 9 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &helper,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn keeps_inline_require_member_calls_fail_closed_without_falling_back() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(&helper, "export function other(): number { return 1; }\n").unwrap();
+    fs::write(
+        &caller,
+        "function helper(): number { return 2; }\nexport function caller(): number { return require(\"./helper\").helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "unknown inline require members must fail closed without same-named fallback, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_inline_require_object_calls_fail_closed_for_esm_modules() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &helper,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "export function caller(value: number): number { return require(\"./helper\")(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "ESM inline require objects are never callable and must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_inline_require_member_calls_fail_closed_for_missing_module() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &caller,
+        "function helper(): number { return 2; }\nexport function caller(): number { return require(\"./missing\").helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "missing inline require modules must fail closed without same-named fallback, callees: {:?}",
+        live.callees
+    );
+}
