@@ -355,30 +355,23 @@ fn rust_adapter_exposes_skeleton_indexing_dependencies_tracing_and_patching() {
 }
 
 #[test]
-fn go_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patching() {
+fn go_adapter_exposes_skeleton_indexing_dependencies_tracing_and_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Go).unwrap();
 
     assert_eq!(descriptor.display_name, "Go");
     assert_eq!(descriptor.extensions, &["go"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "go-alias-conversion-method-trace-v15"
-    );
+    assert_eq!(descriptor.analysis_revision, "go-patch-targeting-v16");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::FILE_DEPENDENCIES,
-    ] {
-        assert!(descriptor.capabilities.contains(capability));
-    }
-    for capability in [
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
-        assert!(!descriptor.capabilities.contains(capability));
+        assert!(descriptor.capabilities.contains(capability));
     }
 }
 

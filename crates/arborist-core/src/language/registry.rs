@@ -463,8 +463,12 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Go,
     display_name: "Go",
     extensions: GO_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "go-alias-conversion-method-trace-v15",
+    capabilities: LanguageCapabilities(
+        LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
+    ),
+    analysis_revision: "go-patch-targeting-v16",
     grammar: go_grammar,
 };
 static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -1066,24 +1070,37 @@ impl LanguageAdapter for GoAdapter {
     }
 
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
-        self.syntax.patch_replacement_node(node)
+        crate::semantic::go::go_patch_replacement_node(node)
     }
 
     fn normalize_patch_replacement(
         &self,
-        source: &str,
-        start_byte: usize,
-        end_byte: usize,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
         node_kind: &str,
         new_code: &str,
     ) -> Result<String> {
-        self.syntax
-            .normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+        if matches!(node_kind, "type_spec" | "type_alias") {
+            // The Go `type` keyword belongs to the enclosing `type_declaration`, so strip a
+            // leading `type` from the replacement before splicing it over the spec/alias node.
+            if let Some(rest) = new_code.trim_start().strip_prefix("type")
+                && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+            {
+                return Ok(rest.trim_start().to_string());
+            }
+        }
+        Ok(new_code.to_string())
     }
 
-    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
-        self.syntax
-            .replacement_preserves_required_wrappers(node_kind, replacement)
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        // Go doc comments are separate sibling nodes outside the replaced declaration's byte
+        // range, so a replacement cannot accidentally remove them.
+        true
     }
 
     fn reconcile_patch_symbol_id(
@@ -1098,19 +1115,14 @@ impl LanguageAdapter for GoAdapter {
 
     fn collect_patch_reference_validation(
         &self,
-        path: &Path,
-        document: &ParsedDocument,
-        source: &str,
-        symbol_node: Node<'_>,
-        deadline: Option<&dyn DeadlineCheck>,
+        _path: &Path,
+        _document: &ParsedDocument,
+        _source: &str,
+        _symbol_node: Node<'_>,
+        _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
-            path,
-            document,
-            source,
-            symbol_node,
-            deadline,
-        )
+        // Go patch binding validation is deferred; the first slice validates syntax only.
+        Ok(crate::patching::ReferenceValidation::default())
     }
 
     fn query_capture_owner(

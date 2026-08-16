@@ -229,6 +229,16 @@ pub(crate) fn go_return_type(node: Node<'_>, source: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn go_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tree> {
+    // Go symbol nodes are complete declarations: a `function_declaration` or
+    // `method_declaration` includes its `func` keyword, receiver, signature, and body, while
+    // `type_spec`/`type_alias` nodes exclude the enclosing `type` keyword. The normalize step
+    // handles that keyword, and doc comments are separate sibling nodes that the splice range
+    // leaves untouched, so returning the symbol node preserves comments and surrounding
+    // declarations.
+    node
+}
+
 fn go_full_declaration(node: Node<'_>, source: &str) -> Result<String> {
     let declaration = node_text(node, source)?.trim();
     if declaration.is_empty() {
