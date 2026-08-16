@@ -1648,4 +1648,96 @@ mod tests {
         assert!(binding.module_paths.is_empty());
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn resolves_require_namespace_member_binding_for_commonjs_object_exports() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-object-export-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "function helper() {}\nmodule.exports = { helper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("CommonJS object export member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_aliased_commonjs_object_exports_fail_closed_for_namespace_members() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-alias-object-export-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "function localHelper() {}\nmodule.exports = { helper: localHelper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap();
+        assert!(
+            member.is_none(),
+            "aliased CommonJS object exports must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
