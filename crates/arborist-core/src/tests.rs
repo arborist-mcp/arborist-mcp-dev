@@ -50,6 +50,7 @@ use super::{
 mod adapter_contract;
 mod c_patching;
 mod c_symbol_graph;
+mod go_patching;
 mod index_refresh;
 mod javascript_patching;
 mod language_fixtures;
