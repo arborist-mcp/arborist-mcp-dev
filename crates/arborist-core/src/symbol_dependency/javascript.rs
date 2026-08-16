@@ -4,12 +4,13 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    ParsedDocument, detect_language, javascript_export_local_names,
+    JavaScriptModuleValuedExport, ParsedDocument, detect_language, javascript_export_local_names,
     javascript_module_reexport_module_paths_with_overrides_and_check,
-    javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
+    javascript_module_valued_export_members, javascript_named_export_names,
+    javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    parse_document_with_timeout, read_source, resolve_local_javascript_module_path_with_overrides,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -37,6 +38,13 @@ pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     /// target module's export object, so members and callable-object calls
     /// resolve within the terminal module of the re-export chain.
     pub(crate) module_reexport_module_paths: BTreeSet<String>,
+    /// Exported-name to module-valued aliases for CommonJS exports whose
+    /// assigned value is `require("./module")` or `require("./module").member`
+    /// (`exports.name = ...`, `module.exports.name = ...`, and object-literal
+    /// entries), so namespace member calls on the member resolve within the
+    /// aliased module. Multiple aliases for one name mean ambiguity and fail
+    /// closed.
+    pub(crate) module_valued_export_members: BTreeMap<String, Vec<JavaScriptModuleValuedExport>>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -146,6 +154,11 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
             Some(&check_traversal_deadline),
         )?,
         export_local_names: javascript_export_local_names(
+            document.tree.root_node(),
+            &source,
+            Some(&check_traversal_deadline),
+        )?,
+        module_valued_export_members: javascript_module_valued_export_members(
             document.tree.root_node(),
             &source,
             Some(&check_traversal_deadline),
@@ -619,8 +632,33 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
     contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<JavaScriptImportBinding>> {
+    resolve_javascript_namespace_member_binding_inner(
+        module_path,
+        member_name,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+        &mut BTreeSet::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_javascript_namespace_member_binding_inner(
+    module_path: &str,
+    member_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_module_paths: &mut BTreeSet<String>,
+) -> Result<Option<JavaScriptImportBinding>> {
     if let Some(deadline) = deadline {
         deadline.check("resolving JavaScript/TypeScript namespace member")?;
+    }
+    // Guard module-valued member-alias and wholesale re-export recursion
+    // against cycles; a module that appears twice in one resolution chain is
+    // ambiguous and must fail closed instead of looping.
+    if !visited_module_paths.insert(module_path.to_owned()) {
+        return Ok(None);
     }
     let module_context = javascript_import_context_from_cache(
         module_path,
@@ -642,12 +680,13 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
         else {
             return Ok(None);
         };
-        return resolve_javascript_namespace_member_binding(
+        return resolve_javascript_namespace_member_binding_inner(
             &terminal_path,
             member_name,
             file_overrides,
             contexts_by_file,
             deadline,
+            visited_module_paths,
         );
     }
     let mut resolution_stack = BTreeSet::new();
@@ -687,6 +726,47 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_member_binding(
             }));
         }
         return Ok(Some(resolved));
+    }
+    // CommonJS module-valued export members (`exports.name = require(...)`,
+    // `module.exports.name = require(...)`, and object-literal entries) alias
+    // another module's export object or a named member of it. Whole-module
+    // aliases resolve only when the target exports a single CommonJS callable
+    // (`ns.name(...)` calls the alias's export object), and member aliases
+    // resolve like any namespace member of the target. Ambiguous, missing,
+    // dynamic, or unresolvable aliases fail closed instead of falling back to
+    // same-named workspace symbols.
+    if let Some(aliases) = module_context.module_valued_export_members.get(member_name) {
+        if aliases.len() != 1 {
+            return Ok(None);
+        }
+        let Some(alias) = aliases.first() else {
+            return Ok(None);
+        };
+        let Some(target_path) = resolve_local_javascript_module_path_with_overrides(
+            Path::new(module_path),
+            &alias.specifier,
+            file_overrides,
+        ) else {
+            return Ok(None);
+        };
+        let target_path = normalize_path(&target_path);
+        return if let Some(member) = alias.member.as_deref() {
+            resolve_javascript_namespace_member_binding_inner(
+                &target_path,
+                member,
+                file_overrides,
+                contexts_by_file,
+                deadline,
+                visited_module_paths,
+            )
+        } else {
+            resolve_javascript_namespace_object_call_binding(
+                &target_path,
+                file_overrides,
+                contexts_by_file,
+                deadline,
+            )
+        };
     }
     // A namespace object exposes the module's default export as `default`.
     // `export { default } from "./module"` re-exports are handled above; a

@@ -16,6 +16,17 @@ pub(crate) struct JavaScriptNamedModuleBinding {
     pub(crate) unresolved: bool,
 }
 
+/// A CommonJS export member whose assigned value aliases another module's
+/// export object (`exports.name = require("./module")`) or a named member of
+/// it (`exports.name = require("./module").member`). The specifier is resolved
+/// against the exporting file at resolution time so overlay/override paths
+/// apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JavaScriptModuleValuedExport {
+    pub(crate) specifier: String,
+    pub(crate) member: Option<String>,
+}
+
 pub(crate) fn javascript_local_module_dependency_paths(
     path: &Path,
     root: Node<'_>,
@@ -622,6 +633,199 @@ fn commonjs_exports_member_export_facts(
     names.insert(exported_name.clone());
     if exported_name != local_name {
         local_names.insert(exported_name, local_name);
+    }
+    Ok(())
+}
+
+/// Collects CommonJS export members whose assigned value aliases another
+/// module's export object or a named member of it:
+/// `exports.name = require("./module")`, `module.exports.name = require(...)`,
+/// and object-literal entries `module.exports = { name: require(...) }`.
+/// The same shadowing rules as local-symbol exports apply: a
+/// `module.exports = <value>` replacement abandons the `exports` alias and any
+/// export object it replaced, so only the final replacement's object entries
+/// and the member assignments that attach to it survive. Multiple assignments
+/// of one exported name are collected so callers fail closed on ambiguity.
+pub(crate) fn javascript_module_valued_export_members(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeMap<String, Vec<JavaScriptModuleValuedExport>>> {
+    let mut members: BTreeMap<String, Vec<JavaScriptModuleValuedExport>> = BTreeMap::new();
+    let last_module_exports_replacement =
+        last_javascript_module_exports_replacement(root, source, check)?;
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if statement.kind() != "expression_statement" {
+            continue;
+        }
+        if is_javascript_module_exports_replacement_statement(statement, source)? {
+            if Some(statement.start_byte()) == last_module_exports_replacement {
+                collect_object_module_valued_exports(statement, source, &mut members)?;
+            }
+        } else {
+            collect_member_assignment_module_valued_exports(
+                statement,
+                source,
+                last_module_exports_replacement,
+                &mut members,
+            )?;
+        }
+    }
+    Ok(members)
+}
+
+/// Returns the module alias an assignment value names, or `None` when the
+/// value is not a static `require("./module")` call or a
+/// `require("./module").member` member access.
+fn javascript_module_valued_export_target(
+    value: Node<'_>,
+    source: &str,
+) -> Result<Option<JavaScriptModuleValuedExport>> {
+    match value.kind() {
+        "call_expression" => Ok(direct_require_specifier(value, source)?.map(|specifier| {
+            JavaScriptModuleValuedExport {
+                specifier,
+                member: None,
+            }
+        })),
+        "member_expression" => {
+            let Some(object) = value.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            let Some(specifier) = direct_require_specifier(object, source)? else {
+                return Ok(None);
+            };
+            let Some(property) = value.child_by_field_name("property") else {
+                return Ok(None);
+            };
+            if property.kind() != "property_identifier" {
+                return Ok(None);
+            }
+            let member = node_text(property, source)?.trim().to_owned();
+            if member.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(JavaScriptModuleValuedExport {
+                specifier,
+                member: Some(member),
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Collects `exports.name = require(...)` / `module.exports.name = require(...)`
+/// module-valued export members, applying the same shadowing rules as
+/// `commonjs_exports_member_export_facts`.
+fn collect_member_assignment_module_valued_exports(
+    statement: Node<'_>,
+    source: &str,
+    last_module_exports_replacement: Option<usize>,
+    members: &mut BTreeMap<String, Vec<JavaScriptModuleValuedExport>>,
+) -> Result<()> {
+    let Some(assignment) = statement.named_child(0) else {
+        return Ok(());
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(());
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(());
+    };
+    if left.kind() != "member_expression" {
+        return Ok(());
+    }
+    let Some(object) = left.child_by_field_name("object") else {
+        return Ok(());
+    };
+    let is_exports_alias =
+        object.kind() == "identifier" && node_text(object, source)?.trim() == "exports";
+    let is_module_exports_object = is_module_exports_member(object, source)?;
+    if !is_exports_alias && !is_module_exports_object {
+        return Ok(());
+    }
+    if is_exports_alias && last_module_exports_replacement.is_some() {
+        return Ok(());
+    }
+    if is_module_exports_object
+        && last_module_exports_replacement.is_some_and(|offset| statement.start_byte() < offset)
+    {
+        return Ok(());
+    }
+    let Some(property) = left.child_by_field_name("property") else {
+        return Ok(());
+    };
+    if property.kind() != "property_identifier" {
+        return Ok(());
+    }
+    let exported_name = node_text(property, source)?.trim().to_owned();
+    if exported_name.is_empty() {
+        return Ok(());
+    }
+    let Some(value) = assignment.child_by_field_name("right") else {
+        return Ok(());
+    };
+    let Some(target) = javascript_module_valued_export_target(value, source)? else {
+        return Ok(());
+    };
+    members.entry(exported_name).or_default().push(target);
+    Ok(())
+}
+
+/// Collects `module.exports = { name: require(...) }` object-literal
+/// module-valued export entries from the final replacement, applying the same
+/// shadowing rules as `commonjs_object_export_facts`.
+fn collect_object_module_valued_exports(
+    statement: Node<'_>,
+    source: &str,
+    members: &mut BTreeMap<String, Vec<JavaScriptModuleValuedExport>>,
+) -> Result<()> {
+    let Some(assignment) = statement.named_child(0) else {
+        return Ok(());
+    };
+    if assignment.kind() != "assignment_expression" {
+        return Ok(());
+    }
+    let Some(left) = assignment.child_by_field_name("left") else {
+        return Ok(());
+    };
+    if !is_module_exports_member(left, source)? {
+        return Ok(());
+    }
+    let Some(right) = assignment.child_by_field_name("right") else {
+        return Ok(());
+    };
+    if right.kind() != "object" {
+        return Ok(());
+    }
+    let mut cursor = right.walk();
+    for property in right.named_children(&mut cursor) {
+        if property.kind() != "pair" {
+            continue;
+        }
+        let Some(key) = property.child_by_field_name("key") else {
+            continue;
+        };
+        // Only static unquoted keys name an export member; computed
+        // (`[name]`) and string (`"name"`) keys fail closed.
+        if key.kind() != "property_identifier" {
+            continue;
+        }
+        let Some(value) = property.child_by_field_name("value") else {
+            continue;
+        };
+        let Some(target) = javascript_module_valued_export_target(value, source)? else {
+            continue;
+        };
+        let key_name = node_text(key, source)?.trim().to_owned();
+        if key_name.is_empty() {
+            continue;
+        }
+        members.entry(key_name).or_default().push(target);
     }
     Ok(())
 }
