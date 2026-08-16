@@ -632,8 +632,9 @@ static local-package dependency refresh under the nearest valid simple `go.mod` 
 same-file bare plus unambiguous local-package imported-function direct-call graph tracing, and
 structural patch targeting with syntax-level validation. Java
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
-semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
-conservative refresh for explicit local type imports, single-member `import static` imports, and
+semantic skeletons and declaration indexing for top-level and nested Java declarations, structural
+patch targeting with syntax-level validation, plus conservative refresh for explicit local type
+imports, single-member `import static` imports, and
 direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling, and direct interface links whose interface resolves by the same local-source rules. Those links require an owning type that maps to a local `.java` file under
 an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus a direct local-source `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
@@ -641,8 +642,10 @@ unique explicit local static-method imports only when no same-type method has th
 traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
 non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
 unchanged Java source files. A bare or explicit `this.` call in a class with no explicit `extends` clause, or with one uniquely resolved direct local superclass chain that declares no method of that name, and one or more uniquely resolved direct local interfaces, including lexical outer-scope interface references, also trace only when exactly one interface chain or branch provides a directly declared, uniquely arity-matched nonvarargs `default` method and every other chain or branch proves it has no declaration of that method. Imported trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
-general interface dispatch beyond that limited default-method case, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, and patch features remain deliberately
-capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
+general interface dispatch beyond that limited default-method case, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains remain deliberately capability-gated. Structural patching targets Java classes, interfaces,
+enums, records, annotation types, methods, constructors, and nested types by semantic path or source
+position with syntax-level validation; language-specific patch binding validation remains deferred.
+Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.
 
 Remaining larger work includes:
@@ -653,7 +656,8 @@ Remaining larger work includes:
   language-specific Go patch binding validation, only after dedicated fixtures establish safe
   behavior.
 - Extending Java trace resolution beyond unique same-type calls and explicitly imported local static
-  methods only after dedicated fixtures establish safe behavior.
+  methods, plus language-specific Java patch binding validation, only after dedicated fixtures
+  establish safe behavior.
 - Completing JavaScript/TypeScript default and namespace module resolution plus
   language-specific patch binding validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
