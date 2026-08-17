@@ -28,12 +28,21 @@ type RequireMemberCalls = BTreeMap<(String, String), BTreeSet<usize>>;
 /// Inline bare `require("./module")(...)` namespace-object calls keyed by
 /// specifier with the arities observed for that spelling.
 type RequireObjectCalls = BTreeMap<String, BTreeSet<usize>>;
+/// Names of direct constructor calls such as `new Counter(...)`. These keep the
+/// legacy reference entry and additionally carry a constructor marker so
+/// namespace-object constructors may resolve class exports while plain calls
+/// stay limited to callable exports.
+type DirectConstructorCalls = BTreeSet<String>;
+/// Namespace-member constructor pairs such as `new ns.Counter(...)`.
+type NamespaceConstructorMembers = BTreeSet<(String, String)>;
 type DirectCalls = (
     ReferenceNames,
     CallAritiesByName,
     NamespaceMemberCalls,
     RequireMemberCalls,
     RequireObjectCalls,
+    DirectConstructorCalls,
+    NamespaceConstructorMembers,
 );
 
 pub(crate) fn index_javascript_symbols_with_deadline(
@@ -89,17 +98,20 @@ fn indexed_symbol(
         namespace_member_calls,
         require_member_calls,
         require_object_calls,
+        direct_constructor_calls,
+        namespace_constructor_members,
     ) = collect_direct_calls(node, source, deadline)?;
     let mut reference_facts =
         reference_facts_from_legacy(&references_by_name, &call_arities_by_name);
     reference_facts.extend(namespace_member_calls.into_iter().map(
         |((receiver, member), arities)| ReferenceFact {
-            spelling: member,
+            spelling: member.clone(),
             call_arities: Some(arities),
             language_details: ReferenceLanguageDetails::JavaScript(JavaScriptReferenceDetails {
-                namespace_receiver: Some(receiver),
+                namespace_receiver: Some(receiver.clone()),
                 require_member_call: None,
                 require_object_call: None,
+                constructor_call: namespace_constructor_members.contains(&(receiver, member)),
             }),
         },
     ));
@@ -111,6 +123,7 @@ fn indexed_symbol(
                 namespace_receiver: None,
                 require_member_call: Some((specifier, member)),
                 require_object_call: None,
+                constructor_call: false,
             }),
         },
     ));
@@ -125,6 +138,24 @@ fn indexed_symbol(
                         namespace_receiver: None,
                         require_member_call: None,
                         require_object_call: Some(specifier),
+                        constructor_call: false,
+                    },
+                ),
+            }),
+    );
+
+    reference_facts.extend(
+        direct_constructor_calls
+            .into_iter()
+            .map(|name| ReferenceFact {
+                spelling: name.clone(),
+                call_arities: call_arities_by_name.get(&name).cloned(),
+                language_details: ReferenceLanguageDetails::JavaScript(
+                    JavaScriptReferenceDetails {
+                        namespace_receiver: None,
+                        require_member_call: None,
+                        require_object_call: None,
+                        constructor_call: true,
                     },
                 ),
             }),
@@ -160,6 +191,8 @@ fn collect_direct_calls(
     let mut namespace_member_calls = BTreeMap::new();
     let mut require_member_calls = BTreeMap::new();
     let mut require_object_calls = BTreeMap::new();
+    let mut direct_constructor_calls = BTreeSet::new();
+    let mut namespace_constructor_members = BTreeSet::new();
     let root = symbol_node
         .child_by_field_name("body")
         .or_else(|| symbol_node.child_by_field_name("value"));
@@ -173,6 +206,8 @@ fn collect_direct_calls(
             &mut namespace_member_calls,
             &mut require_member_calls,
             &mut require_object_calls,
+            &mut direct_constructor_calls,
+            &mut namespace_constructor_members,
         )?;
     }
     Ok((
@@ -181,7 +216,35 @@ fn collect_direct_calls(
         namespace_member_calls,
         require_member_calls,
         require_object_calls,
+        direct_constructor_calls,
+        namespace_constructor_members,
     ))
+}
+
+/// Returns `true` for call expressions and `new` constructor expressions so
+/// both shapes feed the same conservative call-reference machinery.
+fn is_call_like(node: Node<'_>) -> bool {
+    matches!(node.kind(), "call_expression" | "new_expression")
+}
+
+/// The callee of a call or `new` expression: `function` for call expressions
+/// and `constructor` for constructor expressions.
+fn callable_function(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "call_expression" => node.child_by_field_name("function"),
+        "new_expression" => node.child_by_field_name("constructor"),
+        _ => None,
+    }
+}
+
+/// The number of named arguments passed to a call or `new` expression.
+fn callable_arity(node: Node<'_>) -> usize {
+    node.child_by_field_name("arguments")
+        .map(|arguments| {
+            let mut cursor = arguments.walk();
+            arguments.named_children(&mut cursor).count()
+        })
+        .unwrap_or(0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -194,32 +257,31 @@ fn collect_direct_calls_from_node(
     namespace_member_calls: &mut NamespaceMemberCalls,
     require_member_calls: &mut RequireMemberCalls,
     require_object_calls: &mut RequireObjectCalls,
+    direct_constructor_calls: &mut DirectConstructorCalls,
+    namespace_constructor_members: &mut NamespaceConstructorMembers,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting JavaScript/TypeScript direct calls")?;
     }
-    if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
+    if is_call_like(node)
+        && let Some(function) = callable_function(node)
         && function.kind() == "identifier"
         && let Ok(name) = node_text(function, source)
     {
         let name = name.trim();
         if !name.is_empty() {
             references.insert(name.to_string());
-            let arity = node
-                .child_by_field_name("arguments")
-                .map(|arguments| {
-                    let mut cursor = arguments.walk();
-                    arguments.named_children(&mut cursor).count()
-                })
-                .unwrap_or(0);
+            if node.kind() == "new_expression" {
+                direct_constructor_calls.insert(name.to_string());
+            }
+            let arity = callable_arity(node);
             call_arities_by_name
                 .entry(name.to_string())
                 .or_default()
                 .insert(arity);
         }
-    } else if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
+    } else if is_call_like(node)
+        && let Some(function) = callable_function(node)
         && function.kind() == "member_expression"
         && let Some(object) = function.child_by_field_name("object")
         && object.kind() == "identifier"
@@ -231,20 +293,17 @@ fn collect_direct_calls_from_node(
         let receiver = receiver.trim();
         let member = member.trim();
         if !receiver.is_empty() && !member.is_empty() {
-            let arity = node
-                .child_by_field_name("arguments")
-                .map(|arguments| {
-                    let mut cursor = arguments.walk();
-                    arguments.named_children(&mut cursor).count()
-                })
-                .unwrap_or(0);
+            if node.kind() == "new_expression" {
+                namespace_constructor_members.insert((receiver.to_string(), member.to_string()));
+            }
+            let arity = callable_arity(node);
             namespace_member_calls
                 .entry((receiver.to_string(), member.to_string()))
                 .or_default()
                 .insert(arity);
         }
-    } else if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
+    } else if is_call_like(node)
+        && let Some(function) = callable_function(node)
         && function.kind() == "member_expression"
         && let Some(object) = function.child_by_field_name("object")
         && let Some(specifier) = direct_require_specifier(object, source)?
@@ -252,37 +311,19 @@ fn collect_direct_calls_from_node(
         && property.kind() == "property_identifier"
         && let Ok(member) = node_text(property, source)
     {
-        // Inline `require("./module").member(...)` resolves `member` within
-        // the required module's namespace through the same machinery as
-        // namespace member calls.
         let member = member.trim();
         if !member.is_empty() {
-            let arity = node
-                .child_by_field_name("arguments")
-                .map(|arguments| {
-                    let mut cursor = arguments.walk();
-                    arguments.named_children(&mut cursor).count()
-                })
-                .unwrap_or(0);
+            let arity = callable_arity(node);
             require_member_calls
                 .entry((specifier, member.to_string()))
                 .or_default()
                 .insert(arity);
         }
-    } else if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
+    } else if is_call_like(node)
+        && let Some(function) = callable_function(node)
         && let Some(specifier) = direct_require_specifier(function, source)?
     {
-        // Inline bare `require("./module")(...)` is a namespace-object call on
-        // the required module's export object and resolves only CommonJS
-        // callable exports.
-        let arity = node
-            .child_by_field_name("arguments")
-            .map(|arguments| {
-                let mut cursor = arguments.walk();
-                arguments.named_children(&mut cursor).count()
-            })
-            .unwrap_or(0);
+        let arity = callable_arity(node);
         require_object_calls
             .entry(specifier)
             .or_default()
@@ -303,6 +344,8 @@ fn collect_direct_calls_from_node(
             namespace_member_calls,
             require_member_calls,
             require_object_calls,
+            direct_constructor_calls,
+            namespace_constructor_members,
         )?;
     }
     Ok(())

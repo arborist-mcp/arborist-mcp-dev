@@ -36,7 +36,8 @@ use super::super::java::{
     resolve_java_type_import_binding_for_name,
 };
 use super::super::javascript::{
-    JavaScriptImportBinding, JavaScriptImportContext, resolve_javascript_default_import_local_name,
+    JavaScriptImportBinding, JavaScriptImportContext, resolve_javascript_constructor_binding,
+    resolve_javascript_default_import_local_name,
     resolve_javascript_named_import_binding_for_reference,
     resolve_javascript_namespace_member_binding, resolve_javascript_namespace_object_call_binding,
 };
@@ -1687,6 +1688,10 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         Vec::new()
     };
+    // `new ns(...)` constructor expressions additionally accept a single
+    // CommonJS class export, which is constructible but not directly callable.
+    let javascript_constructor_call =
+        javascript_reference_details.is_some_and(|details| details.constructor_call);
     // A bare call to a namespace import (`ns(...)`) resolves only when the
     // bound module exports a single CommonJS callable through
     // `module.exports = ...`; ESM namespace objects are never callable, so
@@ -1703,6 +1708,7 @@ fn resolve_reference_path_with_deadline<'a>(
             file_overrides,
             javascript_import_contexts_by_file,
             deadline,
+            javascript_constructor_call,
         )?
     } else {
         Vec::new()
@@ -1752,6 +1758,9 @@ fn resolve_reference_path_with_deadline<'a>(
                 file_overrides,
             )
             .map(|module_path| {
+                // Inline `new require("./module")()` constructor calls stay
+                // conservative: only callable exports resolve, and class
+                // exports fail closed.
                 javascript_namespace_object_call_candidate_indexes(
                     raw_symbols,
                     name_index,
@@ -1759,6 +1768,7 @@ fn resolve_reference_path_with_deadline<'a>(
                     file_overrides,
                     javascript_import_contexts_by_file,
                     deadline,
+                    false,
                 )
             })
             .transpose()?
@@ -24016,6 +24026,7 @@ fn javascript_namespace_object_call_candidate_indexes(
     file_overrides: Option<&BTreeMap<String, String>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
+    constructor_call: bool,
 ) -> Result<Vec<usize>> {
     if module_paths.is_empty() {
         return Ok(Vec::new());
@@ -24026,14 +24037,25 @@ fn javascript_namespace_object_call_candidate_indexes(
             deadline.check("resolving JavaScript/TypeScript namespace-object call")?;
         }
         // The namespace object is callable only when the bound module exports
-        // a single CommonJS callable value; other modules fail closed.
-        let Some(binding) = resolve_javascript_namespace_object_call_binding(
-            module_path,
-            file_overrides,
-            javascript_import_contexts_by_file,
-            deadline,
-        )?
-        else {
+        // a single CommonJS callable value; constructor expressions
+        // additionally accept a single class export. Other modules fail
+        // closed.
+        let binding = if constructor_call {
+            resolve_javascript_constructor_binding(
+                module_path,
+                file_overrides,
+                javascript_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            resolve_javascript_namespace_object_call_binding(
+                module_path,
+                file_overrides,
+                javascript_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        let Some(binding) = binding else {
             continue;
         };
         for exporting_path in &binding.module_paths {

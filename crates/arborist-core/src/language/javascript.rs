@@ -1163,28 +1163,54 @@ fn javascript_default_export_name(statement: Node<'_>, source: &str) -> Result<O
 /// `module.exports` assignments fail closed (`None`). ESM-only modules have no
 /// such assignment and also return `None`, so namespace-object calls stay
 /// fail-closed for them.
+/// Classifies which `module.exports = ...` value shapes a namespace-object
+/// reference may resolve to. Plain calls only resolve callable values; `new`
+/// constructor expressions additionally accept class exports, which are
+/// constructible but not directly callable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JavaScriptModuleExportKind {
+    Callable,
+    Constructible,
+}
+
 pub(crate) fn javascript_module_callable_export_local_name(
     root: Node<'_>,
     source: &str,
 ) -> Result<Option<String>> {
+    javascript_module_export_local_name(root, source, JavaScriptModuleExportKind::Callable)
+}
+
+pub(crate) fn javascript_module_constructible_export_local_name(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    javascript_module_export_local_name(root, source, JavaScriptModuleExportKind::Constructible)
+}
+
+fn javascript_module_export_local_name(
+    root: Node<'_>,
+    source: &str,
+    kind: JavaScriptModuleExportKind,
+) -> Result<Option<String>> {
     let mut names = BTreeSet::new();
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
-        if let Some(name) = javascript_module_exports_callable_name(statement, source, root)? {
+        if let Some(name) = javascript_module_exports_export_name(statement, source, root, kind)? {
             names.insert(name);
         }
     }
-    // A module may export at most one callable value; anything else fails
-    // closed instead of guessing.
+    // A module may export at most one callable or constructible value;
+    // anything else fails closed instead of guessing.
     Ok((names.len() == 1)
         .then(|| names.iter().next().cloned())
         .flatten())
 }
 
-fn javascript_module_exports_callable_name(
+fn javascript_module_exports_export_name(
     statement: Node<'_>,
     source: &str,
     root: Node<'_>,
+    kind: JavaScriptModuleExportKind,
 ) -> Result<Option<String>> {
     let expression = if statement.kind() == "expression_statement" {
         statement.named_child(0)
@@ -1207,7 +1233,9 @@ fn javascript_module_exports_callable_name(
         // callable declaration makes the module itself callable.
         "identifier" => {
             let name = node_text(value, source)?.trim().to_owned();
-            if name.is_empty() || !javascript_module_level_callable_declared(root, source, &name)? {
+            if name.is_empty()
+                || !javascript_module_level_export_declared(root, source, &name, kind)?
+            {
                 return Ok(None);
             }
             Ok(Some(name))
@@ -1215,6 +1243,22 @@ fn javascript_module_exports_callable_name(
         // A named function expression carries the exported callable's local
         // name; anonymous expressions fail closed because they name no symbol.
         "function_expression" | "generator_function" => {
+            let Some(name) = value.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            if name.is_missing() {
+                return Ok(None);
+            }
+            let name = node_text(name, source)?.trim().to_owned();
+            Ok((!name.is_empty()).then_some(name))
+        }
+        // A named class expression is constructible but not directly callable:
+        // only `new` namespace-object references may resolve it. Anonymous
+        // class expressions fail closed because they name no symbol.
+        "class" => {
+            if kind == JavaScriptModuleExportKind::Callable {
+                return Ok(None);
+            }
             let Some(name) = value.child_by_field_name("name") else {
                 return Ok(None);
             };
@@ -1250,15 +1294,24 @@ fn is_javascript_module_exports_assignment(assignment: Node<'_>, source: &str) -
     )
 }
 
-fn javascript_module_level_callable_declared(
+fn javascript_module_level_export_declared(
     root: Node<'_>,
     source: &str,
     name: &str,
+    kind: JavaScriptModuleExportKind,
 ) -> Result<bool> {
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         let declared_name = match statement.kind() {
             "function_declaration" | "generator_function_declaration" => {
+                statement.child_by_field_name("name").and_then(|name| {
+                    node_text(name, source)
+                        .ok()
+                        .map(|text| text.trim().to_owned())
+                })
+            }
+            // Class declarations are constructible but not directly callable.
+            "class_declaration" if kind == JavaScriptModuleExportKind::Constructible => {
                 statement.child_by_field_name("name").and_then(|name| {
                     node_text(name, source)
                         .ok()
@@ -1276,6 +1329,8 @@ fn javascript_module_level_callable_declared(
                         .child_by_field_name("value")
                         .is_some_and(|value| {
                             matches!(value.kind(), "arrow_function" | "function_expression")
+                                || (kind == JavaScriptModuleExportKind::Constructible
+                                    && value.kind() == "class")
                         })
                     {
                         continue;

@@ -55,6 +55,11 @@ pub(crate) struct JavaScriptReferenceDetails {
     /// resolution time. Only CommonJS callable exports resolve.
     #[serde(default)]
     pub(crate) require_object_call: Option<String>,
+    /// True when the reference is a `new` constructor expression rather than a
+    /// plain call, so namespace-object constructors may resolve class exports
+    /// while plain calls stay limited to callable exports.
+    #[serde(default)]
+    pub(crate) constructor_call: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,7 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    JavaScriptModuleValuedExport, ParsedDocument, detect_language, javascript_export_local_names,
+    JavaScriptModuleExportKind, JavaScriptModuleValuedExport, ParsedDocument, detect_language,
+    javascript_export_local_names,
     javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_module_valued_export_members, javascript_named_export_names,
     javascript_named_import_module_paths_with_overrides_and_check,
@@ -560,6 +561,43 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_object_call_bin
     contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<JavaScriptImportBinding>> {
+    resolve_javascript_namespace_object_binding_inner(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+        JavaScriptModuleExportKind::Callable,
+    )
+}
+
+/// Resolves the binding for a `new module` constructor expression such as
+/// `new Counter()` where `Counter` is bound to a module namespace through
+/// `const Counter = require("./module")` or TypeScript `import Counter =
+/// require("./module")`. Plain calls stay limited to callable exports, while
+/// constructor expressions additionally accept a single class export, which is
+/// constructible but not directly callable.
+pub(in crate::symbol_dependency) fn resolve_javascript_constructor_binding(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaScriptImportBinding>> {
+    resolve_javascript_namespace_object_binding_inner(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+        JavaScriptModuleExportKind::Constructible,
+    )
+}
+
+fn resolve_javascript_namespace_object_binding_inner(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    kind: JavaScriptModuleExportKind,
+) -> Result<Option<JavaScriptImportBinding>> {
     if let Some(deadline) = deadline {
         deadline.check("reading JavaScript/TypeScript CommonJS callable export module")?;
     }
@@ -602,15 +640,25 @@ pub(in crate::symbol_dependency) fn resolve_javascript_namespace_object_call_bin
     } else {
         parse_document(path, &source)?
     };
-    let Some(callable_name) = crate::language::javascript_module_callable_export_local_name(
-        document.tree.root_node(),
-        &source,
-    )?
-    else {
+    let export_name = match kind {
+        JavaScriptModuleExportKind::Callable => {
+            crate::language::javascript_module_callable_export_local_name(
+                document.tree.root_node(),
+                &source,
+            )?
+        }
+        JavaScriptModuleExportKind::Constructible => {
+            crate::language::javascript_module_constructible_export_local_name(
+                document.tree.root_node(),
+                &source,
+            )?
+        }
+    };
+    let Some(export_name) = export_name else {
         return Ok(None);
     };
     Ok(Some(JavaScriptImportBinding {
-        imported_name: callable_name,
+        imported_name: export_name,
         module_paths: BTreeSet::from([module_path.to_owned()]),
         unresolved: false,
     }))
