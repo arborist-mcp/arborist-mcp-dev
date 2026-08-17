@@ -2143,3 +2143,215 @@ fn keeps_javascript_module_valued_export_member_calls_fail_closed_for_missing_al
         live.callees
     );
 }
+
+#[test]
+fn traces_javascript_constructor_call_edge_to_named_import_class_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let counter = dir.join("counter.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &counter,
+        "export class Counter { constructor(value) { this.value = value; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { Counter } from \"./counter\";\nexport function caller() { return new Counter(1); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 13 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &counter, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "Counter");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &counter,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "Counter");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_javascript_namespace_constructor_call_edge_to_exported_class_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let counter = dir.join("counter.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&counter, "export class Counter { constructor() {} }\n").unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./counter\";\nexport function caller() { return new ns.Counter(); }\n",
+    )
+    .unwrap();
+
+    let position = Position { row: 0, column: 13 };
+    let live =
+        trace_symbol_graph_at_position(&dir, &counter, &position, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "Counter");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].semantic_path, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &counter,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "Counter");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].semantic_path, "caller");
+}
+
+#[test]
+fn traces_javascript_constructor_call_edge_to_local_class() {
+    let dir = temporary_dir();
+    let app = dir.join("app.ts");
+
+    fs::write(
+        &app,
+        "class Counter { constructor() {} }\nexport function caller() { return new Counter(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    let counter = live
+        .callees
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Counter")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected caller to construct the local class, callees: {:?}",
+                live.callees
+            )
+        });
+    assert_eq!(counter.symbol_id, "Counter");
+}
+
+#[test]
+fn traces_javascript_default_import_constructor_call_edge_to_exported_class() {
+    let dir = temporary_dir();
+    let counter = dir.join("counter.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &counter,
+        "export default class Counter { constructor() {} }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import Counter from \"./counter\";\nexport function caller() { return new Counter(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    let counter = live
+        .callees
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Counter")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected caller to construct the default-imported class, callees: {:?}",
+                live.callees
+            )
+        });
+    assert_eq!(counter.symbol_id, "Counter");
+}
+
+#[test]
+fn traces_javascript_require_binding_constructor_call_edge_to_commonjs_callable() {
+    let dir = temporary_dir();
+    let counter = dir.join("counter.js");
+    let caller = dir.join("caller.js");
+
+    fs::write(
+        &counter,
+        "class Counter { constructor() {} }\nmodule.exports = Counter;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const Counter = require(\"./counter\");\nexport function caller() { return new Counter(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    let counter = live
+        .callees
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Counter")
+        .unwrap_or_else(|| {
+            panic!(
+                "expected caller to construct the require-bound CommonJS callable, callees: {:?}",
+                live.callees
+            )
+        });
+    assert_eq!(counter.symbol_id, "Counter");
+}
+
+#[test]
+fn keeps_javascript_constructor_calls_fail_closed_for_non_namespace_receivers() {
+    let dir = temporary_dir();
+    let app = dir.join("app.ts");
+
+    fs::write(
+        &app,
+        "class Missing { }\nexport function caller(ns) { return new ns.Missing(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    assert!(
+        live.callees
+            .iter()
+            .all(|symbol| symbol.semantic_path != "Missing"),
+        "constructor calls through non-namespace receivers must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_javascript_constructor_calls_fail_closed_for_missing_namespace_members() {
+    let dir = temporary_dir();
+    let counter = dir.join("counter.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(&counter, "export class Present { }\n").unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./counter\";\nexport function caller() { return new ns.Missing(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.symbol.semantic_path, "caller");
+    assert!(
+        live.callees.is_empty(),
+        "constructor calls through missing namespace members must fail closed, callees: {:?}",
+        live.callees
+    );
+}

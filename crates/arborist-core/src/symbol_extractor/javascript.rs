@@ -439,4 +439,79 @@ mod tests {
                 if details.namespace_receiver.as_deref() == Some("ns")
         ));
     }
+    #[test]
+    fn collects_constructor_call_facts() {
+        let source = "import * as ns from \"./helper\";\nconst Factory = require(\"./impl\");\nexport function caller() { new Helper(1); new ns.Counter(1, 2); new Factory(); }\n";
+        let path = Path::new("caller.ts");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_javascript_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+
+        assert!(caller.references_by_name.contains("Helper"));
+        assert_eq!(
+            caller.call_arities_by_name.get("Helper"),
+            Some(&BTreeSet::from([1]))
+        );
+        assert!(caller.references_by_name.contains("Factory"));
+        assert_eq!(
+            caller.call_arities_by_name.get("Factory"),
+            Some(&BTreeSet::from([0]))
+        );
+
+        // The legacy direct-call fact keeps describing the bare constructor
+        // name, and the JavaScript facts additionally carry the constructor
+        // marker so resolution can distinguish `new Counter()` from
+        // `Counter()`.
+        let direct = caller
+            .reference_facts
+            .iter()
+            .find(|fact| fact.spelling == "Helper")
+            .unwrap();
+        assert_eq!(direct.call_arities, Some(BTreeSet::from([1])));
+        assert_eq!(direct.language_details, ReferenceLanguageDetails::None);
+        assert!(caller.reference_facts.iter().any(|fact| {
+            fact.spelling == "Helper"
+                && matches!(
+                    &fact.language_details,
+                    ReferenceLanguageDetails::JavaScript(details)
+                        if details.constructor_call
+                            && details.namespace_receiver.is_none()
+                )
+        }));
+
+        let factory = caller
+            .reference_facts
+            .iter()
+            .find(|fact| fact.spelling == "Factory")
+            .unwrap();
+        assert_eq!(factory.call_arities, Some(BTreeSet::from([0])));
+        assert_eq!(factory.language_details, ReferenceLanguageDetails::None);
+        assert!(caller.reference_facts.iter().any(|fact| {
+            fact.spelling == "Factory"
+                && matches!(
+                    &fact.language_details,
+                    ReferenceLanguageDetails::JavaScript(details)
+                        if details.constructor_call
+                            && details.namespace_receiver.is_none()
+                )
+        }));
+
+        let namespace = caller
+            .reference_facts
+            .iter()
+            .find(|fact| fact.spelling == "Counter")
+            .unwrap();
+        assert_eq!(namespace.call_arities, Some(BTreeSet::from([2])));
+        assert!(matches!(
+            &namespace.language_details,
+            ReferenceLanguageDetails::JavaScript(details)
+                if details.namespace_receiver.as_deref() == Some("ns")
+                    && details.constructor_call
+        ));
+    }
 }

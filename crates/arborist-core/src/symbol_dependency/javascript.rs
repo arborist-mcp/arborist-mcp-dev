@@ -898,7 +898,7 @@ mod tests {
 
     use super::{
         javascript_import_context_for_file_with_overrides_and_deadline,
-        resolve_javascript_default_import_local_name,
+        resolve_javascript_constructor_binding, resolve_javascript_default_import_local_name,
         resolve_javascript_named_import_binding_for_reference,
         resolve_javascript_namespace_member_binding,
         resolve_javascript_namespace_object_call_binding,
@@ -3482,6 +3482,130 @@ mod tests {
         assert!(
             binding.is_none(),
             "cyclic module-valued member aliases must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_constructor_binding_for_commonjs_class_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-constructor-class-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.cjs");
+        fs::write(&module, "class Helper {}\nmodule.exports = Helper;\n").unwrap();
+
+        // A class export is constructible but not directly callable, so the
+        // namespace-object call binding stays fail-closed while the
+        // constructor binding resolves.
+        let call_binding = resolve_javascript_namespace_object_call_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(call_binding.is_none());
+
+        let binding = resolve_javascript_constructor_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("CommonJS class export should resolve for constructors");
+        assert_eq!(binding.imported_name, "Helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_constructor_binding_for_named_class_expression() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-constructor-class-expression-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.cjs");
+        fs::write(&module, "module.exports = class Helper {};\n").unwrap();
+
+        let binding = resolve_javascript_constructor_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named class expression export should resolve for constructors");
+        assert_eq!(binding.imported_name, "Helper");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_constructor_binding_fail_closed_for_non_constructible_exports() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-constructor-non-constructible-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for (name, source) in [
+            (
+                "value.cjs",
+                "const helper = 42;\nmodule.exports = helper;\n",
+            ),
+            (
+                "ambiguous.cjs",
+                "function first() {}\nfunction second() {}\nmodule.exports = first;\nmodule.exports = second;\n",
+            ),
+            ("esm.cjs", "export default class Helper {}\n"),
+        ] {
+            let module = root.join(name);
+            fs::write(&module, source).unwrap();
+            let binding = resolve_javascript_constructor_binding(
+                &normalize_path(&module),
+                None,
+                &mut BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "non-constructible exports must fail closed, source: {source:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_constructor_binding_fail_closed_for_esm_only_extensions() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-cjs-constructor-mjs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.mjs");
+        fs::write(&module, "class Helper {}\nmodule.exports = Helper;\n").unwrap();
+
+        let binding = resolve_javascript_constructor_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            ".mjs namespace objects are never constructible and must fail closed"
         );
         let _ = fs::remove_dir_all(root);
     }
