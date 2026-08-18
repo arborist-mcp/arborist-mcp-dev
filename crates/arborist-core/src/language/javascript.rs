@@ -1332,6 +1332,16 @@ fn javascript_module_exports_export_name(
     root: Node<'_>,
     kind: JavaScriptModuleExportKind,
 ) -> Result<Option<String>> {
+    // TypeScript `export = <value>` assigns the module's export object like
+    // `module.exports = <value>`; callable/constructible values name the
+    // module's callable/constructible export for import-equals and
+    // namespace-object consumers.
+    if is_javascript_export_assignment_statement(statement, source)? {
+        let Some(value) = javascript_export_assignment_value(statement) else {
+            return Ok(None);
+        };
+        return javascript_module_export_value_name(value, source, root, kind);
+    }
     let expression = if statement.kind() == "expression_statement" {
         statement.named_child(0)
     } else {
@@ -1348,9 +1358,22 @@ fn javascript_module_exports_export_name(
     let Some(value) = assignment.child_by_field_name("right") else {
         return Ok(None);
     };
+    javascript_module_export_value_name(value, source, root, kind)
+}
+
+/// Returns the local symbol name a `module.exports = <value>` or TypeScript
+/// `export = <value>` export object names for a callable or constructible
+/// module export.
+fn javascript_module_export_value_name(
+    value: Node<'_>,
+    source: &str,
+    root: Node<'_>,
+    kind: JavaScriptModuleExportKind,
+) -> Result<Option<String>> {
     match value.kind() {
-        // `module.exports = helper;` names a module-level symbol; only a
-        // callable declaration makes the module itself callable.
+        // `module.exports = helper;` / `export = helper;` name a module-level
+        // symbol; only a callable declaration makes the module itself
+        // callable.
         "identifier" => {
             let name = node_text(value, source)?.trim().to_owned();
             if name.is_empty()
@@ -1390,6 +1413,28 @@ fn javascript_module_exports_export_name(
         }
         _ => Ok(None),
     }
+}
+
+/// Returns whether a top-level statement is a TypeScript `export = <value>`
+/// export assignment (as opposed to `export default`, `export { ... }`, or a
+/// `export * from` / `export * as ns from` re-export). The source text
+/// disambiguates the `=` spelling from the other export forms, and the
+/// assigned expression is the statement's first named child (the grammar does
+/// not give `export = <expr>` a field).
+fn is_javascript_export_assignment_statement(statement: Node<'_>, source: &str) -> Result<bool> {
+    if statement.kind() != "export_statement" {
+        return Ok(false);
+    }
+    let text = node_text(statement, source)?.trim_start();
+    Ok(text
+        .strip_prefix("export")
+        .is_some_and(|rest| rest.trim_start().starts_with('=')))
+}
+
+/// Returns the expression a TypeScript `export = <value>` assignment exports,
+/// or `None` for other statement shapes.
+fn javascript_export_assignment_value(statement: Node<'_>) -> Option<Node<'_>> {
+    statement.named_child(0)
 }
 
 fn is_javascript_module_exports_assignment(assignment: Node<'_>, source: &str) -> Result<bool> {
@@ -1556,6 +1601,23 @@ fn javascript_module_reexport_target(
     source: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<Option<PathBuf>> {
+    // TypeScript `export = require("./module")` wholesale re-exports the
+    // target module's export object like `module.exports = require(...)`, so
+    // namespace member, destructured member, and namespace-object calls
+    // resolve within the terminal module of the chain.
+    if is_javascript_export_assignment_statement(statement, source)? {
+        let Some(value) = javascript_export_assignment_value(statement) else {
+            return Ok(None);
+        };
+        let Some(specifier) = direct_require_specifier(value, source)? else {
+            return Ok(None);
+        };
+        return Ok(resolve_local_javascript_module_path_with_overrides(
+            path,
+            &specifier,
+            file_overrides,
+        ));
+    }
     let expression = if statement.kind() == "expression_statement" {
         statement.named_child(0)
     } else {
@@ -2193,6 +2255,11 @@ const escaped = require("./escaped\\name");
                 "function helper() {}\nmodule.exports = helper;\n",
                 Some("helper"),
             ),
+            ("function helper() {}\nexport = helper;\n", Some("helper")),
+            (
+                "function helper() {}\nexport = function helper() {}\n",
+                Some("helper"),
+            ),
             (
                 "const helper = () => 1;\nmodule.exports = helper;\n",
                 Some("helper"),
@@ -2209,14 +2276,25 @@ const escaped = require("./escaped\\name");
                 "module.exports = function* generate() {}\n",
                 Some("generate"),
             ),
+            ("export = function* generate() {}\n", Some("generate")),
             ("export default function helper() {}\n", None),
+            // `export default helper` names the default export, not the
+            // module's callable export object.
+            ("function helper() {}\nexport default helper;\n", None),
             ("export function helper() {}\n", None),
             ("module.exports = function () {}\n", None),
             ("module.exports = () => 1;\n", None),
             ("function helper() {}\nmodule.exports = { helper };\n", None),
             ("const helper = 42;\nmodule.exports = helper;\n", None),
+            ("const helper = 42;\nexport = helper;\n", None),
+            ("export = function () {}\n", None),
+            ("export = () => 1;\n", None),
             (
                 "function first() {}\nfunction second() {}\nmodule.exports = first;\nmodule.exports = second;\n",
+                None,
+            ),
+            (
+                "function first() {}\nfunction second() {}\nexport = first;\nexport = second;\n",
                 None,
             ),
             ("module.exports.helper = function helper() {}\n", None),
@@ -3080,6 +3158,77 @@ exports.Klass = class Klass {};
                 .collect::<Vec<_>>(),
             vec![crate::language::normalize_path(&impl_path)]
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn collects_typescript_export_assignment_reexport_module_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-typescript-export-assignment-reexport-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        std::fs::write(&impl_path, "exports.helper = function helper() {}\n").unwrap();
+        let source = "export = require(\"./impl.cjs\");\n";
+        let document = parse_document(&module, source).unwrap();
+
+        let paths = javascript_module_reexport_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            paths
+                .iter()
+                .map(|path| crate::language::normalize_path(path))
+                .collect::<Vec<_>>(),
+            vec![crate::language::normalize_path(&impl_path)]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_typescript_export_assignment_reexport_shapes_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-typescript-export-assignment-reexport-shapes-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        std::fs::write(&impl_path, "exports.helper = function helper() {}\n").unwrap();
+        for source in [
+            // Non-require values do not re-export the whole module.
+            "export = helper;\n",
+            "export = function helper() {}\n",
+            "export = { helper };\n",
+            // `export default` and named re-exports are not export assignments.
+            "export default helper;\n",
+            "export { helper } from \"./impl.cjs\";\n",
+            // Dynamic require arguments fail closed.
+            "export = require(specifier);\n",
+        ] {
+            let document = parse_document(&module, source).unwrap();
+            let paths = javascript_module_reexport_module_paths_with_overrides_and_check(
+                &module,
+                document.tree.root_node(),
+                source,
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(
+                paths.is_empty(),
+                "source {source:?} must fail closed, paths: {paths:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

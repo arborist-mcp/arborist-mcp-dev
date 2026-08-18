@@ -2711,6 +2711,98 @@ mod tests {
     }
 
     #[test]
+    fn resolves_import_equals_namespace_object_call_binding_through_export_assignment_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "function helper() {}\nexport = helper;\n").unwrap();
+        fs::write(
+            &caller,
+            "import fn = require(\"./helper\");\nexport function caller() { return fn(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "fn",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        let callable = resolve_javascript_namespace_object_call_binding(
+            binding.module_paths.iter().next().unwrap(),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("export-assignment callable should resolve");
+        assert_eq!(callable.imported_name, "helper");
+        assert_eq!(
+            callable.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_binding_through_export_assignment_wholesale_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-reexport-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "export = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./bridge\";\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace import binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("export-assignment wholesale re-export member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn keeps_typescript_import_equals_missing_modules_fail_closed() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-import-equals-missing-{}",

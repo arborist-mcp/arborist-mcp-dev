@@ -2966,3 +2966,60 @@ fn traces_javascript_default_import_call_edge_to_object_literal_named_function_d
     assert_eq!(live.callees[0].symbol_id, "app");
     assert_eq!(live.callees[0].file_path, normalize_path(&module));
 }
+#[test]
+fn traces_javascript_import_equals_namespace_object_call_edge_through_export_assignment_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "function helper(value: number): number { return value + 1; }\nexport = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import helper = require(\"./helper\");\nexport function caller(value: number): number { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&helper));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&helper));
+}
+
+#[test]
+fn traces_javascript_namespace_member_call_edge_through_export_assignment_wholesale_reexport_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export = require(\"./impl.cjs\");\n").unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./bridge\";\nexport function caller(value: number): number { return ns.helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
