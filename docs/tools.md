@@ -82,7 +82,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   receivers such as `fn caller(c: &Counter, d: Counter, e: &mut Counter)` trace to a unique inherent
   `impl` method with that exact semantic path when the parameter type is a plain or referenced struct
   name, while primitive, generic, path-typed, unknown, shadowed, or ambiguous parameter types fail
-  closed.
+  closed. Constructor-call bindings such as `let c = Counter::new(); c.increment();` trace to a unique
+  inherent `impl` method with that exact semantic path when the constructor is a same-file two-segment
+  `Type::constructor` call with a plain, unimported, non-module struct name, while module-qualified,
+  turbofish, path-typed, imported, unknown, shadowed, or ambiguous constructor bindings fail closed.
   Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
