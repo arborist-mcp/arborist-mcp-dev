@@ -260,7 +260,10 @@ pub(crate) fn rust_patch_replacement_node<'tree>(node: Node<'tree>) -> Node<'tre
     node
 }
 
-fn rust_inherent_impl_scope_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+pub(crate) fn rust_inherent_impl_scope_name(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
     if node.child_by_field_name("trait").is_some() {
         return Ok(None);
     }

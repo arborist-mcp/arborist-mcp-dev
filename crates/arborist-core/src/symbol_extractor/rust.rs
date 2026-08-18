@@ -6,8 +6,8 @@ use tree_sitter::Node;
 
 use crate::language::{node_text, normalize_path, rust_direct_module_candidate_paths};
 use crate::semantic::rust::{
-    is_rust_symbol_node, rust_parameters, rust_return_type, rust_semantic_path, rust_signature,
-    rust_symbol_name,
+    is_rust_symbol_node, rust_inherent_impl_scope_name, rust_parameters, rust_return_type,
+    rust_semantic_path, rust_signature, rust_symbol_name,
 };
 use crate::symbol_index_model::{
     IndexedSymbol, ReferenceFact, ReferenceLanguageDetails, RustImportRoot, RustReferenceDetails,
@@ -114,11 +114,13 @@ fn collect_direct_local_calls(
         .collect::<BTreeSet<_>>();
     let local_variable_types =
         collect_rust_local_variable_types(symbol_node, source, &module_or_import_names)?;
+    let self_type_path = rust_impl_self_type_path(symbol_node, source)?;
     if local_functions.is_empty()
         && imported_functions.is_empty()
         && qualified_functions.is_empty()
         && out_of_line_modules.is_empty()
         && local_variable_types.is_empty()
+        && self_type_path.is_none()
     {
         return Ok(RustDirectCallReferences::default());
     }
@@ -136,6 +138,7 @@ fn collect_direct_local_calls(
         module_components: rust_inline_module_path_components(symbol_node, source)?,
         bindings: &bindings,
         local_variable_types: &local_variable_types,
+        self_type_path,
     };
     let mut references = RustDirectCallReferences::default();
     collect_direct_local_calls_from_node(body, &context, &mut references)?;
@@ -153,6 +156,7 @@ struct RustDirectCallContext<'a> {
     module_components: Option<Vec<String>>,
     bindings: &'a BTreeSet<String>,
     local_variable_types: &'a BTreeMap<String, String>,
+    self_type_path: Option<String>,
 }
 
 fn source_file_out_of_line_module_names(
@@ -650,6 +654,26 @@ fn rust_constructor_call_type_name(
     Ok(Some(type_name.to_string()))
 }
 
+fn rust_impl_self_type_path(symbol_node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut current = symbol_node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == "impl_item" {
+            let Some(scope_name) = rust_inherent_impl_scope_name(parent, source)? else {
+                return Ok(None);
+            };
+            let mut path =
+                rust_inline_module_path_components(symbol_node, source)?.unwrap_or_default();
+            path.push(scope_name);
+            return Ok(Some(path.join("::")));
+        }
+        if matches!(parent.kind(), "function_item" | "closure_expression") {
+            return Ok(None);
+        }
+        current = parent.parent();
+    }
+    Ok(None)
+}
+
 fn collect_rust_parameter_types(
     symbol_node: Node<'_>,
     source: &str,
@@ -775,6 +799,11 @@ fn rust_method_call_target_path(
         let mut path = context.module_components.clone().unwrap_or_default();
         path.push(type_name);
         path.join("::")
+    } else if receiver.kind() == "self" {
+        let Some(self_type_path) = context.self_type_path.as_deref() else {
+            return Ok(None);
+        };
+        self_type_path.to_string()
     } else {
         return Ok(None);
     };
@@ -1437,5 +1466,32 @@ pub mod metrics {
             &source[increment.byte_range.0..increment.byte_range.1],
             "pub fn increment(&mut self, amount: Count) -> Count { amount }"
         );
+    }
+
+    #[test]
+    fn ignores_self_method_calls_outside_inherent_impls() {
+        let source = r#"
+struct Counter {}
+
+impl Counter {
+    fn increment(&self) {}
+}
+
+fn caller() {
+    self.increment();
+}
+"#;
+        let path = Path::new("src/api.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+        assert!(caller.references_by_name.is_empty());
+        assert!(caller.reference_facts.is_empty());
     }
 }
