@@ -60,7 +60,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `as` aliases, resolve through the unique out-of-line parent/module chain. Crate-root imports from
   out-of-line children and repeated `super::` ancestor navigation are supported. Equivalent qualified
   `crate::...` and `super::...` calls from out-of-line children use the same conservative parent/module
-  chain. Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
+  chain. Unambiguous `pub use` re-exports in an out-of-line module file or at the crate root (including
+  grouped paths and `as` aliases) forward imported and qualified calls through the same chain to the
+  defining top-level function, while private `use`, ambiguous duplicate re-exports, and cyclic re-export
+  chains fail closed. Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
   functions, methods, and declaration items by semantic path or source position with syntax-level
