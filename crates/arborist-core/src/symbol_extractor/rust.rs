@@ -107,7 +107,13 @@ fn collect_direct_local_calls(
     let qualified_functions = source_file_module_function_paths(symbol_node, source)?;
     let imported_functions = source_file_imported_function_paths(symbol_node, source)?;
     let out_of_line_modules = source_file_out_of_line_module_names(path, symbol_node, source)?;
-    let local_variable_types = collect_rust_local_variable_types(symbol_node, source)?;
+    let module_or_import_names = out_of_line_modules
+        .iter()
+        .chain(imported_functions.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let local_variable_types =
+        collect_rust_local_variable_types(symbol_node, source, &module_or_import_names)?;
     if local_functions.is_empty()
         && imported_functions.is_empty()
         && qualified_functions.is_empty()
@@ -545,13 +551,14 @@ fn collect_pattern_bindings(
 fn collect_rust_local_variable_types(
     symbol_node: Node<'_>,
     source: &str,
+    module_or_import_names: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, String>> {
     let Some(body) = symbol_node.child_by_field_name("body") else {
         return Ok(BTreeMap::new());
     };
     let mut types_by_name = BTreeMap::<String, BTreeSet<String>>::new();
     collect_rust_parameter_types(symbol_node, source, &mut types_by_name)?;
-    collect_rust_let_binding_types(body, source, &mut types_by_name)?;
+    collect_rust_let_binding_types(body, source, module_or_import_names, &mut types_by_name)?;
     let module_components = rust_inline_module_path_components(symbol_node, source)?;
     Ok(types_by_name
         .into_iter()
@@ -569,6 +576,7 @@ fn collect_rust_local_variable_types(
 fn collect_rust_let_binding_types(
     node: Node<'_>,
     source: &str,
+    module_or_import_names: &BTreeSet<String>,
     types_by_name: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<()> {
     if matches!(
@@ -580,7 +588,7 @@ fn collect_rust_let_binding_types(
     if node.kind() == "let_declaration"
         && let Some(pattern) = node.child_by_field_name("pattern")
         && let Some(value) = node.child_by_field_name("value")
-        && let Some(type_name) = rust_struct_expression_type_name(value, source)?
+        && let Some(type_name) = rust_let_binding_type_name(value, source, module_or_import_names)?
         && pattern.kind() == "identifier"
         && let name = node_text(pattern, source)?.trim()
         && !name.is_empty()
@@ -593,9 +601,53 @@ fn collect_rust_let_binding_types(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_rust_let_binding_types(child, source, types_by_name)?;
+        collect_rust_let_binding_types(child, source, module_or_import_names, types_by_name)?;
     }
     Ok(())
+}
+
+fn rust_let_binding_type_name(
+    value: Node<'_>,
+    source: &str,
+    module_or_import_names: &BTreeSet<String>,
+) -> Result<Option<String>> {
+    if let Some(type_name) = rust_struct_expression_type_name(value, source)? {
+        return Ok(Some(type_name));
+    }
+    rust_constructor_call_type_name(value, source, module_or_import_names)
+}
+
+fn rust_constructor_call_type_name(
+    value: Node<'_>,
+    source: &str,
+    module_or_import_names: &BTreeSet<String>,
+) -> Result<Option<String>> {
+    if value.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let Some(function) = value.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    if function.kind() != "scoped_identifier" {
+        return Ok(None);
+    }
+    let spelling = node_text(function, source)?.trim();
+    let mut components = spelling.split("::");
+    let Some(type_name) = components.next() else {
+        return Ok(None);
+    };
+    let Some(constructor_name) = components.next() else {
+        return Ok(None);
+    };
+    if type_name.is_empty()
+        || constructor_name.is_empty()
+        || components.next().is_some()
+        || module_or_import_names.contains(type_name)
+        || !rust_type_name_like(type_name)
+    {
+        return Ok(None);
+    }
+    Ok(Some(type_name.to_string()))
 }
 
 fn collect_rust_parameter_types(

@@ -1731,3 +1731,169 @@ fn keeps_rust_typed_parameter_method_calls_fail_closed_in_live_workspace_and_per
         );
     }
 }
+
+#[test]
+fn traces_rust_constructor_call_binding_method_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn new() -> Counter { Counter {} }\n    fn increment(&self) {}\n}\nfn caller() {\n    let c = Counter::new();\n    c.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 2);
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Counter::new"),
+        "the constructor static call should trace to Counter::new"
+    );
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Counter::increment"),
+        "the instance call should trace to Counter::increment"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Counter::new")
+    );
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Counter::increment")
+    );
+}
+
+#[test]
+fn traces_rust_constructor_call_binding_method_calls_in_inline_modules_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n    pub fn caller() {\n        let c = Counter::new();\n        c.increment();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::increment");
+}
+
+#[test]
+fn keeps_rust_constructor_call_binding_method_calls_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn path_constructor_caller() {\n    let c = api::Counter::new();\n    c.increment();\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+    )
+    .unwrap();
+
+    let forbidden_targets = [
+        ("path_constructor_caller", "api::Counter::increment"),
+        ("turbofish_constructor_caller", "RootCounter::increment"),
+        ("unknown_type_constructor_caller", "Unknown::increment"),
+        ("shadowed_constructor_caller", "RootCounter::increment"),
+        ("shadowed_constructor_caller", "Other::increment"),
+        ("missing_method_constructor_caller", "RootCounter::missing"),
+    ];
+    for (caller, forbidden) in forbidden_targets {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !live
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved constructor-call binding"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, forbidden) in forbidden_targets {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved constructor-call binding from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn keeps_rust_out_of_line_module_constructor_calls_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let module_path = dir.join("Counter.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod Counter;\nfn caller() {\n    let c = Counter::new();\n    c.increment();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &module_path,
+        "pub fn new() -> i32 { 0 }\npub fn increment() {}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert!(
+        live.callees.iter().any(|callee| callee.symbol_id == "new"),
+        "the module-qualified static call should still resolve"
+    );
+    assert!(
+        !live
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "increment"),
+        "an out-of-line module name must not be treated as a constructor binding type"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "new")
+    );
+    assert!(
+        !persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "increment")
+    );
+}
