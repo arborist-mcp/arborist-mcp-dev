@@ -597,7 +597,11 @@ for response shapes, error behavior, and examples.
   that exact semantic path, while missing, ambiguous, or non-method targets fail closed. Module-binding imports
   such as `use crate::api;` (including `as` aliases and grouped bindings) let `api::function()` calls from the
   crate root or out-of-line children resolve to a function inside the inline `mod api` at the crate root, while
-  missing modules or functions fail closed. Malformed source, `#[path]` semantics,
+  missing modules or functions fail closed. Inline modules nested in an out-of-line module file also resolve:
+  `crate::api::inner::helper()` calls, `use crate::api::inner::helper;` imports, and module-binding
+  `use crate::api;` plus `api::inner::helper()` calls forward through the out-of-line chain into the inline
+  `mod inner` in the terminal module file, while missing modules or functions fail closed.
+  Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
   those exact bindings remains unavailable. Structural patching targets Rust functions, methods, and
