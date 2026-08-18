@@ -2663,3 +2663,93 @@ fn keeps_rust_field_access_let_bindings_fail_closed_in_live_workspace_and_persis
         );
     }
 }
+
+#[test]
+fn traces_rust_self_prefixed_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn new() -> Counter { Counter {} }\n    fn create() -> Counter {\n        Self::new()\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::create", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Counter::new");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::create", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Counter::new");
+}
+
+#[test]
+fn traces_rust_self_prefixed_static_calls_in_inline_modules_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn create() -> Counter {\n            Self::new()\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::Counter::create", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Counter::new");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::create", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::new");
+}
+
+#[test]
+fn keeps_rust_self_prefixed_static_calls_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn new() -> Counter { Counter {} }\n    fn missing_static_caller() {\n        Self::missing();\n    }\n}\nfn outside_impl_caller() {\n    Self::new();\n}\n",
+    )
+    .unwrap();
+
+    for (caller, forbidden) in [
+        ("Counter::missing_static_caller", "Counter::missing"),
+        ("outside_impl_caller", "Counter::new"),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !live
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved Self-prefixed static call"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, forbidden) in [
+        ("Counter::missing_static_caller", "Counter::missing"),
+        ("outside_impl_caller", "Counter::new"),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved Self-prefixed static call from the persisted index"
+        );
+    }
+}

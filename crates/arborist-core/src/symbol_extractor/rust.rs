@@ -1178,7 +1178,13 @@ fn collect_direct_local_calls_from_node(
             && let Some((path, import_root)) =
                 rust_qualified_call_target_path(function, module_components, context.hop.source)?
         {
-            if let Some(path) = context.qualified_functions.get(&path) {
+            if let Some(target) = rust_self_prefixed_call_target(
+                &path,
+                module_components,
+                context.hop.self_type_path.as_deref(),
+            ) {
+                references.insert(target, None);
+            } else if let Some(path) = context.qualified_functions.get(&path) {
                 references.insert(path.clone(), import_root);
             } else if is_rust_parent_qualified_module_call(import_root.as_ref(), &path)
                 || is_out_of_line_module_call(&path, context.out_of_line_modules)
@@ -1304,6 +1310,27 @@ fn rust_inline_module_path_components(
     }
     components.reverse();
     Ok(Some(components))
+}
+
+fn rust_self_prefixed_call_target(
+    path: &str,
+    module_components: &[String],
+    self_type_path: Option<&str>,
+) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut prefix = module_components.join("::");
+    if !prefix.is_empty() {
+        prefix.push_str("::");
+    }
+    prefix.push_str("Self");
+    let remainder = path.strip_prefix(&prefix)?.strip_prefix("::")?;
+    if remainder.is_empty() || remainder.split("::").any(|component| component.is_empty()) {
+        return None;
+    }
+    let self_type_path = self_type_path?;
+    Some(format!("{self_type_path}::{remainder}"))
 }
 
 fn rust_qualified_call_target_path(
