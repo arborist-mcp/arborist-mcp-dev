@@ -3464,6 +3464,250 @@ mod tests {
     }
 
     #[test]
+    fn resolves_namespace_member_binding_through_object_literal_spread_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-namespace-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("spread-reexported member should resolve within the target");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_destructured_member_binding_through_object_literal_spread_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-destructured-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("destructured spread-reexported member should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_spread_reexport_member_binding_through_nested_spread_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-chain-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let mid = root.join("mid.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(&mid, "module.exports = { ...require(\"./impl.cjs\") };\n").unwrap();
+        fs::write(&bridge, "module.exports = { ...require(\"./mid.cjs\") };\n").unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("spread chain member should resolve at the terminal module");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_explicit_object_entry_over_spread_provided_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-explicit-shadow-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "function local(value) { return value + 2; }\nmodule.exports = { ...require(\"./impl.cjs\"), helper: local };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("explicit object entry should shadow the spread-provided member");
+        assert_eq!(binding.imported_name, "local");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_spread_reexport_member_bindings_fail_closed_for_ambiguous_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let left = root.join("left.cjs");
+        let right = root.join("right.cjs");
+        fs::write(&left, "function helper() {}\nexports.helper = helper;\n").unwrap();
+        fs::write(&right, "function helper() {}\nexports.helper = helper;\n").unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./left.cjs\"), ...require(\"./right.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "multiple spread targets providing one member must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_spread_reexport_member_bindings_fail_closed_for_missing_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./missing.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(binding.is_none(), "missing spread targets must fail closed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_spread_reexport_member_bindings_fail_closed_for_cycles() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-spread-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let left = root.join("left.cjs");
+        let right = root.join("right.cjs");
+        fs::write(&left, "module.exports = { ...require(\"./right.cjs\") };\n").unwrap();
+        fs::write(&right, "module.exports = { ...require(\"./left.cjs\") };\n").unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&left),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(binding.is_none(), "cyclic spreads must fail closed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resolves_module_valued_export_member_binding_to_reexported_member() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-module-valued-member-alias-{}",

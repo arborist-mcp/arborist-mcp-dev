@@ -1876,7 +1876,7 @@ mod tests {
         javascript_export_local_names, javascript_module_callable_export_local_name,
         javascript_module_default_export_local_name,
         javascript_module_reexport_module_paths_with_overrides_and_check,
-        javascript_named_export_names,
+        javascript_module_spread_specifiers, javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
         javascript_named_reexport_module_paths_with_overrides_and_check,
         javascript_star_reexport_module_paths_with_overrides_and_check,
@@ -2621,6 +2621,47 @@ const escaped = require("./escaped\\name");
             local_names,
             BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
         );
+    }
+
+    #[test]
+    fn collects_commonjs_object_literal_spread_require_specifiers() {
+        let source = r#"
+const local = require("./local");
+module.exports = { ...require("./impl"), helper: local, ...require("./other") };
+"#;
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let specifiers = javascript_module_spread_specifiers(root, source, None).unwrap();
+        assert_eq!(
+            specifiers,
+            vec!["./impl".to_string(), "./other".to_string()]
+        );
+    }
+
+    #[test]
+    fn keeps_commonjs_object_literal_spread_require_fail_closed() {
+        for source in [
+            // Only the final module.exports replacement's spreads count; the
+            // earlier export object is shadowed.
+            "module.exports = { ...require(\"./early\") };\nmodule.exports = { helper: local };\n",
+            // Non-object and non-require spreads name no module.
+            "module.exports = { ...localObject };\n",
+            "module.exports = { ...require(moduleName) };\n",
+            "module.exports = { ...makeObject() };\n",
+            // A non-final replacement that never spreads still shadows nothing;
+            // dynamic require arguments fail closed.
+            "module.exports = { ...require(\"./impl\") };\nmodule.exports = other;\n",
+        ] {
+            let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+            let specifiers =
+                javascript_module_spread_specifiers(document.tree.root_node(), source, None)
+                    .unwrap();
+            assert!(
+                specifiers.is_empty(),
+                "source {source:?} must fail closed, specifiers: {specifiers:?}"
+            );
+        }
     }
 
     #[test]
