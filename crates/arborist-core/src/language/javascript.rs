@@ -1940,8 +1940,8 @@ mod tests {
     use anyhow::bail;
 
     use super::{
-        javascript_export_local_names, javascript_module_callable_export_local_name,
-        javascript_module_default_export_local_name,
+        javascript_cjs_object_default_member_local_name, javascript_export_local_names,
+        javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
         javascript_module_reexport_module_paths_with_overrides_and_check,
         javascript_module_spread_specifiers, javascript_named_export_names,
         javascript_named_import_module_paths_with_overrides_and_check,
@@ -2727,6 +2727,47 @@ module.exports = { ...require("./impl"), helper: local, ...require("./other") };
             assert!(
                 specifiers.is_empty(),
                 "source {source:?} must fail closed, specifiers: {specifiers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn collects_commonjs_object_literal_default_member_local_name() {
+        let source = "function helper() {}\nmodule.exports = { default: helper, helper: local };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        assert_eq!(
+            javascript_cjs_object_default_member_local_name(root, source, None).unwrap(),
+            Some("helper".to_owned())
+        );
+    }
+
+    #[test]
+    fn keeps_commonjs_object_literal_default_member_fail_closed() {
+        for source in [
+            // Conflicting default entries are ambiguous.
+            "module.exports = { default: first, default: second };\n",
+            // Non-identifier values name no local symbol; module-valued
+            // aliases are owned by the module-valued member machinery.
+            "module.exports = { default: 42 };\n",
+            "module.exports = { default: require(\"./impl\") };\n",
+            // Only the final replacement's entry counts; earlier export
+            // objects and non-object replacements have no surviving entry.
+            "module.exports = { default: helper };\nmodule.exports = { helper };\n",
+            "module.exports = { default: helper };\nmodule.exports = other;\n",
+            "module.exports = other;\n",
+        ] {
+            let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+            assert!(
+                javascript_cjs_object_default_member_local_name(
+                    document.tree.root_node(),
+                    source,
+                    None
+                )
+                .unwrap()
+                .is_none(),
+                "source {source:?} must fail closed"
             );
         }
     }

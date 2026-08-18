@@ -2200,6 +2200,129 @@ fn traces_javascript_destructured_member_call_edge_through_object_literal_spread
 }
 
 #[test]
+fn traces_javascript_default_import_call_edge_through_object_literal_spread_reexport_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.default = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { ...require(\"./impl.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import helper from \"./bridge.cjs\";\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_default_import_call_edge_through_object_literal_module_valued_default_member_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { default: require(\"./impl.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import helper from \"./bridge.cjs\";\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_namespace_default_member_call_edge_through_object_literal_spread_reexport_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.default = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { ...require(\"./impl.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import * as ns from \"./bridge.cjs\";\nexport function caller(value) { return ns.default(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn keeps_javascript_default_import_edges_fail_closed_for_conflicting_object_literal_defaults() {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &bridge,
+        "function first(value) { return value + 1; }\nfunction second(value) { return value + 2; }\nmodule.exports = { default: first, default: second };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import selected from \"./bridge.cjs\";\nexport function caller(value) { return selected(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "conflicting object-literal defaults must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
 fn keeps_javascript_module_valued_export_member_calls_fail_closed_for_non_callable_aliases() {
     let dir = temporary_dir();
     let obj_path = dir.join("obj.cjs");

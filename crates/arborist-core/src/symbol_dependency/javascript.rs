@@ -1100,7 +1100,8 @@ mod tests {
 
     use super::{
         javascript_import_context_for_file_with_overrides_and_deadline,
-        resolve_javascript_constructor_binding, resolve_javascript_default_import_local_name,
+        resolve_javascript_constructor_binding, resolve_javascript_default_import_binding,
+        resolve_javascript_default_import_local_name,
         resolve_javascript_named_import_binding_for_reference,
         resolve_javascript_namespace_member_binding,
         resolve_javascript_namespace_object_call_binding,
@@ -3048,6 +3049,355 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn resolves_default_import_through_object_literal_spread_to_cjs_default_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-spread-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import helper from \"./bridge.cjs\";\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import binding should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let default_binding = resolve_javascript_default_import_binding(
+            binding.module_paths.iter().next().unwrap(),
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("spread-forwarded default should resolve in its defining module");
+        assert_eq!(default_binding.imported_name, "helper");
+        assert_eq!(
+            default_binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_object_literal_module_valued_default_member_to_cjs_callable()
+    {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-module-valued-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { default: require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_default_import_binding(
+            &normalize_path(&bridge),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("module-valued default entry should resolve to the callable export");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_object_literal_default_entry_local_name() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-object-entry-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "function helper(value) { return value + 1; }\nmodule.exports = { default: helper };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_default_import_binding(
+            &normalize_path(&bridge),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("object-literal default entry should name the local symbol");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_nested_object_literal_spread_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-spread-chain-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let mid = root.join("mid.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(&mid, "module.exports = { ...require(\"./impl.cjs\") };\n").unwrap();
+        fs::write(&bridge, "module.exports = { ...require(\"./mid.cjs\") };\n").unwrap();
+
+        let binding = resolve_javascript_default_import_binding(
+            &normalize_path(&bridge),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("default should resolve at the terminal module of the spread chain");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_default_member_through_object_literal_spread_to_cjs_default_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-spread-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.default = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "default",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("spread-forwarded default member should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_default_member_through_object_literal_default_entry_local_name() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-entry-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "function helper(value) { return value + 1; }\nmodule.exports = { default: helper };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "default",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("object-literal default entry should name the local symbol");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_default_import_fail_closed_for_conflicting_object_literal_default_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-object-conflict-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "function first() {}\nfunction second() {}\nmodule.exports = { default: first, default: second };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_default_import_binding(
+            &normalize_path(&bridge),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "conflicting object-literal default entries must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_default_member_fail_closed_for_ambiguous_spread_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-spread-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        let left = root.join("left.cjs");
+        let right = root.join("right.cjs");
+        fs::write(&left, "function first() {}\nexports.default = first;\n").unwrap();
+        fs::write(&right, "function second() {}\nexports.default = second;\n").unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./left.cjs\"), ...require(\"./right.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "default",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(
+            binding.is_none(),
+            "multiple spread targets providing a default must fail closed"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_default_member_fail_closed_for_missing_spread_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-spread-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "module.exports = { ...require(\"./missing.cjs\") };\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&bridge),
+            "default",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(binding.is_none(), "missing spread targets must fail closed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_namespace_default_member_fail_closed_for_spread_cycles() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-namespace-default-spread-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let left = root.join("left.cjs");
+        let right = root.join("right.cjs");
+        fs::write(&left, "module.exports = { ...require(\"./right.cjs\") };\n").unwrap();
+        fs::write(&right, "module.exports = { ...require(\"./left.cjs\") };\n").unwrap();
+
+        let binding = resolve_javascript_namespace_member_binding(
+            &normalize_path(&left),
+            "default",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(binding.is_none(), "cyclic spreads must fail closed");
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn keeps_shadowed_exports_alias_members_fail_closed() {
         let root = std::env::temp_dir().join(format!(
