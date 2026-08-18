@@ -1579,3 +1579,91 @@ fn keeps_rust_inline_module_in_out_of_line_module_calls_fail_closed_in_live_work
         );
     }
 }
+
+#[test]
+fn traces_rust_local_struct_literal_method_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn caller() {\n    let c = Counter {};\n    c.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Counter::increment");
+}
+
+#[test]
+fn traces_rust_direct_struct_literal_method_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn caller() { Counter {}.increment(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Counter::increment");
+}
+
+#[test]
+fn keeps_rust_struct_literal_method_calls_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn unknown_receiver_caller(receiver: Counter) { receiver.increment(); }\nfn missing_method_caller() { let c = Counter {}; c.missing(); }\nfn non_struct_binding_caller() { let n = 5; n.increment(); }\nfn shadowed_binding_caller() {\n    let c = Counter {};\n    let c = Other {};\n    c.increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "unknown_receiver_caller",
+        "missing_method_caller",
+        "non_struct_binding_caller",
+        "shadowed_binding_caller",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for an unknown method receiver"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "unknown_receiver_caller",
+        "missing_method_caller",
+        "non_struct_binding_caller",
+        "shadowed_binding_caller",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for an unknown method receiver from the persisted index"
+        );
+    }
+}
