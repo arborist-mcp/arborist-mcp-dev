@@ -1635,12 +1635,11 @@ fn keeps_rust_struct_literal_method_calls_fail_closed_in_live_workspace_and_pers
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn unknown_receiver_caller(receiver: Counter) { receiver.increment(); }\nfn missing_method_caller() { let c = Counter {}; c.missing(); }\nfn non_struct_binding_caller() { let n = 5; n.increment(); }\nfn shadowed_binding_caller() {\n    let c = Counter {};\n    let c = Other {};\n    c.increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn missing_method_caller() { let c = Counter {}; c.missing(); }\nfn non_struct_binding_caller() { let n = 5; n.increment(); }\nfn shadowed_binding_caller() {\n    let c = Counter {};\n    let c = Other {};\n    c.increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
     )
     .unwrap();
 
     for caller in [
-        "unknown_receiver_caller",
         "missing_method_caller",
         "non_struct_binding_caller",
         "shadowed_binding_caller",
@@ -1654,7 +1653,6 @@ fn keeps_rust_struct_literal_method_calls_fail_closed_in_live_workspace_and_pers
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     for caller in [
-        "unknown_receiver_caller",
         "missing_method_caller",
         "non_struct_binding_caller",
         "shadowed_binding_caller",
@@ -1664,6 +1662,72 @@ fn keeps_rust_struct_literal_method_calls_fail_closed_in_live_workspace_and_pers
         assert!(
             persisted.callees.is_empty(),
             "{caller} must fail closed for an unknown method receiver from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn traces_rust_typed_parameter_method_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn caller(c: &Counter, d: Counter, e: &mut Counter) {\n    c.increment();\n    d.increment();\n    e.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Counter::increment");
+}
+
+#[test]
+fn keeps_rust_typed_parameter_method_calls_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter {\n    fn increment(&self) {}\n}\nfn primitive_parameter_caller(value: i32) { value.increment(); }\nfn generic_parameter_caller<T>(value: T) { value.increment(); }\nfn unknown_type_parameter_caller(value: Unknown) { value.increment(); }\nfn shadowed_parameter_caller(value: Counter) {\n    let value = Other {};\n    value.increment();\n}\nfn duplicated_parameter_caller(value: Counter, value: Other) { value.increment(); }\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "primitive_parameter_caller",
+        "generic_parameter_caller",
+        "unknown_type_parameter_caller",
+        "shadowed_parameter_caller",
+        "duplicated_parameter_caller",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for an unresolved typed parameter receiver"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "primitive_parameter_caller",
+        "generic_parameter_caller",
+        "unknown_type_parameter_caller",
+        "shadowed_parameter_caller",
+        "duplicated_parameter_caller",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for an unresolved typed parameter receiver from the persisted index"
         );
     }
 }

@@ -550,6 +550,7 @@ fn collect_rust_local_variable_types(
         return Ok(BTreeMap::new());
     };
     let mut types_by_name = BTreeMap::<String, BTreeSet<String>>::new();
+    collect_rust_parameter_types(symbol_node, source, &mut types_by_name)?;
     collect_rust_let_binding_types(body, source, &mut types_by_name)?;
     let module_components = rust_inline_module_path_components(symbol_node, source)?;
     Ok(types_by_name
@@ -595,6 +596,87 @@ fn collect_rust_let_binding_types(
         collect_rust_let_binding_types(child, source, types_by_name)?;
     }
     Ok(())
+}
+
+fn collect_rust_parameter_types(
+    symbol_node: Node<'_>,
+    source: &str,
+    types_by_name: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<()> {
+    let Some(parameters) = symbol_node.child_by_field_name("parameters") else {
+        return Ok(());
+    };
+    let generic_parameters = rust_generic_type_parameter_names(symbol_node, source)?;
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        if parameter.kind() != "parameter" {
+            continue;
+        }
+        let Some(pattern) = parameter.child_by_field_name("pattern") else {
+            continue;
+        };
+        if pattern.kind() != "identifier" {
+            continue;
+        }
+        let Some(type_node) = parameter.child_by_field_name("type") else {
+            continue;
+        };
+        let Some(type_name) = rust_parameter_local_type(type_node, source)? else {
+            continue;
+        };
+        if generic_parameters.contains(&type_name) {
+            continue;
+        }
+        let name = node_text(pattern, source)?.trim();
+        if !name.is_empty() {
+            types_by_name
+                .entry(name.to_string())
+                .or_default()
+                .insert(type_name);
+        }
+    }
+    Ok(())
+}
+
+fn rust_parameter_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let type_node = match node.kind() {
+        "type_identifier" => Some(node),
+        "reference_type" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find(|child| child.kind() == "type_identifier")
+        }
+        _ => None,
+    };
+    let Some(type_node) = type_node else {
+        return Ok(None);
+    };
+    let type_name = node_text(type_node, source)?.trim();
+    Ok((!type_name.is_empty()).then(|| type_name.to_string()))
+}
+
+fn rust_generic_type_parameter_names(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let Some(type_parameters) = symbol_node.child_by_field_name("type_parameters") else {
+        return Ok(BTreeSet::new());
+    };
+    let mut names = BTreeSet::new();
+    let mut cursor = type_parameters.walk();
+    for parameter in type_parameters.named_children(&mut cursor) {
+        if parameter.kind() != "type_parameter" {
+            continue;
+        }
+        let Some(name_node) = parameter.child_by_field_name("name") else {
+            continue;
+        };
+        let name = node_text(name_node, source)?.trim();
+        if !name.is_empty() {
+            names.insert(name.to_string());
+        }
+    }
+    Ok(names)
 }
 
 fn rust_struct_expression_type_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
