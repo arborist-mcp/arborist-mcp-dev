@@ -89,6 +89,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `self.`-rooted calls inside inherent `impl` methods such as `fn twice(&self) { self.increment(); }`
   trace to a unique inherent `impl` method on the impl's own type, while trait-impl methods, nested
   functions, and `Self::`-rooted static calls fail closed.
+  Member-chain instance calls such as `outer.inner.increment();` resolve each intermediate field's declared plain struct type in the same source file before dispatching the final method, and chains rooted at typed-parameter receivers, struct-literal bindings, or `self.` inside inherent `impl` methods such as `self.middle.leaf.run();` follow the same field resolution, while unknown fields, unknown base receivers, generic or non-plain field types, missing methods, and primitive receivers fail closed.
   Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
