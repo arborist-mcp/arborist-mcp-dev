@@ -588,7 +588,9 @@ for response shapes, error behavior, and examples.
   children use the same conservative parent/module chain. Unambiguous `pub use` re-exports in an
   out-of-line module file or at the crate root (including grouped paths and `as` aliases) forward
   imported and qualified calls through the same chain to the defining top-level function, while
-  private `use`, ambiguous duplicate re-exports, and cyclic re-export chains fail closed. Malformed source, `#[path]` semantics,
+  private `use`, ambiguous duplicate re-exports, and cyclic re-export chains fail closed. Bare
+  `crate::name()` calls (from the crate root or out-of-line children) resolve to a matching crate-root
+  top-level function or through a crate-root `pub use` re-export to the defining module. Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
   those exact bindings remains unavailable. Structural patching targets Rust functions, methods, and
