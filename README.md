@@ -594,7 +594,10 @@ for response shapes, error behavior, and examples.
   `use crate::api::function;` imports and `crate::api::function()` calls whose target is declared inside
   an inline `mod api` at the crate root also resolve, while missing or non-function targets fail closed.
   Type-qualified static calls such as `Counter::new()` resolve to a unique inherent `impl` method with
-  that exact semantic path, while missing, ambiguous, or non-method targets fail closed. Malformed source, `#[path]` semantics,
+  that exact semantic path, while missing, ambiguous, or non-method targets fail closed. Module-binding imports
+  such as `use crate::api;` (including `as` aliases and grouped bindings) let `api::function()` calls from the
+  crate root or out-of-line children resolve to a function inside the inline `mod api` at the crate root, while
+  missing modules or functions fail closed. Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
   those exact bindings remains unavailable. Structural patching targets Rust functions, methods, and
