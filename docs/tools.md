@@ -35,6 +35,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `require` bindings (including destructured members with default values) and TypeScript `import name = require(...)` bindings, object-literal and member-assignment export members,
   module-valued export members that alias another module's export object or a named member,
   inline `require(...)` member and namespace-object calls,
+  object-literal spread re-exports (`module.exports = { ...require(...) }`),
   CommonJS interop default exports, `module.exports` replacement shadowing of `exports` alias members,
   wholesale `module.exports = require(...)` re-export chains, star re-export chains,
   static local dependency refresh, structural patching, and
