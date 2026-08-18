@@ -2803,6 +2803,263 @@ mod tests {
     }
 
     #[test]
+    fn resolves_require_destructured_member_binding_through_export_assignment_object_literal_exports() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-exports-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        fs::write(&bridge, "function helper() {}\nexport = { helper };\n").unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge\");\nexport function caller() { return helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("destructured require through export-assignment object exports should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_import_equals_namespace_member_binding_through_export_assignment_object_literal_named_function_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-named-function-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        fs::write(&bridge, "export = { helper: function helper() {} };\n").unwrap();
+        fs::write(
+            &caller,
+            "import ns = require(\"./bridge\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals binding should resolve");
+        assert_eq!(binding.imported_name, "<namespace>");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("import-equals namespace member through object-literal named function should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_binding_through_export_assignment_object_literal_default_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-default-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        fs::write(&bridge, "function app() {}\nexport = { default: app };\n").unwrap();
+        fs::write(
+            &caller,
+            "import app from \"./bridge\";\nexport function caller() { return app(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "app",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import through export-assignment object default entry should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let default_binding = resolve_javascript_default_import_binding(
+            &normalize_path(&bridge),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("default import should resolve through the export-object default entry");
+        assert_eq!(default_binding.imported_name, "app");
+        assert_eq!(
+            default_binding.module_paths,
+            BTreeSet::from([normalize_path(&bridge)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_binding_through_export_assignment_object_literal_module_valued_member() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-module-valued-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "module.exports = function helper() {}\n").unwrap();
+        fs::write(&bridge, "export = { helper: require(\"./impl.cjs\") };\n").unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./bridge\";\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace import binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("export-assignment object module-valued member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_member_binding_through_export_assignment_object_literal_spread_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-spread-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper() {}\nexports.helper = helper;\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "export = { ...require(\"./impl.cjs\") };\n").unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./bridge\";\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace import binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("export-assignment object spread re-export member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_export_assignment_object_literal_member_shapes_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-export-assignment-object-fail-closed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        for source in [
+            // Method definitions, non-symbol values, and computed or string
+            // keys name no module-level symbol and must not expose members.
+            "export = { helper() {} };\n",
+            "export = { helper: 42 };\n",
+            "export = { [helper]: helper };\n",
+            "export = { \"helper\": helper };\n",
+            // A non-object final replacement shadows the earlier export object.
+            "function helper() {}\nexport = { helper };\nexport = helper;\n",
+        ] {
+            fs::write(&bridge, source).unwrap();
+            let binding = resolve_javascript_namespace_member_binding(
+                &normalize_path(&bridge),
+                "helper",
+                None,
+                &mut BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "source {source:?} must fail closed, binding: {binding:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn keeps_typescript_import_equals_missing_modules_fail_closed() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-import-equals-missing-{}",

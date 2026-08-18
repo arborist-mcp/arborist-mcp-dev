@@ -315,13 +315,14 @@ pub(crate) fn javascript_export_local_names(
     Ok(javascript_direct_export_facts(root, source, check)?.1)
 }
 
-/// Returns the byte offset of the last top-level `module.exports = <value>`
-/// replacement assignment, or `None` when the module never reassigns
-/// `module.exports`. Once any replacement runs, the `exports` alias keeps
-/// pointing at the original object, so member assignments on it no longer
-/// reach the exported object, and the final replacement also shadows any
+/// Returns the byte offset of the last top-level statement that replaces the
+/// module's export object: `module.exports = <value>` assignments and
+/// TypeScript `export = <value>` export assignments, or `None` when the module
+/// never reassigns its export object. Once any replacement runs, the `exports`
+/// alias keeps pointing at the original object, so member assignments on it no
+/// longer reach the exported object, and the final replacement also shadows any
 /// export object it replaced.
-fn last_javascript_module_exports_replacement(
+fn last_javascript_export_object_replacement(
     root: Node<'_>,
     source: &str,
     check: Option<&dyn Fn() -> Result<()>>,
@@ -332,36 +333,63 @@ fn last_javascript_module_exports_replacement(
         if let Some(check) = check {
             check()?;
         }
-        if statement.kind() != "expression_statement" {
-            continue;
+        if is_javascript_export_object_replacement_statement(statement, source)? {
+            last = Some(statement.start_byte());
         }
-        let Some(expression) = statement.named_child(0) else {
-            continue;
-        };
-        if expression.kind() != "assignment_expression"
-            || !is_javascript_module_exports_assignment(expression, source)?
-        {
-            continue;
-        }
-        last = Some(statement.start_byte());
     }
     Ok(last)
 }
 
-/// Returns whether `statement` is a top-level `module.exports = <value>`
-/// replacement assignment.
-fn is_javascript_module_exports_replacement_statement(
+/// Returns whether `statement` replaces the module's export object: a
+/// top-level `module.exports = <value>` assignment or a TypeScript
+/// `export = <value>` export assignment.
+fn is_javascript_export_object_replacement_statement(
     statement: Node<'_>,
     source: &str,
 ) -> Result<bool> {
-    if statement.kind() != "expression_statement" {
-        return Ok(false);
+    if statement.kind() == "expression_statement" {
+        let Some(expression) = statement.named_child(0) else {
+            return Ok(false);
+        };
+        return Ok(expression.kind() == "assignment_expression"
+            && is_javascript_module_exports_assignment(expression, source)?);
     }
-    let Some(expression) = statement.named_child(0) else {
-        return Ok(false);
-    };
-    Ok(expression.kind() == "assignment_expression"
-        && is_javascript_module_exports_assignment(expression, source)?)
+    is_javascript_export_assignment_statement(statement, source)
+}
+
+/// Returns the object literal a statement assigns to the module's export
+/// object, for `module.exports = { ... }` expression statements and TypeScript
+/// `export = { ... }` export statements. Other statement shapes and non-object
+/// values return `None`.
+fn javascript_export_object_literal<'a>(
+    statement: Node<'a>,
+    source: &'a str,
+) -> Result<Option<Node<'a>>> {
+    if statement.kind() == "expression_statement" {
+        let Some(assignment) = statement.named_child(0) else {
+            return Ok(None);
+        };
+        if assignment.kind() != "assignment_expression" {
+            return Ok(None);
+        }
+        let Some(left) = assignment.child_by_field_name("left") else {
+            return Ok(None);
+        };
+        if !is_module_exports_member(left, source)? {
+            return Ok(None);
+        }
+        let Some(right) = assignment.child_by_field_name("right") else {
+            return Ok(None);
+        };
+        return Ok((right.kind() == "object").then_some(right));
+    }
+    if is_javascript_export_assignment_statement(statement, source)? {
+        let Some(value) = javascript_export_assignment_value(statement) else {
+            return Ok(None);
+        };
+        return Ok((value.kind() == "object").then_some(value));
+    }
+    Ok(None)
 }
 
 /// Collects the module specifiers a CommonJS module spreads into its final
@@ -377,29 +405,22 @@ pub(crate) fn javascript_module_spread_specifiers(
 ) -> Result<Vec<String>> {
     let mut specifiers = Vec::new();
     let last_module_exports_replacement =
-        last_javascript_module_exports_replacement(root, source, check)?;
+        last_javascript_export_object_replacement(root, source, check)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
             check()?;
         }
-        if statement.kind() != "expression_statement"
-            || !is_javascript_module_exports_replacement_statement(statement, source)?
+        if !is_javascript_export_object_replacement_statement(statement, source)?
             || Some(statement.start_byte()) != last_module_exports_replacement
         {
             continue;
         }
-        let Some(assignment) = statement.named_child(0) else {
+        let Some(object) = javascript_export_object_literal(statement, source)? else {
             continue;
         };
-        let Some(right) = assignment.child_by_field_name("right") else {
-            continue;
-        };
-        if right.kind() != "object" {
-            continue;
-        }
-        let mut object_cursor = right.walk();
-        for property in right.named_children(&mut object_cursor) {
+        let mut object_cursor = object.walk();
+        for property in object.named_children(&mut object_cursor) {
             if property.kind() != "spread_element" {
                 continue;
             }
@@ -417,8 +438,9 @@ pub(crate) fn javascript_module_spread_specifiers(
     Ok(specifiers)
 }
 
-/// Returns the local symbol name a CommonJS final `module.exports = { default:
-/// local }` object-literal entry names as the module's interop default member,
+/// Returns the local symbol name a final export-object `{ default: local }`
+/// object-literal entry (`module.exports = { default: local }` or TypeScript
+/// `export = { default: local }`) names as the module's interop default member,
 /// or `None` when the final replacement has no symbol-valued `default` entry
 /// or has conflicting entries. The entry's exported name is `default`, so
 /// default imports and namespace `default` members resolve through it like any
@@ -433,30 +455,23 @@ pub(crate) fn javascript_cjs_object_default_member_local_name(
     check: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<Option<String>> {
     let last_module_exports_replacement =
-        last_javascript_module_exports_replacement(root, source, check)?;
+        last_javascript_export_object_replacement(root, source, check)?;
     let mut cursor = root.walk();
     let mut names = BTreeSet::new();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
             check()?;
         }
-        if statement.kind() != "expression_statement"
-            || !is_javascript_module_exports_replacement_statement(statement, source)?
+        if !is_javascript_export_object_replacement_statement(statement, source)?
             || Some(statement.start_byte()) != last_module_exports_replacement
         {
             continue;
         }
-        let Some(assignment) = statement.named_child(0) else {
+        let Some(object) = javascript_export_object_literal(statement, source)? else {
             continue;
         };
-        let Some(right) = assignment.child_by_field_name("right") else {
-            continue;
-        };
-        if right.kind() != "object" {
-            continue;
-        }
-        let mut object_cursor = right.walk();
-        for property in right.named_children(&mut object_cursor) {
+        let mut object_cursor = object.walk();
+        for property in object.named_children(&mut object_cursor) {
             if property.kind() != "pair" {
                 continue;
             }
@@ -499,34 +514,39 @@ fn javascript_direct_export_facts(
     // `module.exports.*` member assignments after the final replacement
     // attach to the exported object.
     let last_module_exports_replacement =
-        last_javascript_module_exports_replacement(root, source, check)?;
+        last_javascript_export_object_replacement(root, source, check)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
             check()?;
         }
-        if statement.kind() == "expression_statement" {
-            // CommonJS `module.exports = { ... }` object literals export their
-            // identifier-valued property names, and `exports.name = ...` /
-            // `module.exports.name = ...` member assignments export the
-            // assigned local symbol; other assignment shapes fail closed in
-            // the helpers below. A `module.exports = <value>` replacement
-            // shadows the `exports` alias and earlier export objects, so only
-            // the final replacement's object exports and the member
-            // assignments that attach to it survive.
-            if is_javascript_module_exports_replacement_statement(statement, source)? {
-                if Some(statement.start_byte()) == last_module_exports_replacement {
-                    commonjs_object_export_facts(statement, source, &mut names, &mut local_names)?;
-                }
-            } else {
-                commonjs_exports_member_export_facts(
+        // A `module.exports = <value>` or TypeScript `export = <value>`
+        // replacement abandons the `exports` alias and any export object it
+        // replaced, so only the final replacement's object exports and the
+        // member assignments that attach to it survive. Object literals
+        // export their identifier-valued property names; `exports.name = ...`
+        // / `module.exports.name = ...` member assignments export the
+        // assigned local symbol; other assignment shapes fail closed in the
+        // helpers below.
+        if is_javascript_export_object_replacement_statement(statement, source)? {
+            if Some(statement.start_byte()) == last_module_exports_replacement {
+                javascript_export_object_export_facts(
                     statement,
                     source,
-                    last_module_exports_replacement,
                     &mut names,
                     &mut local_names,
                 )?;
             }
+            continue;
+        }
+        if statement.kind() == "expression_statement" {
+            commonjs_exports_member_export_facts(
+                statement,
+                source,
+                last_module_exports_replacement,
+                &mut names,
+                &mut local_names,
+            )?;
             continue;
         }
         if statement.kind() != "export_statement" {
@@ -604,10 +624,11 @@ fn javascript_direct_export_facts(
     Ok((names, local_names))
 }
 
-/// Records the names a CommonJS module exports through a direct
-/// `module.exports = { ... }` object literal, plus exported-name to local-name
-/// aliases for pairs whose value is a differently-named symbol. Shorthand
-/// properties (`module.exports = { helper }`), same-named pairs
+/// Records the names a module exports through a direct export-object object
+/// literal (`module.exports = { ... }` or TypeScript `export = { ... }`), plus
+/// exported-name to local-name aliases for pairs whose value is a
+/// differently-named symbol. Shorthand properties
+/// (`module.exports = { helper }`), same-named pairs
 /// (`module.exports = { helper: helper }`), aliased pairs
 /// (`module.exports = { helper: localHelper }`), and named
 /// function/generator/class expression values
@@ -616,32 +637,17 @@ fn javascript_direct_export_facts(
 /// computed and string keys, non-symbol values, and non-object exports fail
 /// closed rather than guessing which local symbol a differently-shaped
 /// property exports.
-fn commonjs_object_export_facts(
+fn javascript_export_object_export_facts(
     statement: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
     local_names: &mut BTreeMap<String, String>,
 ) -> Result<()> {
-    let Some(assignment) = statement.named_child(0) else {
+    let Some(object) = javascript_export_object_literal(statement, source)? else {
         return Ok(());
     };
-    if assignment.kind() != "assignment_expression" {
-        return Ok(());
-    }
-    let Some(left) = assignment.child_by_field_name("left") else {
-        return Ok(());
-    };
-    if !is_module_exports_member(left, source)? {
-        return Ok(());
-    }
-    let Some(right) = assignment.child_by_field_name("right") else {
-        return Ok(());
-    };
-    if right.kind() != "object" {
-        return Ok(());
-    }
-    let mut cursor = right.walk();
-    for property in right.named_children(&mut cursor) {
+    let mut cursor = object.walk();
+    for property in object.named_children(&mut cursor) {
         match property.kind() {
             "shorthand_property_identifier" => {
                 let name = node_text(property, source)?.trim().to_owned();
@@ -757,15 +763,16 @@ fn commonjs_exports_member_export_facts(
     Ok(())
 }
 
-/// Collects CommonJS export members whose assigned value aliases another
-/// module's export object or a named member of it:
-/// `exports.name = require("./module")`, `module.exports.name = require(...)`,
-/// and object-literal entries `module.exports = { name: require(...) }`.
-/// The same shadowing rules as local-symbol exports apply: a
-/// `module.exports = <value>` replacement abandons the `exports` alias and any
-/// export object it replaced, so only the final replacement's object entries
-/// and the member assignments that attach to it survive. Multiple assignments
-/// of one exported name are collected so callers fail closed on ambiguity.
+/// Collects export members whose assigned value aliases another module's
+/// export object or a named member of it: `exports.name = require("./module")`,
+/// `module.exports.name = require(...)`, and object-literal entries
+/// `module.exports = { name: require(...) }` / TypeScript
+/// `export = { name: require(...) }`. The same shadowing rules as local-symbol
+/// exports apply: a `module.exports = <value>` or `export = <value>`
+/// replacement abandons the `exports` alias and any export object it replaced,
+/// so only the final replacement's object entries and the member assignments
+/// that attach to it survive. Multiple assignments of one exported name are
+/// collected so callers fail closed on ambiguity.
 pub(crate) fn javascript_module_valued_export_members(
     root: Node<'_>,
     source: &str,
@@ -773,20 +780,17 @@ pub(crate) fn javascript_module_valued_export_members(
 ) -> Result<BTreeMap<String, Vec<JavaScriptModuleValuedExport>>> {
     let mut members: BTreeMap<String, Vec<JavaScriptModuleValuedExport>> = BTreeMap::new();
     let last_module_exports_replacement =
-        last_javascript_module_exports_replacement(root, source, check)?;
+        last_javascript_export_object_replacement(root, source, check)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(check) = check {
             check()?;
         }
-        if statement.kind() != "expression_statement" {
-            continue;
-        }
-        if is_javascript_module_exports_replacement_statement(statement, source)? {
+        if is_javascript_export_object_replacement_statement(statement, source)? {
             if Some(statement.start_byte()) == last_module_exports_replacement {
-                collect_object_module_valued_exports(statement, source, &mut members)?;
+                collect_export_object_module_valued_exports(statement, source, &mut members)?;
             }
-        } else {
+        } else if statement.kind() == "expression_statement" {
             collect_member_assignment_module_valued_exports(
                 statement,
                 source,
@@ -896,34 +900,20 @@ fn collect_member_assignment_module_valued_exports(
     Ok(())
 }
 
-/// Collects `module.exports = { name: require(...) }` object-literal
-/// module-valued export entries from the final replacement, applying the same
-/// shadowing rules as `commonjs_object_export_facts`.
-fn collect_object_module_valued_exports(
+/// Collects `module.exports = { name: require(...) }` / TypeScript
+/// `export = { name: require(...) }` object-literal module-valued export
+/// entries from the final export-object replacement, applying the same
+/// shadowing rules as the object-export facts.
+fn collect_export_object_module_valued_exports(
     statement: Node<'_>,
     source: &str,
     members: &mut BTreeMap<String, Vec<JavaScriptModuleValuedExport>>,
 ) -> Result<()> {
-    let Some(assignment) = statement.named_child(0) else {
+    let Some(object) = javascript_export_object_literal(statement, source)? else {
         return Ok(());
     };
-    if assignment.kind() != "assignment_expression" {
-        return Ok(());
-    }
-    let Some(left) = assignment.child_by_field_name("left") else {
-        return Ok(());
-    };
-    if !is_module_exports_member(left, source)? {
-        return Ok(());
-    }
-    let Some(right) = assignment.child_by_field_name("right") else {
-        return Ok(());
-    };
-    if right.kind() != "object" {
-        return Ok(());
-    }
-    let mut cursor = right.walk();
-    for property in right.named_children(&mut cursor) {
+    let mut cursor = object.walk();
+    for property in object.named_children(&mut cursor) {
         if property.kind() != "pair" {
             continue;
         }
@@ -1102,7 +1092,7 @@ pub(crate) fn javascript_module_default_export_local_name(
     let mut esm_names = BTreeSet::new();
     let mut cjs_default_names = BTreeSet::new();
     let last_module_exports_replacement =
-        last_javascript_module_exports_replacement(root, source, None)?;
+        last_javascript_export_object_replacement(root, source, None)?;
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if statement.kind() == "expression_statement" {
@@ -1111,7 +1101,7 @@ pub(crate) fn javascript_module_default_export_local_name(
             // object, so `exports.default` member assignments no longer reach
             // the exported object and `module.exports.default` assignments
             // only count when they attach to the final replacement.
-            if is_javascript_module_exports_replacement_statement(statement, source)? {
+            if is_javascript_export_object_replacement_statement(statement, source)? {
                 continue;
             }
             // CommonJS `exports.default = helper` / `module.exports.default =
@@ -2816,6 +2806,68 @@ const escaped = require("./escaped\\name");
         let default_name =
             javascript_cjs_object_default_member_local_name(root, source, None).unwrap();
         assert_eq!(default_name.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn collects_typescript_export_assignment_object_export_names() {
+        // TypeScript `export = { ... }` mirrors the CommonJS object-literal
+        // machinery: shorthand, aliased, and named function/class expression
+        // entries expose namespace members through the same facts.
+        let source = "export = { helper: localHelper, plain, run: function run() {} };\n";
+        let document = parse_document(Path::new("sample.ts"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "helper".to_string(),
+                "plain".to_string(),
+                "run".to_string()
+            ])
+        );
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
+        );
+    }
+
+    #[test]
+    fn resolves_typescript_export_assignment_object_default_member() {
+        // `export = { default: app }` names the module's interop default
+        // member like a CommonJS object-literal default entry.
+        let source = "function app() {}\nexport = { default: app };\n";
+        let document = parse_document(Path::new("sample.ts"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let default_name =
+            javascript_cjs_object_default_member_local_name(root, source, None).unwrap();
+        assert_eq!(default_name.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn keeps_typescript_export_assignment_object_shapes_fail_closed() {
+        for source in [
+            // Method definitions, computed/string keys, and non-symbol values
+            // name no exported local symbol.
+            "export = { helper() {} };\n",
+            "export = { helper: 42 };\n",
+            "export = { [helper]: helper };\n",
+            "export = { \"helper\": helper };\n",
+            // A non-object final replacement shadows the earlier export object.
+            "export = { helper };\nexport = helper;\n",
+            // A non-final export object is shadowed by a later object.
+            "export = { helper };\nexport = { other };\n",
+        ] {
+            let document = parse_document(Path::new("sample.ts"), source).unwrap();
+            let names =
+                javascript_named_export_names(document.tree.root_node(), source, None).unwrap();
+            assert!(
+                !names.contains("helper"),
+                "source {source:?} must fail closed, names: {names:?}"
+            );
+        }
     }
 
     #[test]
