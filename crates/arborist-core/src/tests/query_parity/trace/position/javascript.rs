@@ -3055,3 +3055,37 @@ fn traces_javascript_import_equals_namespace_member_call_edge_through_export_ass
     assert_eq!(persisted.callees[0].symbol_id, "helper");
     assert_eq!(persisted.callees[0].file_path, normalize_path(&bridge));
 }
+
+#[test]
+fn traces_javascript_default_import_call_edge_through_named_default_reexport_to_cjs_callable_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.ts");
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "function app(value) { return value + 1; }\nmodule.exports = app;\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import app from \"./bridge\";\nexport function caller(value: number): number { return app(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "app");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "app");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}

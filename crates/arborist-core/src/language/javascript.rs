@@ -2820,11 +2820,7 @@ const escaped = require("./escaped\\name");
         let names = javascript_named_export_names(root, source, None).unwrap();
         assert_eq!(
             names,
-            BTreeSet::from([
-                "helper".to_string(),
-                "plain".to_string(),
-                "run".to_string()
-            ])
+            BTreeSet::from(["helper".to_string(), "plain".to_string(), "run".to_string()])
         );
         let local_names = javascript_export_local_names(root, source, None).unwrap();
         assert_eq!(

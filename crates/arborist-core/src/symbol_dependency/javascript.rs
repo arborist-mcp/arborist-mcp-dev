@@ -953,7 +953,13 @@ fn resolve_javascript_namespace_member_binding_inner(
         }
         // `export { default } from "./module"` resolves to a binding whose
         // imported name is still `default`; name its terminal module's actual
-        // default export so the right symbol is collected.
+        // default export so the right symbol is collected. Like a default
+        // import, the re-export follows the terminal module's full CommonJS
+        // interop default: its ESM default or `exports.default` /
+        // `module.exports.default` member names the target, a CommonJS
+        // callable `module.exports = ...` export is the default under interop
+        // semantics, and an export-object `default` entry resolves through the
+        // namespace-member fallback. Anonymous or absent defaults fail closed.
         if resolved.imported_name == "default" {
             if resolved.module_paths.len() != 1 {
                 return Ok(None);
@@ -961,16 +967,17 @@ fn resolve_javascript_namespace_member_binding_inner(
             let Some(module_path) = resolved.module_paths.iter().next() else {
                 return Ok(None);
             };
-            let Some(default_name) = resolve_javascript_module_default_export_name(
+            let Some(default_binding) = resolve_javascript_default_import_binding(
                 module_path,
                 file_overrides,
+                contexts_by_file,
                 deadline,
             )?
             else {
                 return Ok(None);
             };
             return Ok(Some(JavaScriptImportBinding {
-                imported_name: default_name,
+                imported_name: default_binding.imported_name,
                 module_paths: resolved.module_paths,
                 unresolved: false,
             }));
@@ -1939,6 +1946,239 @@ mod tests {
     }
 
     #[test]
+    fn resolves_default_import_through_named_default_reexport_to_cjs_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-named-default-reexport-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "module.exports = function app() {}\n").unwrap();
+        fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+        fs::write(
+            &caller,
+            "import app from \"./bridge\";\nexport function caller() { return app(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "app",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import through named default re-export should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let default_binding = resolve_javascript_default_import_binding(
+            &normalize_path(&impl_path),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("default import should name the CommonJS callable export through the named default re-export");
+        assert_eq!(default_binding.imported_name, "app");
+        assert_eq!(
+            default_binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_default_member_through_named_default_reexport_to_cjs_callable() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-named-default-reexport-namespace-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "module.exports = function app() {}\n").unwrap();
+        fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+        fs::write(
+            &caller,
+            "import * as ns from \"./bridge\";\nexport function caller() { return ns.default(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace import binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "default",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("namespace default member through named default re-export should resolve");
+        assert_eq!(member.imported_name, "app");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_through_named_default_reexport_to_export_object_default() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-named-default-reexport-object-default-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function app() {}\nmodule.exports = { default: app };\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+        fs::write(
+            &caller,
+            "import app from \"./bridge\";\nexport function caller() { return app(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "app",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import through named default re-export to export-object default should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let default_binding = resolve_javascript_default_import_binding(
+            &normalize_path(&impl_path),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("default import should name the export-object default entry through the named default re-export");
+        assert_eq!(default_binding.imported_name, "app");
+        assert_eq!(
+            default_binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_named_default_reexport_through_export_assignment_object_default() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-named-default-reexport-export-assignment-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "function app() {}\nexport = { default: app };\n").unwrap();
+        fs::write(&bridge, "export { default } from \"./helper\";\n").unwrap();
+        fs::write(
+            &caller,
+            "import app from \"./bridge\";\nexport function caller() { return app(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "app",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("default import through named default re-export to export-assignment object default should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let default_binding = resolve_javascript_default_import_binding(
+            &normalize_path(&helper),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("default import should name the export-assignment object default entry through the named default re-export");
+        assert_eq!(default_binding.imported_name, "app");
+        assert_eq!(
+            default_binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_named_default_reexports_fail_closed_for_absent_or_anonymous_defaults() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-named-default-reexport-fail-closed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        for impl_source in [
+            // No default export at all.
+            "export function helper() {}\n",
+            // Anonymous ESM default names no module-level symbol.
+            "export default function () {}\n",
+        ] {
+            let impl_path = root.join("impl.ts");
+            fs::write(&impl_path, impl_source).unwrap();
+            fs::write(&bridge, "export { default } from \"./impl\";\n").unwrap();
+            let binding = resolve_javascript_namespace_member_binding(
+                &normalize_path(&bridge),
+                "default",
+                None,
+                &mut BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "source {impl_source:?} must fail closed, binding: {binding:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resolves_namespace_object_call_binding_for_commonjs_callable_export() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-cjs-callable-binding-{}",
@@ -2803,7 +3043,8 @@ mod tests {
     }
 
     #[test]
-    fn resolves_require_destructured_member_binding_through_export_assignment_object_literal_exports() {
+    fn resolves_require_destructured_member_binding_through_export_assignment_object_literal_exports()
+     {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-export-assignment-object-exports-{}",
             std::process::id()
@@ -2838,7 +3079,8 @@ mod tests {
     }
 
     #[test]
-    fn resolves_import_equals_namespace_member_binding_through_export_assignment_object_literal_named_function_export() {
+    fn resolves_import_equals_namespace_member_binding_through_export_assignment_object_literal_named_function_export()
+     {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-export-assignment-object-named-function-{}",
             std::process::id()
@@ -2872,7 +3114,9 @@ mod tests {
             None,
         )
         .unwrap()
-        .expect("import-equals namespace member through object-literal named function should resolve");
+        .expect(
+            "import-equals namespace member through object-literal named function should resolve",
+        );
         assert_eq!(member.imported_name, "helper");
         assert_eq!(
             member.module_paths,
@@ -2930,7 +3174,8 @@ mod tests {
     }
 
     #[test]
-    fn resolves_namespace_member_binding_through_export_assignment_object_literal_module_valued_member() {
+    fn resolves_namespace_member_binding_through_export_assignment_object_literal_module_valued_member()
+     {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-export-assignment-object-module-valued-{}",
             std::process::id()
@@ -2975,7 +3220,8 @@ mod tests {
     }
 
     #[test]
-    fn resolves_namespace_member_binding_through_export_assignment_object_literal_spread_reexport() {
+    fn resolves_namespace_member_binding_through_export_assignment_object_literal_spread_reexport()
+    {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-export-assignment-object-spread-{}",
             std::process::id()
