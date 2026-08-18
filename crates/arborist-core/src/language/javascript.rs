@@ -2399,6 +2399,51 @@ const escaped = require("./escaped\\name");
     }
 
     #[test]
+    fn binds_require_destructured_members_with_default_values() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-default-bindings-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let importer = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        let helper_path = helper.clone();
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "const { helper = fallback } = require(\"./helper\");\nconst { helper: bound = fallback } = require(\"./helper\");\n";
+        let document = parse_document(&importer, source).unwrap();
+
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let shorthand = bindings
+            .get("helper")
+            .expect("defaulted shorthand require member binding");
+        assert_eq!(shorthand.imported_name, "helper");
+        assert!(!shorthand.unresolved);
+        assert_eq!(
+            shorthand.module_paths,
+            BTreeSet::from([helper_path.clone()])
+        );
+        let aliased = bindings
+            .get("bound")
+            .expect("defaulted aliased require member binding");
+        assert_eq!(aliased.imported_name, "helper");
+        assert!(!aliased.unresolved);
+        assert_eq!(aliased.module_paths, BTreeSet::from([helper_path.clone()]));
+        assert!(
+            !bindings.contains_key("fallback"),
+            "the default expression itself must not create a binding"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn keeps_require_bindings_fail_closed_for_dynamic_and_missing_modules() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-require-fail-closed-{}",

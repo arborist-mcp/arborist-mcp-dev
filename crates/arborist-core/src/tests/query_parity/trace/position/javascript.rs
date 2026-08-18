@@ -1552,6 +1552,38 @@ fn traces_javascript_require_destructured_member_call_edge_through_module_reexpo
 }
 
 #[test]
+fn traces_javascript_require_destructured_default_member_call_edge_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.helper = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper = fallback } = require(\"./impl.cjs\");\nconst { helper: bound = fallback } = require(\"./impl.cjs\");\nexport function caller(value: number): number { return helper(value) + bound(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
 fn traces_javascript_require_namespace_object_call_edge_through_module_reexport_bridge_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

@@ -1915,6 +1915,43 @@ mod tests {
     }
 
     #[test]
+    fn resolves_require_destructured_member_bindings_with_default_values_for_references() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-require-default-binding-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "export function helper() {}\n").unwrap();
+        fs::write(
+            &caller,
+            "const { helper = fallback } = require(\"./helper\");\nconst { helper: bound = fallback } = require(\"./helper\");\nexport function caller() { return helper() + bound(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        for local in ["helper", "bound"] {
+            let binding = resolve_javascript_named_import_binding_for_reference(
+                &normalize_path(&caller),
+                local,
+                None,
+                &mut contexts,
+                None,
+            )
+            .unwrap()
+            .expect("defaulted destructured require binding should resolve");
+            assert_eq!(binding.imported_name, "helper");
+            assert!(!binding.unresolved);
+            assert_eq!(
+                binding.module_paths,
+                BTreeSet::from([normalize_path(&helper)])
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resolves_require_namespace_object_call_binding_for_commonjs_callable_export() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-require-object-call-binding-{}",
