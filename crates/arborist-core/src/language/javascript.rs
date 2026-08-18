@@ -364,6 +364,59 @@ fn is_javascript_module_exports_replacement_statement(
         && is_javascript_module_exports_assignment(expression, source)?)
 }
 
+/// Collects the module specifiers a CommonJS module spreads into its final
+/// `module.exports = { ...require("./module") }` replacement, so namespace
+/// members resolve within the spread target like star re-exports. Only the
+/// final replacement's object literal contributes; earlier export objects are
+/// shadowed, and non-require spread arguments (identifiers, calls, and dynamic
+/// require arguments) fail closed.
+pub(crate) fn javascript_module_spread_specifiers(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<Vec<String>> {
+    let mut specifiers = Vec::new();
+    let last_module_exports_replacement =
+        last_javascript_module_exports_replacement(root, source, check)?;
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if statement.kind() != "expression_statement"
+            || !is_javascript_module_exports_replacement_statement(statement, source)?
+            || Some(statement.start_byte()) != last_module_exports_replacement
+        {
+            continue;
+        }
+        let Some(assignment) = statement.named_child(0) else {
+            continue;
+        };
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        if right.kind() != "object" {
+            continue;
+        }
+        let mut object_cursor = right.walk();
+        for property in right.named_children(&mut object_cursor) {
+            if property.kind() != "spread_element" {
+                continue;
+            }
+            let Some(argument) = property.named_child(0) else {
+                continue;
+            };
+            let Some(specifier) = direct_require_specifier(argument, source)? else {
+                continue;
+            };
+            if !specifiers.contains(&specifier) {
+                specifiers.push(specifier);
+            }
+        }
+    }
+    Ok(specifiers)
+}
+
 /// Walks top-level statements once, collecting the direct named export names
 /// and their exported-name to local-name alias mappings in a single pass.
 fn javascript_direct_export_facts(

@@ -7,8 +7,8 @@ use crate::language::{
     JavaScriptModuleExportKind, JavaScriptModuleValuedExport, ParsedDocument, detect_language,
     javascript_export_local_names,
     javascript_module_reexport_module_paths_with_overrides_and_check,
-    javascript_module_valued_export_members, javascript_named_export_names,
-    javascript_named_import_module_paths_with_overrides_and_check,
+    javascript_module_spread_specifiers, javascript_module_valued_export_members,
+    javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
     parse_document_with_timeout, read_source, resolve_local_javascript_module_path_with_overrides,
@@ -46,6 +46,12 @@ pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     /// aliased module. Multiple aliases for one name mean ambiguity and fail
     /// closed.
     pub(crate) module_valued_export_members: BTreeMap<String, Vec<JavaScriptModuleValuedExport>>,
+    /// Module specifiers spread into the final `module.exports = { ...require(...) }`
+    /// replacement, so namespace members resolve within the spread target like
+    /// star re-exports. Explicit object entries shadow spread-provided members;
+    /// multiple spread targets providing one member are ambiguous and fail
+    /// closed.
+    pub(crate) module_spread_specifiers: Vec<String>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -160,6 +166,11 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
             Some(&check_traversal_deadline),
         )?,
         module_valued_export_members: javascript_module_valued_export_members(
+            document.tree.root_node(),
+            &source,
+            Some(&check_traversal_deadline),
+        )?,
+        module_spread_specifiers: javascript_module_spread_specifiers(
             document.tree.root_node(),
             &source,
             Some(&check_traversal_deadline),
@@ -307,34 +318,57 @@ fn resolve_named_module_binding(
                 resolution_stack,
             )?
         } else if binding.imported_name != "default" {
-            // `export * from "./module"` forwards the target's named exports,
-            // but never a module's default export.
-            match resolve_star_reexported_module_paths(
+            // A final `module.exports = { ...require("./module") }` object
+            // literal spreads the target's named exports, so destructured
+            // members resolve within the spread target like star re-exports;
+            // multiple spread targets providing the same member or unresolvable
+            // targets fail closed.
+            let mut spread_visited = BTreeSet::new();
+            match resolve_javascript_spread_member_binding(
                 &effective_module_path,
                 &binding.imported_name,
                 file_overrides,
                 contexts_by_file,
                 deadline,
-                resolution_stack,
+                &mut spread_visited,
             )? {
-                StarReexportLookup::Unresolved => {
+                SpreadMemberLookup::Found(spread_binding) => spread_binding,
+                SpreadMemberLookup::Ambiguous => {
                     return Ok(unresolved_named_module_binding(&binding.imported_name));
                 }
-                StarReexportLookup::Found(paths) if paths.len() == 1 => JavaScriptImportBinding {
-                    imported_name: binding.imported_name.clone(),
-                    module_paths: paths,
-                    unresolved: false,
-                },
-                // Multiple defining modules make the star re-export ambiguous;
-                // fail closed instead of guessing.
-                StarReexportLookup::Found(_) => {
-                    return Ok(unresolved_named_module_binding(&binding.imported_name));
+                SpreadMemberLookup::Absent => {
+                    // `export * from "./module"` forwards the target's named
+                    // exports, but never a module's default export.
+                    match resolve_star_reexported_module_paths(
+                        &effective_module_path,
+                        &binding.imported_name,
+                        file_overrides,
+                        contexts_by_file,
+                        deadline,
+                        resolution_stack,
+                    )? {
+                        StarReexportLookup::Unresolved => {
+                            return Ok(unresolved_named_module_binding(&binding.imported_name));
+                        }
+                        StarReexportLookup::Found(paths) if paths.len() == 1 => {
+                            JavaScriptImportBinding {
+                                imported_name: binding.imported_name.clone(),
+                                module_paths: paths,
+                                unresolved: false,
+                            }
+                        }
+                        // Multiple defining modules make the star re-export
+                        // ambiguous; fail closed instead of guessing.
+                        StarReexportLookup::Found(_) => {
+                            return Ok(unresolved_named_module_binding(&binding.imported_name));
+                        }
+                        StarReexportLookup::Absent => JavaScriptImportBinding {
+                            imported_name: binding.imported_name.clone(),
+                            module_paths: BTreeSet::from([effective_module_path.clone()]),
+                            unresolved: false,
+                        },
+                    }
                 }
-                StarReexportLookup::Absent => JavaScriptImportBinding {
-                    imported_name: binding.imported_name.clone(),
-                    module_paths: BTreeSet::from([effective_module_path.clone()]),
-                    unresolved: false,
-                },
             }
         } else {
             JavaScriptImportBinding {
@@ -370,6 +404,72 @@ enum StarReexportLookup {
     /// The re-export chain is broken, ambiguous, or cyclic and must fail
     /// closed.
     Unresolved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SpreadMemberLookup {
+    /// No spread target provides the member.
+    Absent,
+    /// Exactly one spread target provides the member.
+    Found(JavaScriptImportBinding),
+    /// Multiple spread targets provide the member, or a spread cycle makes it
+    /// unresolvable; fail closed.
+    Ambiguous,
+}
+
+/// Resolves `member_name` within the modules a CommonJS module spreads into
+/// its final `module.exports = { ...require("./module") }` replacement.
+/// Members resolve through the target module's own namespace-member machinery,
+/// so wholesale re-export chains, member aliases, direct exports, star
+/// re-exports, and further spreads in the target are followed transitively.
+/// Exactly one spread target providing the member resolves; multiple targets,
+/// unresolvable or missing targets, and cycles fail closed (the caller falls
+/// back to its own remaining machinery only when the member is absent).
+fn resolve_javascript_spread_member_binding(
+    module_path: &str,
+    member_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_module_paths: &mut BTreeSet<String>,
+) -> Result<SpreadMemberLookup> {
+    let module_context = javascript_import_context_from_cache(
+        module_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    if module_context.module_spread_specifiers.is_empty() {
+        return Ok(SpreadMemberLookup::Absent);
+    }
+    let mut resolutions: Vec<JavaScriptImportBinding> = Vec::new();
+    for specifier in &module_context.module_spread_specifiers {
+        let Some(target_path) = resolve_local_javascript_module_path_with_overrides(
+            Path::new(module_path),
+            specifier,
+            file_overrides,
+        ) else {
+            continue;
+        };
+        let target_path = normalize_path(&target_path);
+        if let Some(binding) = resolve_javascript_namespace_member_binding_inner(
+            &target_path,
+            member_name,
+            file_overrides,
+            contexts_by_file,
+            deadline,
+            visited_module_paths,
+        )? {
+            resolutions.push(binding);
+        }
+    }
+    match resolutions.len() {
+        0 => Ok(SpreadMemberLookup::Absent),
+        1 => Ok(SpreadMemberLookup::Found(
+            resolutions.pop().expect("one spread resolution"),
+        )),
+        _ => Ok(SpreadMemberLookup::Ambiguous),
+    }
 }
 
 /// Resolves the module paths that define `name` when it is exported by
@@ -846,6 +946,24 @@ fn resolve_javascript_namespace_member_binding_inner(
             module_paths: BTreeSet::from([module_path.to_owned()]),
             unresolved: false,
         }));
+    }
+    // A final `module.exports = { ...require("./module") }` object literal
+    // spreads the target module's named exports into this module's export
+    // object, so namespace members resolve within the spread target like
+    // star re-exports. Explicit object entries shadow spread-provided
+    // members; multiple spread targets providing the same member,
+    // unresolvable or missing targets, and cycles fail closed.
+    match resolve_javascript_spread_member_binding(
+        module_path,
+        member_name,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+        visited_module_paths,
+    )? {
+        SpreadMemberLookup::Found(binding) => return Ok(Some(binding)),
+        SpreadMemberLookup::Ambiguous => return Ok(None),
+        SpreadMemberLookup::Absent => {}
     }
     if module_context.star_reexport_module_paths.is_empty() {
         return Ok(None);
