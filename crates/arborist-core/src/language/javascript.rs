@@ -419,11 +419,12 @@ pub(crate) fn javascript_module_spread_specifiers(
 
 /// Returns the local symbol name a CommonJS final `module.exports = { default:
 /// local }` object-literal entry names as the module's interop default member,
-/// or `None` when the final replacement has no identifier-valued `default`
-/// entry or has conflicting entries. The entry's exported name is `default`,
-/// so default imports and namespace `default` members resolve through it like
-/// any object-literal export. Non-identifier values (including
-/// `{ default: require(...) }` module-valued aliases, which the module-valued
+/// or `None` when the final replacement has no symbol-valued `default` entry
+/// or has conflicting entries. The entry's exported name is `default`, so
+/// default imports and namespace `default` members resolve through it like any
+/// object-literal export. Identifier and named function/generator/class
+/// expression values name the default member; anonymous function/class values,
+/// `{ default: require(...) }` module-valued aliases (which the module-valued
 /// member machinery owns), computed and string keys, and earlier shadowed
 /// export objects fail closed here.
 pub(crate) fn javascript_cjs_object_default_member_local_name(
@@ -468,13 +469,10 @@ pub(crate) fn javascript_cjs_object_default_member_local_name(
             let Some(value) = property.child_by_field_name("value") else {
                 continue;
             };
-            if value.kind() != "identifier" {
+            let Some(name) = javascript_assigned_export_local_name(value, source)? else {
                 continue;
-            }
-            let name = node_text(value, source)?.trim().to_owned();
-            if !name.is_empty() {
-                names.insert(name);
-            }
+            };
+            names.insert(name);
         }
     }
     // A final export object may name the default member at most once;
@@ -608,13 +606,16 @@ fn javascript_direct_export_facts(
 
 /// Records the names a CommonJS module exports through a direct
 /// `module.exports = { ... }` object literal, plus exported-name to local-name
-/// aliases for pairs whose value is a differently-named identifier. Shorthand
+/// aliases for pairs whose value is a differently-named symbol. Shorthand
 /// properties (`module.exports = { helper }`), same-named pairs
-/// (`module.exports = { helper: helper }`), and aliased pairs
-/// (`module.exports = { helper: localHelper }`) name an exported local symbol;
-/// method definitions, computed and string keys, non-identifier values, and
-/// non-object exports fail closed rather than guessing which local symbol a
-/// differently-shaped property exports.
+/// (`module.exports = { helper: helper }`), aliased pairs
+/// (`module.exports = { helper: localHelper }`), and named
+/// function/generator/class expression values
+/// (`module.exports = { helper: function helper() {} }`) name an exported
+/// local symbol; anonymous function/class values, method definitions,
+/// computed and string keys, non-symbol values, and non-object exports fail
+/// closed rather than guessing which local symbol a differently-shaped
+/// property exports.
 fn commonjs_object_export_facts(
     statement: Node<'_>,
     source: &str,
@@ -660,12 +661,11 @@ fn commonjs_object_export_facts(
                 let Some(value) = property.child_by_field_name("value") else {
                     continue;
                 };
-                if value.kind() != "identifier" {
+                let Some(local_name) = javascript_assigned_export_local_name(value, source)? else {
                     continue;
-                }
+                };
                 let key_name = node_text(key, source)?.trim().to_owned();
-                let local_name = node_text(value, source)?.trim().to_owned();
-                if key_name.is_empty() || local_name.is_empty() {
+                if key_name.is_empty() {
                     continue;
                 }
                 names.insert(key_name.clone());
@@ -2656,9 +2656,11 @@ const escaped = require("./escaped\\name");
             "module.exports = { helper() {} };\n",
             "module.exports = { [name]: helper };\n",
             "module.exports = { \"helper\": helper };\n",
-            // Non-identifier values and non-object module.exports assignments
+            // Non-symbol values and non-object module.exports assignments
             // export nothing through this conservative path.
             "module.exports = { helper: function () {} };\n",
+            "module.exports = { Run: class {} };\n",
+            "module.exports = { helper: () => {} };\n",
             "module.exports = helper;\n",
             "const value = 1;\n",
         ] {
@@ -2688,6 +2690,54 @@ const escaped = require("./escaped\\name");
             local_names,
             BTreeMap::from([("helper".to_string(), "localHelper".to_string())])
         );
+    }
+
+    #[test]
+    fn collects_commonjs_object_export_named_function_and_class_values() {
+        // Named function/generator/class expression values name an exported
+        // local symbol like identifier values, so namespace members resolve to
+        // the declared function/class name.
+        let source = "module.exports = { helper: function helper() {}, gen: function* gen() {}, Run: class Run {} };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(
+            names,
+            BTreeSet::from(["helper".to_string(), "gen".to_string(), "Run".to_string()])
+        );
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert!(local_names.is_empty());
+    }
+
+    #[test]
+    fn maps_commonjs_object_export_named_function_values_through_local_aliases() {
+        // The exported name maps to the named expression's declared name;
+        // differently-named spellings record the alias.
+        let source = "module.exports = { helper: function execute() {} };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let names = javascript_named_export_names(root, source, None).unwrap();
+        assert_eq!(names, BTreeSet::from(["helper".to_string()]));
+        let local_names = javascript_export_local_names(root, source, None).unwrap();
+        assert_eq!(
+            local_names,
+            BTreeMap::from([("helper".to_string(), "execute".to_string())])
+        );
+    }
+
+    #[test]
+    fn resolves_commonjs_object_export_default_member_named_function_value() {
+        // `module.exports = { default: function app() {} }` names the module's
+        // interop default member like an identifier-valued entry.
+        let source = "module.exports = { default: function app() {} };\n";
+        let document = parse_document(Path::new("sample.cjs"), source).unwrap();
+        let root = document.tree.root_node();
+
+        let default_name =
+            javascript_cjs_object_default_member_local_name(root, source, None).unwrap();
+        assert_eq!(default_name.as_deref(), Some("app"));
     }
 
     #[test]
