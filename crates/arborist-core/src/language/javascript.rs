@@ -1649,8 +1649,10 @@ fn javascript_require_declaration_bindings(
 /// pattern bound to a `require` call. An identifier binds the module namespace
 /// (`"<namespace>"`); an object pattern binds each simple named member,
 /// keeping the imported spelling so aliases resolve to the right symbol.
-/// Defaults, rest elements, nested patterns, and array patterns are left
-/// unbound and fail closed.
+/// Destructured members with default values bind the member, since the
+/// default only applies at runtime when the export is `undefined`; rest
+/// elements, nested patterns, and array patterns are left unbound and fail
+/// closed.
 fn collect_require_pattern_bindings(
     node: Node<'_>,
     source: &str,
@@ -1673,6 +1675,24 @@ fn collect_require_pattern_bindings(
                             bindings.push((local_name.clone(), local_name));
                         }
                     }
+                    "object_assignment_pattern" => {
+                        // `const { helper = fallback } = require(...)` binds the
+                        // member; the default only applies when the export is
+                        // undefined at runtime.
+                        let Some(left) = member.child_by_field_name("left") else {
+                            continue;
+                        };
+                        if !matches!(
+                            left.kind(),
+                            "identifier" | "shorthand_property_identifier_pattern"
+                        ) {
+                            continue;
+                        }
+                        let local_name = node_text(left, source)?.trim().to_owned();
+                        if !local_name.is_empty() {
+                            bindings.push((local_name.clone(), local_name));
+                        }
+                    }
                     "pair_pattern" => {
                         let Some(key) = member.child_by_field_name("key") else {
                             continue;
@@ -1680,11 +1700,22 @@ fn collect_require_pattern_bindings(
                         let Some(value) = member.child_by_field_name("value") else {
                             continue;
                         };
-                        if value.kind() != "identifier" {
-                            continue;
-                        }
+                        let local_name = match value.kind() {
+                            "identifier" => node_text(value, source)?.trim().to_owned(),
+                            // `const { helper: bound = fallback } = require(...)`
+                            // binds the left pattern as the local name.
+                            "assignment_pattern" => {
+                                let Some(left) = value.child_by_field_name("left") else {
+                                    continue;
+                                };
+                                if left.kind() != "identifier" {
+                                    continue;
+                                }
+                                node_text(left, source)?.trim().to_owned()
+                            }
+                            _ => continue,
+                        };
                         let imported_name = node_text(key, source)?.trim().to_owned();
-                        let local_name = node_text(value, source)?.trim().to_owned();
                         if !imported_name.is_empty() && !local_name.is_empty() {
                             bindings.push((local_name, imported_name));
                         }
@@ -2411,7 +2442,7 @@ const escaped = require("./escaped\\name");
         let importer = root.join("caller.ts");
         let helper = root.join("helper.ts");
         std::fs::write(&helper, "export function helper() {}\n").unwrap();
-        let source = "const [first] = require(\"./helper\");\nconst { helper: bound = fallback } = require(\"./helper\");\nconst { ...rest } = require(\"./helper\");\nconst { nested: { deep } } = require(\"./helper\");\n";
+        let source = "const [first] = require(\"./helper\");\nconst { ...rest } = require(\"./helper\");\nconst { nested: { deep } } = require(\"./helper\");\n";
         let document = parse_document(&importer, source).unwrap();
 
         let bindings = javascript_named_import_module_paths_with_overrides_and_check(
