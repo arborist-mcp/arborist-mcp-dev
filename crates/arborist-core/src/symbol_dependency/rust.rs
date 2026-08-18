@@ -226,7 +226,10 @@ fn rust_cyclic_parent_files(parents_by_child_file: &BTreeMap<String, String>) ->
     cyclic_files
 }
 
-fn rust_crate_root(context: &RustOutOfLineModuleContext, source_file_path: &str) -> Option<String> {
+pub(in crate::symbol_dependency) fn rust_crate_root(
+    context: &RustOutOfLineModuleContext,
+    source_file_path: &str,
+) -> Option<String> {
     let mut current = source_file_path.to_string();
     let mut visited = BTreeSet::new();
     while visited.insert(current.clone()) {

@@ -1147,3 +1147,106 @@ fn keeps_rust_crate_root_qualified_calls_fail_closed_in_live_workspace_and_persi
         "missing crate-root call must fail closed from the persisted index"
     );
 }
+
+#[test]
+fn traces_rust_crate_root_inline_module_function_import_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub fn helper() {}\n}\nmod sibling;\nuse crate::api::helper;\nfn root_caller() { helper(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &sibling_path,
+        "use crate::api::helper;\nfn caller() { helper(); }\n",
+    )
+    .unwrap();
+
+    for caller in ["root_caller", "caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees.len(),
+            1,
+            "{caller} should resolve its inline-module import"
+        );
+        assert_eq!(live.callees[0].symbol_id, "api::helper");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["root_caller", "caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted.callees.len(),
+            1,
+            "{caller} should resolve its inline-module import from the persisted index"
+        );
+        assert_eq!(persisted.callees[0].symbol_id, "api::helper");
+    }
+}
+
+#[test]
+fn traces_rust_crate_root_inline_module_qualified_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub fn helper() {}\n}\nmod sibling;\n",
+    )
+    .unwrap();
+    fs::write(&sibling_path, "fn caller() { crate::api::helper(); }\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::helper");
+}
+
+#[test]
+fn keeps_rust_crate_root_inline_module_imports_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub fn helper() {}\n}\nmod sibling;\n",
+    )
+    .unwrap();
+    fs::write(
+        &sibling_path,
+        "use crate::api::missing;\nuse crate::other::helper;\nfn missing_caller() { missing(); }\nfn other_caller() { helper(); }\n",
+    )
+    .unwrap();
+
+    for caller in ["missing_caller", "other_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for a missing inline-module import"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["missing_caller", "other_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for a missing inline-module import from the persisted index"
+        );
+    }
+}

@@ -47,7 +47,9 @@ use super::super::kotlin::{
     kotlin_dotted_type_name, kotlin_receiver_type_bindings_for_function,
     resolve_kotlin_import_binding_for_reference,
 };
-use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
+use super::super::rust::{
+    RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference, rust_crate_root,
+};
 use super::cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
@@ -474,6 +476,29 @@ fn resolve_reference_path_with_deadline<'a>(
                 rust_import_root,
             )
         else {
+            // Crate-root references fall back to a function declared inside an
+            // inline `mod` at the crate root, such as `use crate::api::helper;`
+            // or `crate::api::helper()` where `mod api { ... }` is inline in
+            // the crate-root file.
+            if matches!(rust_import_root, Some(RustImportRoot::Crate))
+                && let Some(crate_root_file) =
+                    rust_crate_root(rust_out_of_line_module_context, &source_symbol.file_path)
+                && let Some(inline_candidates) = semantic_path_index.get(reference_name)
+            {
+                let inline_candidates = inline_candidates
+                    .iter()
+                    .copied()
+                    .filter(|index| {
+                        let candidate = &raw_symbols[*index];
+                        candidate.file_path == crate_root_file
+                            && candidate.node_kind == "function_item"
+                            && candidate.semantic_path == reference_name
+                    })
+                    .collect::<Vec<_>>();
+                if inline_candidates.len() == 1 {
+                    return Ok(Some(raw_symbols[inline_candidates[0]].symbol_id.clone()));
+                }
+            }
             return Ok(None);
         };
         let candidates = semantic_path_index
