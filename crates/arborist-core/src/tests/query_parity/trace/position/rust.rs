@@ -1457,3 +1457,125 @@ fn keeps_rust_module_binding_inline_module_calls_fail_closed_in_live_workspace_a
         );
     }
 }
+
+#[test]
+fn traces_rust_inline_module_in_out_of_line_module_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&api_path, "mod inner {\n    pub fn helper() {}\n}\n").unwrap();
+    fs::write(
+        &sibling_path,
+        "fn caller() { crate::api::inner::helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "inner::helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "inner::helper");
+}
+
+#[test]
+fn traces_rust_inline_module_in_out_of_line_module_imports_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_directory = dir.join("api");
+    let api_path = api_directory.join("mod.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&api_directory).unwrap();
+    fs::write(&root_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&api_path, "mod inner {\n    pub fn helper() {}\n}\n").unwrap();
+    fs::write(
+        &sibling_path,
+        "use crate::api::inner::helper;\nfn caller() { helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "inner::helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "inner::helper");
+}
+
+#[test]
+fn traces_rust_module_binding_inline_module_in_out_of_line_module_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&api_path, "mod inner {\n    pub fn helper() {}\n}\n").unwrap();
+    fs::write(
+        &sibling_path,
+        "use crate::api;\nfn caller() { api::inner::helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "inner::helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "inner::helper");
+}
+
+#[test]
+fn keeps_rust_inline_module_in_out_of_line_module_calls_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&api_path, "mod inner {\n    pub fn helper() {}\n}\n").unwrap();
+    fs::write(
+        &sibling_path,
+        "fn missing_fn_caller() { crate::api::inner::missing_fn(); }\nfn missing_module_caller() { crate::api::missing::helper(); }\n",
+    )
+    .unwrap();
+
+    for caller in ["missing_fn_caller", "missing_module_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for a missing inline-module target"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["missing_fn_caller", "missing_module_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for a missing inline-module target from the persisted index"
+        );
+    }
+}

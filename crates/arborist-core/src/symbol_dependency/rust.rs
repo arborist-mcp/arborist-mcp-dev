@@ -197,12 +197,27 @@ fn resolve_rust_out_of_line_module_reference_once(
             }
         }
     }
-    for module_name in module_components {
-        target_file_path = context
+    let follows_inline_modules = matches!(
+        import_root,
+        Some(RustImportRoot::Crate) | Some(RustImportRoot::Super { .. })
+    );
+    for (index, module_name) in module_components.iter().enumerate() {
+        let child = context
             .bindings_by_source_file
-            .get(&target_file_path)?
-            .get(*module_name)?
-            .clone();
+            .get(&target_file_path)
+            .and_then(|bindings| bindings.get(*module_name));
+        let Some(child) = child else {
+            if !follows_inline_modules {
+                return None;
+            }
+            // Remaining path components are inline modules declared inside this
+            // file; the terminal symbol lives at that inline-module semantic
+            // path here. Missing or non-module names still fail closed because
+            // the caller requires an exact semantic-path match.
+            let inline_suffix = module_components[index..].join("::");
+            return Some((target_file_path, format!("{inline_suffix}::{target_name}")));
+        };
+        target_file_path = child.clone();
     }
     Some((target_file_path, (*target_name).to_string()))
 }
