@@ -2323,6 +2323,308 @@ fn keeps_javascript_default_import_edges_fail_closed_for_conflicting_object_lite
 }
 
 #[test]
+fn traces_javascript_destructured_member_call_edge_through_object_literal_module_valued_whole_alias_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./impl.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_destructured_member_call_edge_through_object_literal_module_valued_member_alias_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.run = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_named_import_call_edge_through_object_literal_module_valued_member_alias_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nexports.run = helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { helper } from \"./bridge.cjs\";\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_destructured_member_call_edge_through_member_assignment_module_valued_alias_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "exports.helper = require(\"./impl.cjs\");\n").unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_destructured_member_call_edge_through_transitive_module_valued_alias_chain_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let mid = dir.join("mid.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+    )
+    .unwrap();
+    fs::write(&mid, "exports.run = require(\"./impl.cjs\");\n").unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./mid.cjs\").run };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_destructured_member_constructor_call_edge_through_module_valued_member_alias_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "class Helper { helper() { return 1; } }\nexports.Klass = Helper;\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { Helper: require(\"./impl.cjs\").Klass };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { Helper } = require(\"./bridge.cjs\");\nexport function caller() { return new Helper(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Helper");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn keeps_javascript_destructured_member_calls_fail_closed_for_ambiguous_module_valued_aliases() {
+    let dir = temporary_dir();
+    let left = dir.join("left.cjs");
+    let right = dir.join("right.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(&left, "function a() { return 1; }\nmodule.exports = a;\n").unwrap();
+    fs::write(&right, "function b() { return 2; }\nmodule.exports = b;\n").unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./left.cjs\"), helper: require(\"./right.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "ambiguous module-valued aliases must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_javascript_destructured_member_calls_fail_closed_for_missing_module_valued_targets() {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./missing.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "missing module-valued targets must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_javascript_destructured_member_calls_fail_closed_for_non_callable_whole_module_aliases() {
+    let dir = temporary_dir();
+    let obj_path = dir.join("obj.cjs");
+    let bridge = dir.join("bridge.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &obj_path,
+        "function other() { return 1; }\nmodule.exports = { other };\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./obj.cjs\") };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "non-callable whole-module aliases must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
+fn keeps_javascript_destructured_member_calls_fail_closed_for_module_valued_alias_cycles() {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.cjs");
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &bridge,
+        "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+    )
+    .unwrap();
+    fs::write(
+        &impl_path,
+        "module.exports = { run: require(\"./bridge.cjs\").helper };\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "cyclic module-valued aliases must fail closed, callees: {:?}",
+        live.callees
+    );
+}
+
+#[test]
 fn keeps_javascript_module_valued_export_member_calls_fail_closed_for_non_callable_aliases() {
     let dir = temporary_dir();
     let obj_path = dir.join("obj.cjs");

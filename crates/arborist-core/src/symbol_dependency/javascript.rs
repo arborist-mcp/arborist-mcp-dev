@@ -330,55 +330,110 @@ fn resolve_named_module_binding(
                 resolution_stack,
             )?
         } else if binding.imported_name != "default" {
-            // A final `module.exports = { ...require("./module") }` object
-            // literal spreads the target's named exports, so destructured
-            // members resolve within the spread target like star re-exports;
-            // multiple spread targets providing the same member or unresolvable
-            // targets fail closed.
-            let mut spread_visited = BTreeSet::new();
-            match resolve_javascript_spread_member_binding(
-                &effective_module_path,
-                &binding.imported_name,
-                file_overrides,
-                contexts_by_file,
-                deadline,
-                &mut spread_visited,
-            )? {
-                SpreadMemberLookup::Found(spread_binding) => spread_binding,
-                SpreadMemberLookup::Ambiguous => {
+            // CommonJS module-valued export members (`exports.name = ...`,
+            // `module.exports.name = ...`, and object-literal entries whose
+            // value is `require("./module")` or `require("./module").member`)
+            // alias another module's export object or a named member of it.
+            // Destructured members and named imports resolve like any
+            // namespace member of the aliased module: whole-module aliases
+            // resolve only when the target exports a single CommonJS callable,
+            // and member aliases resolve through the target's own
+            // namespace-member machinery. Ambiguous, missing, dynamic, or
+            // unresolvable aliases fail closed instead of falling back to
+            // same-named workspace symbols.
+            if let Some(aliases) = module_context
+                .module_valued_export_members
+                .get(&binding.imported_name)
+            {
+                if aliases.len() != 1 {
                     return Ok(unresolved_named_module_binding(&binding.imported_name));
                 }
-                SpreadMemberLookup::Absent => {
-                    // `export * from "./module"` forwards the target's named
-                    // exports, but never a module's default export.
-                    match resolve_star_reexported_module_paths(
-                        &effective_module_path,
-                        &binding.imported_name,
+                let Some(alias) = aliases.first() else {
+                    return Ok(unresolved_named_module_binding(&binding.imported_name));
+                };
+                let Some(target_path) = resolve_local_javascript_module_path_with_overrides(
+                    Path::new(&effective_module_path),
+                    &alias.specifier,
+                    file_overrides,
+                ) else {
+                    return Ok(unresolved_named_module_binding(&binding.imported_name));
+                };
+                let target_path = normalize_path(&target_path);
+                if let Some(member) = alias.member.as_deref() {
+                    let Some(member_binding) = resolve_javascript_namespace_member_binding(
+                        &target_path,
+                        member,
                         file_overrides,
                         contexts_by_file,
                         deadline,
-                        resolution_stack,
-                    )? {
-                        StarReexportLookup::Unresolved => {
-                            return Ok(unresolved_named_module_binding(&binding.imported_name));
-                        }
-                        StarReexportLookup::Found(paths) if paths.len() == 1 => {
-                            JavaScriptImportBinding {
-                                imported_name: binding.imported_name.clone(),
-                                module_paths: paths,
-                                unresolved: false,
+                    )?
+                    else {
+                        return Ok(unresolved_named_module_binding(&binding.imported_name));
+                    };
+                    member_binding
+                } else {
+                    let Some(object_binding) = resolve_javascript_namespace_object_call_binding(
+                        &target_path,
+                        file_overrides,
+                        contexts_by_file,
+                        deadline,
+                    )?
+                    else {
+                        return Ok(unresolved_named_module_binding(&binding.imported_name));
+                    };
+                    object_binding
+                }
+            } else {
+                // A final `module.exports = { ...require("./module") }` object
+                // literal spreads the target's named exports, so destructured
+                // members resolve within the spread target like star
+                // re-exports; multiple spread targets providing the same
+                // member or unresolvable targets fail closed.
+                let mut spread_visited = BTreeSet::new();
+                match resolve_javascript_spread_member_binding(
+                    &effective_module_path,
+                    &binding.imported_name,
+                    file_overrides,
+                    contexts_by_file,
+                    deadline,
+                    &mut spread_visited,
+                )? {
+                    SpreadMemberLookup::Found(spread_binding) => spread_binding,
+                    SpreadMemberLookup::Ambiguous => {
+                        return Ok(unresolved_named_module_binding(&binding.imported_name));
+                    }
+                    SpreadMemberLookup::Absent => {
+                        // `export * from "./module"` forwards the target's named
+                        // exports, but never a module's default export.
+                        match resolve_star_reexported_module_paths(
+                            &effective_module_path,
+                            &binding.imported_name,
+                            file_overrides,
+                            contexts_by_file,
+                            deadline,
+                            resolution_stack,
+                        )? {
+                            StarReexportLookup::Unresolved => {
+                                return Ok(unresolved_named_module_binding(&binding.imported_name));
                             }
+                            StarReexportLookup::Found(paths) if paths.len() == 1 => {
+                                JavaScriptImportBinding {
+                                    imported_name: binding.imported_name.clone(),
+                                    module_paths: paths,
+                                    unresolved: false,
+                                }
+                            }
+                            // Multiple defining modules make the star re-export
+                            // ambiguous; fail closed instead of guessing.
+                            StarReexportLookup::Found(_) => {
+                                return Ok(unresolved_named_module_binding(&binding.imported_name));
+                            }
+                            StarReexportLookup::Absent => JavaScriptImportBinding {
+                                imported_name: binding.imported_name.clone(),
+                                module_paths: BTreeSet::from([effective_module_path.clone()]),
+                                unresolved: false,
+                            },
                         }
-                        // Multiple defining modules make the star re-export
-                        // ambiguous; fail closed instead of guessing.
-                        StarReexportLookup::Found(_) => {
-                            return Ok(unresolved_named_module_binding(&binding.imported_name));
-                        }
-                        StarReexportLookup::Absent => JavaScriptImportBinding {
-                            imported_name: binding.imported_name.clone(),
-                            module_paths: BTreeSet::from([effective_module_path.clone()]),
-                            unresolved: false,
-                        },
                     }
                 }
             }
@@ -4316,6 +4371,355 @@ mod tests {
             binding.is_none(),
             "cyclic module-valued member aliases must fail closed"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_destructured_member_binding_through_object_literal_module_valued_whole_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-whole-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./impl.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("destructured whole-module alias member should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_destructured_member_binding_through_object_literal_module_valued_member_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-member-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.run = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("destructured member-alias member should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_named_import_binding_through_object_literal_module_valued_member_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-named-import-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nexports.run = helper;\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import { helper } from \"./bridge.cjs\";\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named import through member alias should resolve");
+        assert_eq!(binding.imported_name, "helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_destructured_member_binding_through_transitive_module_valued_alias_chain() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-chain-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let mid = root.join("mid.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &impl_path,
+            "function helper(value) { return value + 1; }\nmodule.exports = helper;\n",
+        )
+        .unwrap();
+        fs::write(&mid, "exports.run = require(\"./impl.cjs\");\n").unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./mid.cjs\").run };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("transitive module-valued alias should resolve at the terminal module");
+        assert_eq!(binding.imported_name, "helper");
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_destructured_member_bindings_fail_closed_for_ambiguous_module_valued_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-ambiguous-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let left = root.join("left.cjs");
+        let right = root.join("right.cjs");
+        fs::write(&left, "function a() {}\nmodule.exports = a;\n").unwrap();
+        fs::write(&right, "function b() {}\nmodule.exports = b;\n").unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./left.cjs\"), helper: require(\"./right.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("ambiguous module-valued members still record a binding");
+        assert!(
+            binding.unresolved,
+            "ambiguous module-valued aliases must fail closed"
+        );
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_destructured_member_bindings_fail_closed_for_missing_module_valued_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./missing.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("missing module-valued targets still record a binding");
+        assert!(
+            binding.unresolved,
+            "missing module-valued aliases must fail closed"
+        );
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_destructured_member_bindings_fail_closed_for_non_callable_whole_module_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-non-callable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let obj_path = root.join("obj.cjs");
+        fs::write(
+            &obj_path,
+            "function other() {}\nmodule.exports = { other };\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./obj.cjs\") };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("non-callable whole-module aliases still record a binding");
+        assert!(
+            binding.unresolved,
+            "non-callable whole-module aliases must fail closed"
+        );
+        assert!(binding.module_paths.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_destructured_member_bindings_fail_closed_for_module_valued_alias_cycles() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-module-valued-destructured-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.cjs");
+        let impl_path = root.join("impl.cjs");
+        fs::write(
+            &bridge,
+            "module.exports = { helper: require(\"./impl.cjs\").run };\n",
+        )
+        .unwrap();
+        fs::write(
+            &impl_path,
+            "module.exports = { run: require(\"./bridge.cjs\").helper };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const { helper } = require(\"./bridge.cjs\");\nexport function caller(value: number): number { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "helper",
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("cyclic module-valued aliases still record a binding");
+        assert!(
+            binding.unresolved,
+            "cyclic module-valued aliases must fail closed"
+        );
+        assert!(binding.module_paths.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
