@@ -41,7 +41,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   namespace-object calls that resolve CommonJS callable exports, CommonJS
   constructor calls through `new` that resolve local, named-import,
   default-import, namespace-member, and CommonJS class/function exports,
-  `require` bindings and TypeScript `import name = require(...)` bindings, object-literal and member-assignment export members,
+  `require` bindings (including destructured members with default values) and TypeScript `import name = require(...)` bindings, object-literal and member-assignment export members,
   module-valued export members that alias another module's export object or a named member,
   inline `require(...)` member and namespace-object calls,
   CommonJS interop default exports, `module.exports` replacement shadowing of `exports` alias members,
