@@ -86,6 +86,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   inherent `impl` method with that exact semantic path when the constructor is a same-file two-segment
   `Type::constructor` call with a plain, unimported, non-module struct name, while module-qualified,
   turbofish, path-typed, imported, unknown, shadowed, or ambiguous constructor bindings fail closed.
+  `self.`-rooted calls inside inherent `impl` methods such as `fn twice(&self) { self.increment(); }`
+  trace to a unique inherent `impl` method on the impl's own type, while trait-impl methods, nested
+  functions, and `Self::`-rooted static calls fail closed.
   Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
