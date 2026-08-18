@@ -116,6 +116,7 @@ fn collect_direct_local_calls(
         collect_rust_local_variable_types(symbol_node, source, &module_or_import_names)?;
     let self_type_path = rust_impl_self_type_path(symbol_node, source)?;
     let struct_field_types = source_file_struct_field_types(symbol_node, source)?;
+    let callable_return_types = source_file_callable_return_types(symbol_node, source)?;
     if local_functions.is_empty()
         && imported_functions.is_empty()
         && qualified_functions.is_empty()
@@ -123,6 +124,7 @@ fn collect_direct_local_calls(
         && local_variable_types.is_empty()
         && self_type_path.is_none()
         && struct_field_types.is_empty()
+        && callable_return_types.is_empty()
     {
         return Ok(RustDirectCallReferences::default());
     }
@@ -142,6 +144,7 @@ fn collect_direct_local_calls(
         local_variable_types: &local_variable_types,
         self_type_path,
         struct_field_types: &struct_field_types,
+        callable_return_types: &callable_return_types,
     };
     let mut references = RustDirectCallReferences::default();
     collect_direct_local_calls_from_node(body, &context, &mut references)?;
@@ -161,6 +164,7 @@ struct RustDirectCallContext<'a> {
     local_variable_types: &'a BTreeMap<String, String>,
     self_type_path: Option<String>,
     struct_field_types: &'a BTreeMap<String, BTreeMap<String, String>>,
+    callable_return_types: &'a BTreeMap<String, String>,
 }
 
 fn source_file_out_of_line_module_names(
@@ -763,6 +767,100 @@ fn collect_rust_struct_field_types(
     Ok(())
 }
 
+fn source_file_callable_return_types(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut by_path = BTreeMap::<String, Vec<String>>::new();
+    collect_rust_callable_return_types(root, source, &mut by_path)?;
+    Ok(by_path
+        .into_iter()
+        .filter_map(|(path, types)| (types.len() == 1).then(|| (path, types[0].clone())))
+        .collect())
+}
+
+fn collect_rust_callable_return_types(
+    node: Node<'_>,
+    source: &str,
+    by_path: &mut BTreeMap<String, Vec<String>>,
+) -> Result<()> {
+    if node.kind() == "closure_expression" {
+        return Ok(());
+    }
+    if matches!(node.kind(), "function_item" | "function_signature_item")
+        && is_rust_hop_callable(node)
+        && rust_callable_has_no_non_self_parameters(node, source)?
+        && let Some(name) = rust_symbol_name(node, source)?
+        && let Some(path) = rust_semantic_path(node, source, &name)?
+        && let Some(type_path) = rust_plain_callable_return_type(node, source)?
+    {
+        by_path.entry(path).or_default().push(type_path);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if !matches!(child.kind(), "closure_expression") {
+            collect_rust_callable_return_types(child, source, by_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_rust_hop_callable(node: Node<'_>) -> bool {
+    matches!(
+        node.parent().map(|parent| parent.kind()),
+        Some("source_file")
+    ) || matches!(
+        node.parent()
+            .map(|parent| (parent.kind(), parent.parent().map(|p| p.kind()))),
+        Some(("declaration_list", Some("mod_item")))
+            | Some(("declaration_list", Some("impl_item")))
+    ) || node
+        .parent()
+        .is_some_and(|parent| parent.kind() == "impl_item")
+}
+
+fn rust_callable_has_no_non_self_parameters(node: Node<'_>, source: &str) -> Result<bool> {
+    let Some(parameters) = node.child_by_field_name("parameters") else {
+        return Ok(true);
+    };
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        if parameter.kind() != "parameter" {
+            continue;
+        }
+        let Some(pattern) = parameter.child_by_field_name("pattern") else {
+            continue;
+        };
+        let text = node_text(pattern, source)?.trim();
+        if !matches!(text, "self" | "&self" | "&mut self" | "mut self") {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn rust_plain_callable_return_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(return_type) = node.child_by_field_name("return_type") else {
+        return Ok(None);
+    };
+    let type_name = node_text(return_type, source)?.trim();
+    if !rust_type_name_like(type_name)
+        || !type_name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Ok(None);
+    }
+    let mut path = rust_inline_module_path_components(node, source)?.unwrap_or_default();
+    path.push(type_name.to_string());
+    Ok(Some(path.join("::")))
+}
+
 fn collect_rust_parameter_types(
     symbol_node: Node<'_>,
     source: &str,
@@ -916,9 +1014,55 @@ fn rust_receiver_type_path(
             .get(&base_type_path)
             .and_then(|fields| fields.get(field_name))
             .cloned())
+    } else if receiver.kind() == "call_expression" {
+        Ok(rust_call_hop_return_type_path(receiver, context)?)
     } else {
         Ok(None)
     }
+}
+
+fn rust_call_hop_return_type_path(
+    receiver: Node<'_>,
+    context: &RustDirectCallContext<'_>,
+) -> Result<Option<String>> {
+    let Some(arguments) = receiver.child_by_field_name("arguments") else {
+        return Ok(None);
+    };
+    let mut args_cursor = arguments.walk();
+    if arguments.named_children(&mut args_cursor).next().is_some() {
+        return Ok(None);
+    }
+    let Some(function) = receiver.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    if function.kind() == "identifier" {
+        let name = node_text(function, context.source)?.trim();
+        if name.is_empty() || context.bindings.contains(name) {
+            return Ok(None);
+        }
+        let Some(path) = context.local_functions.get(name) else {
+            return Ok(None);
+        };
+        return Ok(context.callable_return_types.get(path).cloned());
+    }
+    if function.kind() == "field_expression" {
+        let Some(field_node) = function.child_by_field_name("field") else {
+            return Ok(None);
+        };
+        let method_name = node_text(field_node, context.source)?.trim();
+        if method_name.is_empty() {
+            return Ok(None);
+        }
+        let Some(value) = function.child_by_field_name("value") else {
+            return Ok(None);
+        };
+        let Some(base_type_path) = rust_receiver_type_path(value, context)? else {
+            return Ok(None);
+        };
+        let target = format!("{base_type_path}::{method_name}");
+        return Ok(context.callable_return_types.get(&target).cloned());
+    }
+    Ok(None)
 }
 
 fn collect_direct_local_calls_from_node(
