@@ -582,6 +582,13 @@ fn collect_direct_local_calls_from_node(
                 )
             {
                 references.insert(path, import_root);
+            } else if let Some((target_path, target_root)) = is_rust_module_binding_qualified_call(
+                &path,
+                import_root.as_ref(),
+                context.imported_functions,
+                context.out_of_line_modules,
+            ) {
+                references.insert(target_path, Some(target_root));
             }
         }
     }
@@ -622,6 +629,36 @@ fn is_rust_type_qualified_static_call(
         return false;
     }
     rust_type_name_like(first)
+}
+
+fn is_rust_module_binding_qualified_call(
+    path: &str,
+    import_root: Option<&RustImportRoot>,
+    imported_functions: &BTreeMap<String, RustImportedFunctionBinding>,
+    out_of_line_modules: &BTreeSet<String>,
+) -> Option<(String, RustImportRoot)> {
+    if import_root.is_some() {
+        return None;
+    }
+    let mut components = path.split("::");
+    let first = components.next()?;
+    if out_of_line_modules.contains(first) {
+        return None;
+    }
+    let binding = imported_functions.get(first)?;
+    if binding.import_root != RustImportRoot::Crate {
+        return None;
+    }
+    let rest = components.collect::<Vec<_>>();
+    if rest.is_empty() || rest.iter().any(|component| component.is_empty()) {
+        return None;
+    }
+    let mut target = binding.target_path.clone();
+    for component in rest {
+        target.push_str("::");
+        target.push_str(component);
+    }
+    Some((target, binding.import_root.clone()))
 }
 
 fn rust_type_name_like(name: &str) -> bool {
