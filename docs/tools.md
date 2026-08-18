@@ -27,7 +27,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `.hpp`, `.hh`, `.hxx`, `.h++` — semantic skeletons, indexing, tracing, patching, and queries.
 - JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
   conservative direct-call tracing through local named imports, named re-export chains,
-  default imports that name a module's default export, namespace member calls that
+  default imports and namespace `default` members that name a module's default export or
+  its CommonJS export-object default member (object-literal `{ default: ... }` entries and
+  spread re-exports), namespace member calls that
   follow the bound module's named and star re-export chains and default exports,
   namespace-object calls that resolve CommonJS callable exports, CommonJS
   constructor calls through `new` that resolve local, named-import,
