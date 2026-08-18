@@ -590,8 +590,7 @@ fn collect_direct_local_calls_from_node(
 
 fn is_rust_parent_qualified_module_call(import_root: Option<&RustImportRoot>, path: &str) -> bool {
     match import_root {
-        Some(RustImportRoot::Crate) => path.contains("::"),
-        Some(RustImportRoot::Super { .. }) => !path.is_empty(),
+        Some(RustImportRoot::Crate) | Some(RustImportRoot::Super { .. }) => !path.is_empty(),
         Some(RustImportRoot::SelfModule) | None => false,
     }
 }

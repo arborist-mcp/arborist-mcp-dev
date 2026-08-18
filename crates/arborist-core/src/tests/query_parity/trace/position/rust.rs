@@ -1076,3 +1076,74 @@ fn keeps_rust_ambiguous_pub_use_reexports_fail_closed_in_live_workspace_and_pers
         "ambiguous re-export must fail closed from the persisted index"
     );
 }
+
+#[test]
+fn traces_rust_crate_root_qualified_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let util_path = dir.join("util.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\nmod util;\nfn root_helper() {}\npub use util::helper;\nfn root_caller() { crate::root_helper(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &api_path,
+        "fn caller() { crate::root_helper(); crate::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&util_path, "pub fn helper() {}\n").unwrap();
+
+    let root_live = trace_symbol_graph(&dir, "root_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(root_live.callees.len(), 1);
+    assert_eq!(root_live.callees[0].symbol_id, "root_helper");
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 2);
+    assert!(live.callees.iter().any(|c| c.symbol_id == "root_helper"));
+    assert!(live.callees.iter().any(|c| c.symbol_id == "helper"));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let root_persisted =
+        trace_symbol_graph_from_index(&db_path, "root_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(root_persisted.callees.len(), 1);
+    assert_eq!(root_persisted.callees[0].symbol_id, "root_helper");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|c| c.symbol_id == "root_helper")
+    );
+    assert!(persisted.callees.iter().any(|c| c.symbol_id == "helper"));
+}
+
+#[test]
+fn keeps_rust_crate_root_qualified_calls_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nfn root_helper() {}\n").unwrap();
+    fs::write(&api_path, "fn caller() { crate::missing(); }\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "missing crate-root call must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        persisted.callees.is_empty(),
+        "missing crate-root call must fail closed from the persisted index"
+    );
+}
