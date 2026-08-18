@@ -603,7 +603,11 @@ for response shapes, error behavior, and examples.
   `mod inner` in the terminal module file, while missing modules or functions fail closed. Instance-method calls on struct-literal receivers also
   resolve: `let c = Counter {}; c.increment();` and `Counter {}.increment();` trace to a unique inherent
   `impl` method with that exact semantic path, while unknown receiver types, shadowed or ambiguous local
-  bindings, non-struct initializers, and missing or non-method targets fail closed.
+  bindings, non-struct initializers, and missing or non-method targets fail closed. Typed-parameter
+  receivers such as `fn caller(c: &Counter, d: Counter, e: &mut Counter)` trace to a unique inherent
+  `impl` method with that exact semantic path when the parameter type is a plain or referenced struct
+  name, while primitive, generic, path-typed, unknown, shadowed, or ambiguous parameter types fail
+  closed.
   Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
