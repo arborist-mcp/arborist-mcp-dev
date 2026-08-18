@@ -3057,6 +3057,144 @@ fn traces_javascript_import_equals_namespace_member_call_edge_through_export_ass
 }
 
 #[test]
+fn traces_javascript_default_import_constructor_call_edge_to_commonjs_class_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "class App { constructor(value) { this.value = value; } }\nmodule.exports = App;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import App from \"./impl.cjs\";\nexport function caller() { return new App(1); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "App");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "App");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_default_import_constructor_call_edge_through_named_default_reexport_to_commonjs_class_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.ts");
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &impl_path,
+        "class App { constructor() {} }\nmodule.exports = App;\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import App from \"./bridge\";\nexport function caller() { return new App(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "App");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "App");
+    assert_eq!(persisted.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_default_import_constructor_call_edge_through_wholesale_reexport_to_commonjs_class_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.cjs");
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "class App { constructor() {} }\nmodule.exports = App;\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "module.exports = require(\"./impl.cjs\");\n").unwrap();
+    fs::write(
+        &caller,
+        "import App from \"./bridge.cjs\";\nexport function caller() { return new App(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "App");
+    assert_eq!(live.callees[0].file_path, normalize_path(&impl_path));
+}
+
+#[test]
+fn traces_javascript_default_import_constructor_call_edge_through_export_assignment_class_in_live_workspace()
+ {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.ts");
+    let helper = dir.join("helper.ts");
+    let caller = dir.join("caller.ts");
+
+    fs::write(&helper, "class App { constructor() {} }\nexport = App;\n").unwrap();
+    fs::write(&bridge, "export { default } from \"./helper\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import App from \"./bridge\";\nexport function caller() { return new App(); }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "App");
+    assert_eq!(live.callees[0].file_path, normalize_path(&helper));
+}
+
+#[test]
+fn keeps_javascript_plain_default_import_call_fail_closed_for_commonjs_class_exports() {
+    let dir = temporary_dir();
+    let impl_path = dir.join("impl.cjs");
+    let caller = dir.join("caller.ts");
+
+    fs::write(
+        &impl_path,
+        "class App { constructor() {} }\nmodule.exports = App;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import App from \"./impl.cjs\";\nexport function caller() { return App(); }\n",
+    )
+    .unwrap();
+
+    // A class export is constructible but not directly callable, so a plain
+    // call on a default import of it must fail closed instead of tracing to
+    // the class.
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 0, "callees: {:?}", live.callees);
+}
+
+#[test]
 fn traces_javascript_default_import_call_edge_through_named_default_reexport_to_cjs_callable_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

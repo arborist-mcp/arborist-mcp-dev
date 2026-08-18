@@ -716,6 +716,52 @@ pub(in crate::symbol_dependency) fn resolve_javascript_default_import_local_name
         .flatten())
 }
 
+/// Returns the local name a default import (`import name from "./module")`)
+/// binds for a constructor reference (`new name()`). Like the plain default
+/// import, the module's ESM default export or CommonJS `exports.default` /
+/// `module.exports.default` member assignment names the target, and a
+/// CommonJS callable `module.exports = <callable>` export is the default
+/// import target under interop semantics; constructor references additionally
+/// accept a single CommonJS constructible (class) export, which is
+/// constructible but not directly callable. Ambiguous or absent default
+/// exports return `None` and fail closed.
+pub(in crate::symbol_dependency) fn resolve_javascript_default_import_constructor_local_name(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript default import constructor module")?;
+    }
+    let (source, document) = read_javascript_module_document(
+        module_path,
+        file_overrides,
+        deadline,
+        "parsing JavaScript/TypeScript default import constructor module",
+    )?;
+    let root = document.tree.root_node();
+    let mut names = BTreeSet::new();
+    if let Some(name) = crate::language::javascript_module_default_export_local_name(root, &source)?
+    {
+        names.insert(name);
+    }
+    if names.is_empty()
+        && let Some(name) =
+            crate::language::javascript_module_callable_export_local_name(root, &source)?
+    {
+        names.insert(name);
+    }
+    if names.is_empty()
+        && let Some(name) =
+            crate::language::javascript_module_constructible_export_local_name(root, &source)?
+    {
+        names.insert(name);
+    }
+    Ok((names.len() == 1)
+        .then(|| names.iter().next().cloned())
+        .flatten())
+}
+
 /// Resolves the full binding a default import (`import name from "./module")`)
 /// binds. The module's ESM default export or CommonJS `exports.default` /
 /// `module.exports.default` member assignment names the target; when neither
@@ -736,6 +782,42 @@ pub(in crate::symbol_dependency) fn resolve_javascript_default_import_binding(
     if let Some(default_name) =
         resolve_javascript_default_import_local_name(module_path, file_overrides, deadline)?
     {
+        return Ok(Some(JavaScriptImportBinding {
+            imported_name: default_name,
+            module_paths: BTreeSet::from([module_path.to_owned()]),
+            unresolved: false,
+        }));
+    }
+    resolve_javascript_namespace_member_binding(
+        module_path,
+        "default",
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the binding a default import (`import name from "./module")`) binds
+/// for a constructor reference (`new name()`). The module's ESM default export
+/// or CommonJS `exports.default` / `module.exports.default` member names the
+/// target; when neither exists, a CommonJS callable `module.exports = ...`
+/// export is the default import target under interop semantics, and a single
+/// CommonJS constructible (class) export is also a valid default target for
+/// constructor references even though it is not directly callable. When none
+/// of these exist, the module's CommonJS export-object default resolves through
+/// the same namespace-member machinery as the plain default binding. Ambiguous
+/// or absent default exports return `None` and fail closed.
+pub(in crate::symbol_dependency) fn resolve_javascript_default_import_constructor_binding(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaScriptImportBinding>> {
+    if let Some(default_name) = resolve_javascript_default_import_constructor_local_name(
+        module_path,
+        file_overrides,
+        deadline,
+    )? {
         return Ok(Some(JavaScriptImportBinding {
             imported_name: default_name,
             module_paths: BTreeSet::from([module_path.to_owned()]),
@@ -1163,6 +1245,7 @@ mod tests {
     use super::{
         javascript_import_context_for_file_with_overrides_and_deadline,
         resolve_javascript_constructor_binding, resolve_javascript_default_import_binding,
+        resolve_javascript_default_import_constructor_binding,
         resolve_javascript_default_import_local_name,
         resolve_javascript_named_import_binding_for_reference,
         resolve_javascript_namespace_member_binding,
@@ -2173,6 +2256,189 @@ mod tests {
             assert!(
                 binding.is_none(),
                 "source {impl_source:?} must fail closed, binding: {binding:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_constructor_binding_for_commonjs_class_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-import-constructor-class-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let module = root.join("module.cjs");
+        fs::write(&module, "class Helper {}\nmodule.exports = Helper;\n").unwrap();
+        fs::write(
+            &caller,
+            "import Helper from \"./module.cjs\";\nexport function caller() { return new Helper(); }\n",
+        )
+        .unwrap();
+
+        // A class export is constructible but not directly callable: the
+        // plain default-import binding stays fail-closed while the
+        // constructor default-import binding resolves.
+        let plain_binding = resolve_javascript_default_import_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap();
+        assert!(plain_binding.is_none());
+
+        let binding = resolve_javascript_default_import_constructor_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("CommonJS class export should resolve as a constructor default");
+        assert_eq!(binding.imported_name, "Helper");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_constructor_binding_for_named_class_expression_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-import-constructor-class-expression-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.cjs");
+        fs::write(&module, "module.exports = class Helper {};\n").unwrap();
+        let binding = resolve_javascript_default_import_constructor_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("named class expression export should resolve as a constructor default");
+        assert_eq!(binding.imported_name, "Helper");
+        assert!(!binding.unresolved);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_constructor_binding_through_named_default_reexport() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-import-constructor-reexport-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let bridge = root.join("bridge.ts");
+        let impl_path = root.join("impl.cjs");
+        fs::write(&impl_path, "class App {}\nmodule.exports = App;\n").unwrap();
+        fs::write(&bridge, "export { default } from \"./impl.cjs\";\n").unwrap();
+        fs::write(
+            &caller,
+            "import App from \"./bridge\";\nexport function caller() { return new App(); }\n",
+        )
+        .unwrap();
+
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "App",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("constructor default import through named default re-export should resolve");
+        assert_eq!(binding.imported_name, "default");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let constructor_binding = resolve_javascript_default_import_constructor_binding(
+            &normalize_path(&impl_path),
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("terminal CommonJS class export should resolve as a constructor default");
+        assert_eq!(constructor_binding.imported_name, "App");
+        assert_eq!(
+            constructor_binding.module_paths,
+            BTreeSet::from([normalize_path(&impl_path)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_constructor_binding_through_export_assignment_class() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-import-constructor-export-assignment-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        fs::write(&helper, "class App {}\nexport = App;\n").unwrap();
+        fs::write(&bridge, "export { default } from \"./helper\";\n").unwrap();
+
+        let mut contexts = BTreeMap::new();
+        let constructor_binding = resolve_javascript_default_import_constructor_binding(
+            &normalize_path(&helper),
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("TypeScript export-assignment class should resolve as a constructor default");
+        assert_eq!(constructor_binding.imported_name, "App");
+        assert_eq!(
+            constructor_binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_default_import_constructor_binding_fail_closed_for_absent_or_anonymous_defaults() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-import-constructor-fail-closed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for module_source in [
+            // No default export at all.
+            "export function helper() {}\n",
+            // Anonymous class export names no module-level symbol.
+            "module.exports = class {}\n",
+            // A non-constructible, non-callable value export.
+            "module.exports = { helper: 1 };\n",
+        ] {
+            let module = root.join("module.cjs");
+            fs::write(&module, module_source).unwrap();
+            let binding = resolve_javascript_default_import_constructor_binding(
+                &normalize_path(&module),
+                None,
+                &mut BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+            assert!(
+                binding.is_none(),
+                "source {module_source:?} must fail closed, binding: {binding:?}"
             );
         }
         let _ = fs::remove_dir_all(root);

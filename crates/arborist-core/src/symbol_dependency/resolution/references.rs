@@ -38,6 +38,7 @@ use super::super::java::{
 use super::super::javascript::{
     JavaScriptImportBinding, JavaScriptImportContext, resolve_javascript_constructor_binding,
     resolve_javascript_default_import_binding,
+    resolve_javascript_default_import_constructor_binding,
     resolve_javascript_named_import_binding_for_reference,
     resolve_javascript_namespace_member_binding, resolve_javascript_namespace_object_call_binding,
 };
@@ -1644,6 +1645,8 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         None
     };
+    let javascript_constructor_call =
+        javascript_reference_details.is_some_and(|details| details.constructor_call);
     let javascript_default_import_candidates = if let Some(binding) =
         javascript_import_binding.as_ref()
         && !binding.unresolved
@@ -1656,6 +1659,7 @@ fn resolve_reference_path_with_deadline<'a>(
             binding,
             javascript_import_contexts_by_file,
             deadline,
+            javascript_constructor_call,
         )?
     } else {
         Vec::new()
@@ -1689,10 +1693,6 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         Vec::new()
     };
-    // `new ns(...)` constructor expressions additionally accept a single
-    // CommonJS class export, which is constructible but not directly callable.
-    let javascript_constructor_call =
-        javascript_reference_details.is_some_and(|details| details.constructor_call);
     // A bare call to a namespace import (`ns(...)`) resolves only when the
     // bound module exports a single CommonJS callable through
     // `module.exports = ...`; ESM namespace objects are never callable, so
@@ -23997,6 +23997,7 @@ fn javascript_default_import_candidate_indexes(
     binding: &JavaScriptImportBinding,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
+    constructor_call: bool,
 ) -> Result<Vec<usize>> {
     if binding.unresolved || binding.module_paths.is_empty() {
         return Ok(Vec::new());
@@ -24006,13 +24007,26 @@ fn javascript_default_import_candidate_indexes(
         if let Some(deadline) = deadline {
             deadline.check("resolving JavaScript/TypeScript default import")?;
         }
-        let Some(default_binding) = resolve_javascript_default_import_binding(
-            module_path,
-            file_overrides,
-            javascript_import_contexts_by_file,
-            deadline,
-        )?
-        else {
+        // Constructor references (`new name()`) additionally accept a single
+        // CommonJS constructible (class) export as the default target, which
+        // is constructible but not directly callable; plain calls stay
+        // limited to callable defaults and fail closed for class exports.
+        let default_binding = if constructor_call {
+            resolve_javascript_default_import_constructor_binding(
+                module_path,
+                file_overrides,
+                javascript_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            resolve_javascript_default_import_binding(
+                module_path,
+                file_overrides,
+                javascript_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        let Some(default_binding) = default_binding else {
             continue;
         };
         for exporting_path in &default_binding.module_paths {
