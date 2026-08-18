@@ -2330,3 +2330,198 @@ fn keeps_rust_member_chain_method_call_hops_fail_closed_in_live_workspace_and_pe
         );
     }
 }
+
+#[test]
+fn traces_rust_method_call_hop_let_bindings_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\nstruct Outer {}\nimpl Outer {\n    fn get_inner(&self) -> Inner { Inner {} }\n}\nfn caller(outer: Outer) {\n    let inner = outer.get_inner();\n    inner.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 2);
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Outer::get_inner")
+    );
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Inner::increment")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Outer::get_inner")
+    );
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Inner::increment")
+    );
+}
+
+#[test]
+fn traces_rust_bare_function_call_hop_let_bindings_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Leaf {}\nimpl Leaf {\n    fn run(&self) {}\n}\nstruct Middle {}\nimpl Middle {\n    fn leaf(&self) -> Leaf { Leaf {} }\n}\nstruct Root {}\nimpl Root {\n    fn middle(&self) -> Middle { Middle {} }\n}\nfn make_root() -> Root { Root {} }\nfn caller() {\n    let root = make_root();\n    let middle = root.middle();\n    let leaf = middle.leaf();\n    leaf.run();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 4);
+    for expected in ["make_root", "Root::middle", "Middle::leaf", "Leaf::run"] {
+        assert!(
+            live.callees
+                .iter()
+                .any(|callee| callee.symbol_id == expected),
+            "{expected} must be traced"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 4);
+    for expected in ["make_root", "Root::middle", "Middle::leaf", "Leaf::run"] {
+        assert!(
+            persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == expected),
+            "{expected} must be traced from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn traces_rust_self_and_inline_module_call_hop_let_bindings_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Inner {}\n    impl Inner {\n        pub fn increment(&self) {}\n    }\n    pub struct Outer {}\n    impl Outer {\n        pub fn get_inner(&self) -> Inner { Inner {} }\n    }\n    pub fn caller(outer: Outer) {\n        let inner = outer.get_inner();\n        inner.increment();\n    }\n}\nstruct Root {}\nimpl Root {\n    fn get_inner(&self) -> Inner { Inner {} }\n    fn go(&self) {\n        let inner = self.get_inner();\n        inner.increment();\n    }\n}\nstruct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 2);
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "api::Outer::get_inner")
+    );
+    assert!(
+        live.callees
+            .iter()
+            .any(|callee| callee.symbol_id == "api::Inner::increment")
+    );
+    let live_self = trace_symbol_graph(&dir, "Root::go", TraceDirection::Callees).unwrap();
+    assert_eq!(live_self.callees.len(), 2);
+    assert!(
+        live_self
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Root::get_inner")
+    );
+    assert!(
+        live_self
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Inner::increment")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "api::Outer::get_inner")
+    );
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "api::Inner::increment")
+    );
+    let persisted_self =
+        trace_symbol_graph_from_index(&db_path, "Root::go", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted_self.callees.len(), 2);
+    assert!(
+        persisted_self
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Root::get_inner")
+    );
+    assert!(
+        persisted_self
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "Inner::increment")
+    );
+}
+
+#[test]
+fn keeps_rust_call_hop_let_bindings_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\nstruct Outer {}\nimpl Outer {\n    fn get_inner(&self) -> Inner { Inner {} }\n    fn get_inners(&self) -> Vec<Inner> { Vec::new() }\n    fn get_inner_with(&self, value: u8) -> Inner { Inner {} }\n}\nfn arg_hop_caller(outer: Outer) {\n    let inner = outer.get_inner_with(1);\n    inner.increment();\n}\nfn generic_hop_caller(outer: Outer) {\n    let inners = outer.get_inners();\n    inners.increment();\n}\nfn unknown_hop_caller(outer: Outer) {\n    let inner = outer.missing();\n    inner.increment();\n}\nfn unknown_base_hop_caller() {\n    let inner = unknown.get_inner();\n    inner.increment();\n}\nfn make_root() -> Root { Root {} }\nfn shadowed_function_caller() {\n    let make_root = || Root {};\n    let root = make_root();\n    root.middle().leaf().run();\n}\nstruct Root {}\nimpl Root { fn middle(&self) -> Middle { Middle {} } }\nstruct Middle {}\nimpl Middle { fn leaf(&self) -> Leaf { Leaf {} } }\nstruct Leaf {}\nimpl Leaf { fn run(&self) {} }\n",
+    )
+    .unwrap();
+
+    let forbidden_targets = [
+        ("arg_hop_caller", "Inner::increment"),
+        ("generic_hop_caller", "Inner::increment"),
+        ("unknown_hop_caller", "Inner::increment"),
+        ("unknown_base_hop_caller", "Inner::increment"),
+        ("shadowed_function_caller", "Leaf::run"),
+    ];
+    for (caller, forbidden) in forbidden_targets {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !live
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved call-hop let binding"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, forbidden) in forbidden_targets {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved call-hop let binding from the persisted index"
+        );
+    }
+}
