@@ -2376,6 +2376,119 @@ mod tests {
     }
 
     #[test]
+    fn resolves_namespace_member_binding_through_object_literal_named_function_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-object-export-named-function-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(
+            &helper,
+            "module.exports = { helper: function helper() {} };\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "const ns = require(\"./helper.cjs\");\nexport function caller() { return ns.helper(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "ns",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("require namespace binding should resolve");
+        let member = resolve_javascript_namespace_member_binding(
+            binding.module_paths.iter().next().unwrap(),
+            "helper",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("named function object export member should resolve");
+        assert_eq!(member.imported_name, "helper");
+        assert_eq!(
+            member.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_destructured_require_member_binding_through_object_literal_named_class_export() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-object-export-named-class-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let caller = root.join("caller.ts");
+        let helper = root.join("helper.cjs");
+        fs::write(&helper, "module.exports = { Run: class Run {} };\n").unwrap();
+        fs::write(
+            &caller,
+            "const { Run } = require(\"./helper.cjs\");\nexport function caller() { return new Run(); }\n",
+        )
+        .unwrap();
+        let mut contexts = BTreeMap::new();
+        let binding = resolve_javascript_named_import_binding_for_reference(
+            &normalize_path(&caller),
+            "Run",
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .expect("destructured class export member should resolve");
+        assert_eq!(binding.imported_name, "Run");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&helper)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_default_import_binding_through_object_literal_named_function_default_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-object-export-default-named-function-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.cjs");
+        fs::write(
+            &module,
+            "module.exports = { default: function app() {} };\n",
+        )
+        .unwrap();
+        let binding = resolve_javascript_default_import_binding(
+            &normalize_path(&module),
+            None,
+            &mut BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .expect("object-literal default entry should resolve");
+        assert_eq!(binding.imported_name, "app");
+        assert!(!binding.unresolved);
+        assert_eq!(
+            binding.module_paths,
+            BTreeSet::from([normalize_path(&module)])
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resolves_require_namespace_member_binding_for_commonjs_exports_member_assignments() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-require-exports-member-{}",
