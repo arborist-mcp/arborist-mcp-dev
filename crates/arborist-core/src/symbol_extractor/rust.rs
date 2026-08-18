@@ -115,12 +115,14 @@ fn collect_direct_local_calls(
     let local_variable_types =
         collect_rust_local_variable_types(symbol_node, source, &module_or_import_names)?;
     let self_type_path = rust_impl_self_type_path(symbol_node, source)?;
+    let struct_field_types = source_file_struct_field_types(symbol_node, source)?;
     if local_functions.is_empty()
         && imported_functions.is_empty()
         && qualified_functions.is_empty()
         && out_of_line_modules.is_empty()
         && local_variable_types.is_empty()
         && self_type_path.is_none()
+        && struct_field_types.is_empty()
     {
         return Ok(RustDirectCallReferences::default());
     }
@@ -139,6 +141,7 @@ fn collect_direct_local_calls(
         bindings: &bindings,
         local_variable_types: &local_variable_types,
         self_type_path,
+        struct_field_types: &struct_field_types,
     };
     let mut references = RustDirectCallReferences::default();
     collect_direct_local_calls_from_node(body, &context, &mut references)?;
@@ -157,6 +160,7 @@ struct RustDirectCallContext<'a> {
     bindings: &'a BTreeSet<String>,
     local_variable_types: &'a BTreeMap<String, String>,
     self_type_path: Option<String>,
+    struct_field_types: &'a BTreeMap<String, BTreeMap<String, String>>,
 }
 
 fn source_file_out_of_line_module_names(
@@ -674,6 +678,91 @@ fn rust_impl_self_type_path(symbol_node: Node<'_>, source: &str) -> Result<Optio
     Ok(None)
 }
 
+fn source_file_struct_field_types(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut fields_by_struct = BTreeMap::new();
+    collect_rust_struct_fields(root, source, &mut fields_by_struct)?;
+    Ok(fields_by_struct)
+}
+
+fn collect_rust_struct_fields(
+    node: Node<'_>,
+    source: &str,
+    fields_by_struct: &mut BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_item" | "function_signature_item" | "closure_expression"
+    ) {
+        return Ok(());
+    }
+    if node.kind() == "struct_item"
+        && let Some(name) = rust_symbol_name(node, source)?
+        && let Some(module_components) = rust_inline_module_path_components(node, source)?
+    {
+        let mut struct_path_components = module_components.clone();
+        struct_path_components.push(name);
+        let struct_path = struct_path_components.join("::");
+        let mut fields = BTreeMap::new();
+        collect_rust_struct_field_types(node, source, &module_components, &mut fields)?;
+        fields_by_struct.insert(struct_path, fields);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_rust_struct_fields(child, source, fields_by_struct)?;
+    }
+    Ok(())
+}
+
+fn collect_rust_struct_field_types(
+    node: Node<'_>,
+    source: &str,
+    struct_module_components: &[String],
+    fields: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_item" | "function_signature_item" | "closure_expression"
+    ) {
+        return Ok(());
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "field_declaration" {
+            let Some(field_name_node) = child.child_by_field_name("name") else {
+                continue;
+            };
+            let Some(type_node) = child.child_by_field_name("type") else {
+                continue;
+            };
+            if type_node.kind() != "type_identifier" {
+                continue;
+            }
+            let field_name = node_text(field_name_node, source)?.trim();
+            let type_name = node_text(type_node, source)?.trim();
+            if field_name.is_empty() || type_name.is_empty() {
+                continue;
+            }
+            let mut field_type_path = struct_module_components.to_vec();
+            field_type_path.push(type_name.to_string());
+            fields.insert(field_name.to_string(), field_type_path.join("::"));
+        } else if !matches!(
+            child.kind(),
+            "function_item" | "function_signature_item" | "closure_expression"
+        ) {
+            collect_rust_struct_field_types(child, source, struct_module_components, fields)?;
+        }
+    }
+    Ok(())
+}
+
 fn collect_rust_parameter_types(
     symbol_node: Node<'_>,
     source: &str,
@@ -783,31 +872,53 @@ fn rust_method_call_target_path(
     if method_name.is_empty() {
         return Ok(None);
     }
-    let type_path = if receiver.kind() == "identifier" {
+    let Some(type_path) = rust_receiver_type_path(receiver, context)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{type_path}::{method_name}")))
+}
+
+fn rust_receiver_type_path(
+    receiver: Node<'_>,
+    context: &RustDirectCallContext<'_>,
+) -> Result<Option<String>> {
+    if receiver.kind() == "identifier" {
         let name = node_text(receiver, context.source)?.trim();
         if name.is_empty() {
             return Ok(None);
         }
-        let Some(type_path) = context.local_variable_types.get(name) else {
-            return Ok(None);
-        };
-        type_path.clone()
+        Ok(context.local_variable_types.get(name).cloned())
     } else if receiver.kind() == "struct_expression" {
         let Some(type_name) = rust_struct_expression_type_name(receiver, context.source)? else {
             return Ok(None);
         };
         let mut path = context.module_components.clone().unwrap_or_default();
         path.push(type_name);
-        path.join("::")
+        Ok(Some(path.join("::")))
     } else if receiver.kind() == "self" {
-        let Some(self_type_path) = context.self_type_path.as_deref() else {
+        Ok(context.self_type_path.clone())
+    } else if receiver.kind() == "field_expression" {
+        let Some(field_name_node) = receiver.child_by_field_name("field") else {
             return Ok(None);
         };
-        self_type_path.to_string()
+        let field_name = node_text(field_name_node, context.source)?.trim();
+        if field_name.is_empty() {
+            return Ok(None);
+        }
+        let Some(value) = receiver.child_by_field_name("value") else {
+            return Ok(None);
+        };
+        let Some(base_type_path) = rust_receiver_type_path(value, context)? else {
+            return Ok(None);
+        };
+        Ok(context
+            .struct_field_types
+            .get(&base_type_path)
+            .and_then(|fields| fields.get(field_name))
+            .cloned())
     } else {
-        return Ok(None);
-    };
-    Ok(Some(format!("{type_path}::{method_name}")))
+        Ok(None)
+    }
 }
 
 fn collect_direct_local_calls_from_node(
