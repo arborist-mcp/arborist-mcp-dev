@@ -67,7 +67,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   to a matching crate-root top-level function or through a crate-root `pub use` re-export to the defining
   module. Exact `use crate::api::function;` imports and `crate::api::function()` calls whose target is
   declared inside an inline `mod api` at the crate root also resolve, while missing or non-function targets
-  fail closed. Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
+  fail closed. Type-qualified static calls such as `Counter::new()` resolve to a unique inherent `impl`
+  method with that exact semantic path, while missing, ambiguous, or non-method targets fail closed.
+  Malformed source, `#[path]` semantics, duplicate declarations/import aliases, ambiguous layouts,
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
   functions, methods, and declaration items by semantic path or source position with syntax-level
