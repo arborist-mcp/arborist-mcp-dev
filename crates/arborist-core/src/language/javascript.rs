@@ -417,6 +417,73 @@ pub(crate) fn javascript_module_spread_specifiers(
     Ok(specifiers)
 }
 
+/// Returns the local symbol name a CommonJS final `module.exports = { default:
+/// local }` object-literal entry names as the module's interop default member,
+/// or `None` when the final replacement has no identifier-valued `default`
+/// entry or has conflicting entries. The entry's exported name is `default`,
+/// so default imports and namespace `default` members resolve through it like
+/// any object-literal export. Non-identifier values (including
+/// `{ default: require(...) }` module-valued aliases, which the module-valued
+/// member machinery owns), computed and string keys, and earlier shadowed
+/// export objects fail closed here.
+pub(crate) fn javascript_cjs_object_default_member_local_name(
+    root: Node<'_>,
+    source: &str,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<Option<String>> {
+    let last_module_exports_replacement =
+        last_javascript_module_exports_replacement(root, source, check)?;
+    let mut cursor = root.walk();
+    let mut names = BTreeSet::new();
+    for statement in root.named_children(&mut cursor) {
+        if let Some(check) = check {
+            check()?;
+        }
+        if statement.kind() != "expression_statement"
+            || !is_javascript_module_exports_replacement_statement(statement, source)?
+            || Some(statement.start_byte()) != last_module_exports_replacement
+        {
+            continue;
+        }
+        let Some(assignment) = statement.named_child(0) else {
+            continue;
+        };
+        let Some(right) = assignment.child_by_field_name("right") else {
+            continue;
+        };
+        if right.kind() != "object" {
+            continue;
+        }
+        let mut object_cursor = right.walk();
+        for property in right.named_children(&mut object_cursor) {
+            if property.kind() != "pair" {
+                continue;
+            }
+            let Some(key) = property.child_by_field_name("key") else {
+                continue;
+            };
+            if key.kind() != "property_identifier" || node_text(key, source)?.trim() != "default" {
+                continue;
+            }
+            let Some(value) = property.child_by_field_name("value") else {
+                continue;
+            };
+            if value.kind() != "identifier" {
+                continue;
+            }
+            let name = node_text(value, source)?.trim().to_owned();
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+    }
+    // A final export object may name the default member at most once;
+    // conflicting entries fail closed instead of guessing.
+    Ok((names.len() == 1)
+        .then(|| names.iter().next().cloned())
+        .flatten())
+}
+
 /// Walks top-level statements once, collecting the direct named export names
 /// and their exported-name to local-name alias mappings in a single pass.
 fn javascript_direct_export_facts(

@@ -37,7 +37,7 @@ use super::super::java::{
 };
 use super::super::javascript::{
     JavaScriptImportBinding, JavaScriptImportContext, resolve_javascript_constructor_binding,
-    resolve_javascript_default_import_local_name,
+    resolve_javascript_default_import_binding,
     resolve_javascript_named_import_binding_for_reference,
     resolve_javascript_namespace_member_binding, resolve_javascript_namespace_object_call_binding,
 };
@@ -1654,6 +1654,7 @@ fn resolve_reference_path_with_deadline<'a>(
             raw_symbols,
             name_index,
             binding,
+            javascript_import_contexts_by_file,
             deadline,
         )?
     } else {
@@ -1792,7 +1793,8 @@ fn resolve_reference_path_with_deadline<'a>(
     let javascript_scoped_candidates = javascript_namespace_receiver.is_some()
         || !javascript_namespace_object_call_candidates.is_empty()
         || javascript_require_member_call.is_some()
-        || javascript_require_object_call.is_some();
+        || javascript_require_object_call.is_some()
+        || !javascript_default_import_candidates.is_empty();
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
         let path_group_candidates = cpp_qualified_reference_path_groups(
             lookup_name,
@@ -23993,6 +23995,7 @@ fn javascript_default_import_candidate_indexes(
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     binding: &JavaScriptImportBinding,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<usize>> {
     if binding.unresolved || binding.module_paths.is_empty() {
@@ -24003,18 +24006,24 @@ fn javascript_default_import_candidate_indexes(
         if let Some(deadline) = deadline {
             deadline.check("resolving JavaScript/TypeScript default import")?;
         }
-        let Some(default_name) =
-            resolve_javascript_default_import_local_name(module_path, file_overrides, deadline)?
+        let Some(default_binding) = resolve_javascript_default_import_binding(
+            module_path,
+            file_overrides,
+            javascript_import_contexts_by_file,
+            deadline,
+        )?
         else {
             continue;
         };
-        collect_javascript_member_candidates_in_module(
-            raw_symbols,
-            name_index,
-            &default_name,
-            module_path,
-            &mut candidates,
-        );
+        for exporting_path in &default_binding.module_paths {
+            collect_javascript_member_candidates_in_module(
+                raw_symbols,
+                name_index,
+                &default_binding.imported_name,
+                exporting_path,
+                &mut candidates,
+            );
+        }
     }
     Ok(candidates.into_iter().collect())
 }

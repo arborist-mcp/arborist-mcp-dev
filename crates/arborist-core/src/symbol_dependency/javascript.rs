@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::language::{
     JavaScriptModuleExportKind, JavaScriptModuleValuedExport, ParsedDocument, detect_language,
-    javascript_export_local_names,
+    javascript_cjs_object_default_member_local_name, javascript_export_local_names,
     javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_module_spread_specifiers, javascript_module_valued_export_members,
     javascript_named_export_names, javascript_named_import_module_paths_with_overrides_and_check,
@@ -52,6 +52,13 @@ pub(in crate::symbol_dependency) struct JavaScriptImportContext {
     /// multiple spread targets providing one member are ambiguous and fail
     /// closed.
     pub(crate) module_spread_specifiers: Vec<String>,
+    /// Local symbol name a CommonJS final `module.exports = { default: local }`
+    /// object-literal entry names as the module's interop default member, or
+    /// `None` when the final replacement has no identifier-valued `default`
+    /// entry or has conflicting entries. The module's own ESM default /
+    /// `exports.default` member still shadows this; the object entry itself
+    /// shadows any spread-provided default.
+    pub(crate) cjs_object_default_member_local_name: Option<String>,
 }
 
 fn javascript_import_context_for_file_with_overrides_and_deadline(
@@ -171,6 +178,11 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
             Some(&check_traversal_deadline),
         )?,
         module_spread_specifiers: javascript_module_spread_specifiers(
+            document.tree.root_node(),
+            &source,
+            Some(&check_traversal_deadline),
+        )?,
+        cjs_object_default_member_local_name: javascript_cjs_object_default_member_local_name(
             document.tree.root_node(),
             &source,
             Some(&check_traversal_deadline),
@@ -649,6 +661,41 @@ pub(in crate::symbol_dependency) fn resolve_javascript_default_import_local_name
         .flatten())
 }
 
+/// Resolves the full binding a default import (`import name from "./module")`)
+/// binds. The module's ESM default export or CommonJS `exports.default` /
+/// `module.exports.default` member assignment names the target; when neither
+/// exists, a CommonJS callable `module.exports = <callable>` export is the
+/// default import target under interop semantics. When neither exists, the
+/// module's CommonJS export-object default resolves through the same
+/// namespace-member machinery as `ns.default`: an explicit
+/// `module.exports = { default: local }` entry names a local symbol and a
+/// final `module.exports = { ...require(...) }` spread forwards the target's
+/// default in its defining module. Ambiguous or absent default exports return
+/// `None` and fail closed.
+pub(in crate::symbol_dependency) fn resolve_javascript_default_import_binding(
+    module_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaScriptImportBinding>> {
+    if let Some(default_name) =
+        resolve_javascript_default_import_local_name(module_path, file_overrides, deadline)?
+    {
+        return Ok(Some(JavaScriptImportBinding {
+            imported_name: default_name,
+            module_paths: BTreeSet::from([module_path.to_owned()]),
+            unresolved: false,
+        }));
+    }
+    resolve_javascript_namespace_member_binding(
+        module_path,
+        "default",
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )
+}
+
 /// Resolves the binding for a bare call to `module_path`'s namespace object
 /// (`ns(...)` in CommonJS interop) when the module exports a single callable
 /// value through `module.exports = ...`. The returned binding's `imported_name`
@@ -918,19 +965,56 @@ fn resolve_javascript_namespace_member_binding_inner(
     }
     // A namespace object exposes the module's default export as `default`.
     // `export { default } from "./module"` re-exports are handled above; a
-    // direct default export resolves to its named local symbol, and anonymous
-    // default exports fail closed. Star re-exports never forward a default.
+    // direct default export (ESM `export default` or a CommonJS
+    // `exports.default` / `module.exports.default` member) resolves to its
+    // named local symbol, and anonymous default exports fail closed. The
+    // module's own default shadows any export-object default; when it is
+    // absent, a final `module.exports = { default: local }` object-literal
+    // entry names the default member and a final
+    // `module.exports = { ...require(...) }` spread forwards the target's
+    // default. Star re-exports never forward a default.
     if member_name == "default" {
-        let Some(default_name) =
+        if let Some(default_name) =
             resolve_javascript_module_default_export_name(module_path, file_overrides, deadline)?
-        else {
-            return Ok(None);
-        };
-        return Ok(Some(JavaScriptImportBinding {
-            imported_name: default_name,
-            module_paths: BTreeSet::from([module_path.to_owned()]),
-            unresolved: false,
-        }));
+        {
+            return Ok(Some(JavaScriptImportBinding {
+                imported_name: default_name,
+                module_paths: BTreeSet::from([module_path.to_owned()]),
+                unresolved: false,
+            }));
+        }
+        // A final `module.exports = { default: local }` object-literal entry
+        // names the default member like any object export; conflicting or
+        // non-symbol entries fail closed.
+        if let Some(local_name) = module_context
+            .cjs_object_default_member_local_name
+            .as_deref()
+        {
+            return Ok(Some(JavaScriptImportBinding {
+                imported_name: local_name.to_owned(),
+                module_paths: BTreeSet::from([module_path.to_owned()]),
+                unresolved: false,
+            }));
+        }
+        // A final `module.exports = { ...require("./module") }` object literal
+        // spreads the target's default into this module's export object when
+        // the target's default is resolvable; multiple spread targets
+        // providing a default, unresolvable or missing targets, and cycles
+        // fail closed.
+        match resolve_javascript_spread_member_binding(
+            module_path,
+            "default",
+            file_overrides,
+            contexts_by_file,
+            deadline,
+            visited_module_paths,
+        )? {
+            SpreadMemberLookup::Found(binding) => return Ok(Some(binding)),
+            SpreadMemberLookup::Ambiguous => return Ok(None),
+            SpreadMemberLookup::Absent => {}
+        }
+        // Star re-exports never forward a module's default export.
+        return Ok(None);
     }
     if module_context.named_export_names.contains(member_name) {
         // Aliased direct exports (`export { local as exported }` and
