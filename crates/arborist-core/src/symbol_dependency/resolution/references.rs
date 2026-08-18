@@ -332,6 +332,22 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     Ok(dependencies.into_iter().collect())
 }
 
+fn is_rust_type_qualified_static_reference(reference_name: &str) -> bool {
+    let mut components = reference_name.split("::");
+    let Some(first) = components.next() else {
+        return false;
+    };
+    let Some(second) = components.next() else {
+        return false;
+    };
+    !second.is_empty()
+        && components.all(|component| !component.is_empty())
+        && first
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_uppercase())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_reference_path_with_deadline<'a>(
     reference_name: &str,
@@ -497,6 +513,25 @@ fn resolve_reference_path_with_deadline<'a>(
                     .collect::<Vec<_>>();
                 if inline_candidates.len() == 1 {
                     return Ok(Some(raw_symbols[inline_candidates[0]].symbol_id.clone()));
+                }
+            }
+            // Type-qualified static calls such as `Counter::new()` fall back to
+            // a unique inherent `impl` method with that exact semantic path.
+            if rust_import_root.is_none()
+                && is_rust_type_qualified_static_reference(reference_name)
+                && let Some(method_candidates) = semantic_path_index.get(reference_name)
+            {
+                let method_candidates = method_candidates
+                    .iter()
+                    .copied()
+                    .filter(|index| {
+                        let candidate = &raw_symbols[*index];
+                        candidate.node_kind == "function_item"
+                            && candidate.semantic_path == reference_name
+                    })
+                    .collect::<Vec<_>>();
+                if method_candidates.len() == 1 {
+                    return Ok(Some(raw_symbols[method_candidates[0]].symbol_id.clone()));
                 }
             }
             return Ok(None);

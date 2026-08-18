@@ -575,6 +575,11 @@ fn collect_direct_local_calls_from_node(
                 references.insert(path.clone(), import_root);
             } else if is_rust_parent_qualified_module_call(import_root.as_ref(), &path)
                 || is_out_of_line_module_call(&path, context.out_of_line_modules)
+                || is_rust_type_qualified_static_call(
+                    &path,
+                    import_root.as_ref(),
+                    context.out_of_line_modules,
+                )
             {
                 references.insert(path, import_root);
             }
@@ -593,6 +598,36 @@ fn is_rust_parent_qualified_module_call(import_root: Option<&RustImportRoot>, pa
         Some(RustImportRoot::Crate) | Some(RustImportRoot::Super { .. }) => !path.is_empty(),
         Some(RustImportRoot::SelfModule) | None => false,
     }
+}
+
+fn is_rust_type_qualified_static_call(
+    path: &str,
+    import_root: Option<&RustImportRoot>,
+    out_of_line_modules: &BTreeSet<String>,
+) -> bool {
+    if import_root.is_some() {
+        return false;
+    }
+    let mut components = path.split("::");
+    let Some(first) = components.next() else {
+        return false;
+    };
+    let Some(second) = components.next() else {
+        return false;
+    };
+    if second.is_empty() || components.any(|component| component.is_empty()) {
+        return false;
+    }
+    if out_of_line_modules.contains(first) {
+        return false;
+    }
+    rust_type_name_like(first)
+}
+
+fn rust_type_name_like(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_uppercase())
 }
 
 fn is_out_of_line_module_call(path: &str, out_of_line_modules: &BTreeSet<String>) -> bool {
