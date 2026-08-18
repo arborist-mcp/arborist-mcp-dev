@@ -673,7 +673,20 @@ fn rust_let_binding_type_path(
     {
         return Ok(Some(type_path));
     }
+    if let Some(type_path) = rust_field_access_type_path(value, hop)? {
+        return Ok(Some(type_path));
+    }
     rust_call_hop_return_type_path(value, hop)
+}
+
+fn rust_field_access_type_path(
+    value: Node<'_>,
+    hop: &RustCallHopScope<'_>,
+) -> Result<Option<String>> {
+    if value.kind() != "field_expression" {
+        return Ok(None);
+    }
+    rust_receiver_type_path(value, hop)
 }
 
 fn rust_struct_expression_type_path(

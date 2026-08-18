@@ -2525,3 +2525,141 @@ fn keeps_rust_call_hop_let_bindings_fail_closed_in_live_workspace_and_persisted_
         );
     }
 }
+
+#[test]
+fn traces_rust_field_access_let_bindings_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\nstruct Outer {\n    inner: Inner,\n}\nfn caller(outer: Outer) {\n    let inner = outer.inner;\n    inner.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Inner::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Inner::increment");
+}
+
+#[test]
+fn traces_rust_multi_hop_field_access_let_bindings_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Leaf {}\nimpl Leaf {\n    fn run(&self) {}\n}\nstruct Middle {\n    leaf: Leaf,\n}\nstruct Root {\n    middle: Middle,\n}\nfn caller(root: Root) {\n    let leaf = root.middle.leaf;\n    leaf.run();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Leaf::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Leaf::run");
+}
+
+#[test]
+fn traces_rust_struct_literal_and_self_field_access_let_bindings_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\nstruct Outer {\n    inner: Inner,\n}\nfn caller() {\n    let inner = Outer { inner: Inner {} }.inner;\n    inner.increment();\n}\nimpl Outer {\n    fn go(&self) {\n        let inner = self.inner;\n        inner.increment();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "Inner::increment");
+    let live_self = trace_symbol_graph(&dir, "Outer::go", TraceDirection::Callees).unwrap();
+    assert_eq!(live_self.callees.len(), 1);
+    assert_eq!(live_self.callees[0].symbol_id, "Inner::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "Inner::increment");
+    let persisted_self =
+        trace_symbol_graph_from_index(&db_path, "Outer::go", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted_self.callees.len(), 1);
+    assert_eq!(persisted_self.callees[0].symbol_id, "Inner::increment");
+}
+
+#[test]
+fn traces_rust_field_access_let_bindings_in_inline_modules_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Inner {}\n    impl Inner {\n        pub fn increment(&self) {}\n    }\n    pub struct Outer {\n        pub inner: Inner,\n    }\n    pub fn caller(outer: Outer) {\n        let inner = outer.inner;\n        inner.increment();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Inner::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Inner::increment");
+}
+
+#[test]
+fn keeps_rust_field_access_let_bindings_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn increment(&self) {}\n}\nstruct Outer {\n    inner: Inner,\n    items: Vec<Inner>,\n}\nfn unknown_field_caller(outer: Outer) {\n    let inner = outer.missing;\n    inner.increment();\n}\nfn generic_field_caller(outer: Outer) {\n    let items = outer.items;\n    items.increment();\n}\nfn unknown_base_caller() {\n    let inner = unknown.inner;\n    inner.increment();\n}\n",
+    )
+    .unwrap();
+
+    let forbidden_targets = [
+        ("unknown_field_caller", "Inner::increment"),
+        ("generic_field_caller", "Inner::increment"),
+        ("unknown_base_caller", "Inner::increment"),
+    ];
+    for (caller, forbidden) in forbidden_targets {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !live
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved field-access let binding"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, forbidden) in forbidden_targets {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolved field-access let binding from the persisted index"
+        );
+    }
+}
