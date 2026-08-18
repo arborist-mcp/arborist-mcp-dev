@@ -832,3 +832,247 @@ fn does_not_trace_ambiguous_or_path_semantic_rust_direct_module_calls() {
         );
     }
 }
+
+#[test]
+fn traces_rust_pub_use_reexport_function_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nuse crate::bridge::function;\nfn caller() { function(); }\n",
+    )
+    .unwrap();
+    fs::write(&bridge_path, "pub use crate::impl_mod::function;\n").unwrap();
+    fs::write(&impl_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "function");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "function");
+}
+
+#[test]
+fn traces_rust_pub_use_reexport_module_qualified_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nfn caller() { bridge::function(); }\n",
+    )
+    .unwrap();
+    fs::write(&bridge_path, "pub use crate::impl_mod::function;\n").unwrap();
+    fs::write(&impl_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "function");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "function");
+}
+
+#[test]
+fn traces_rust_nested_pub_use_reexport_chains_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let deeper_path = dir.join("deeper.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nmod deeper;\nfn caller() { bridge::function(); }\n",
+    )
+    .unwrap();
+    fs::write(&bridge_path, "pub use crate::impl_mod::function;\n").unwrap();
+    fs::write(&impl_path, "pub use crate::deeper::function;\n").unwrap();
+    fs::write(&deeper_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 4);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "function");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 4);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "function");
+}
+
+#[test]
+fn traces_rust_pub_use_reexport_alias_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nfn caller() { bridge::renamed(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge_path,
+        "pub use crate::impl_mod::function as renamed;\n",
+    )
+    .unwrap();
+    fs::write(&impl_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "function");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "function");
+}
+
+#[test]
+fn traces_rust_crate_root_pub_use_reexport_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\npub use api::helper;\nuse crate::helper;\nfn caller() { helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn traces_rust_module_binding_imports_keep_out_of_line_module_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let helpers_path = dir.join("helpers.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\nmod helpers;\nuse crate::api;\nuse crate::helpers::{self};\nfn caller() { api::helper(); }\nfn self_caller() { helpers::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+    fs::write(&helpers_path, "pub fn helper() {}\n").unwrap();
+
+    for caller in ["caller", "self_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(
+            live.callees.len(),
+            1,
+            "{caller} should keep its qualified out-of-line call"
+        );
+        assert_eq!(live.callees[0].symbol_id, "helper");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["caller", "self_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(
+            persisted.callees.len(),
+            1,
+            "{caller} should keep its qualified out-of-line call from the persisted index"
+        );
+        assert_eq!(persisted.callees[0].symbol_id, "helper");
+    }
+}
+
+#[test]
+fn keeps_rust_private_use_reexports_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nuse crate::bridge::function;\nfn caller() { function(); }\n",
+    )
+    .unwrap();
+    fs::write(&bridge_path, "use crate::impl_mod::function;\n").unwrap();
+    fs::write(&impl_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty(), "private use must not re-export");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        persisted.callees.is_empty(),
+        "private use must not re-export from the persisted index"
+    );
+}
+
+#[test]
+fn keeps_rust_ambiguous_pub_use_reexports_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let bridge_path = dir.join("bridge.rs");
+    let impl_path = dir.join("impl_mod.rs");
+    let other_path = dir.join("other_mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod bridge;\nmod impl_mod;\nmod other_mod;\nuse crate::bridge::function;\nfn caller() { function(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge_path,
+        "pub use crate::impl_mod::function;\npub use crate::other_mod::function;\n",
+    )
+    .unwrap();
+    fs::write(&impl_path, "pub fn function() {}\n").unwrap();
+    fs::write(&other_path, "pub fn function() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        live.callees.is_empty(),
+        "ambiguous re-export must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert!(
+        persisted.callees.is_empty(),
+        "ambiguous re-export must fail closed from the persisted index"
+    );
+}

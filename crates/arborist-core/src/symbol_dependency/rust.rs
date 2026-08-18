@@ -2,14 +2,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use tree_sitter::Node;
 
 use crate::language::{
-    detect_language, normalize_path, parse_document, parse_document_with_timeout, read_source,
-    rust_direct_module_candidate_paths,
+    detect_language, node_text, normalize_path, parse_document, parse_document_with_timeout,
+    read_source, rust_direct_module_candidate_paths,
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::RustImportRoot;
 use crate::workspace_scan::WorkspaceScanDeadline;
+
+#[derive(Debug, Clone)]
+pub(in crate::symbol_dependency) struct RustReexportBinding {
+    target_path: String,
+    import_root: RustImportRoot,
+}
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct RustOutOfLineModuleContext {
@@ -17,6 +24,7 @@ pub(in crate::symbol_dependency) struct RustOutOfLineModuleContext {
     parents_by_child_file: BTreeMap<String, String>,
     ambiguous_parent_files: BTreeSet<String>,
     cyclic_parent_files: BTreeSet<String>,
+    reexport_bindings_by_file: BTreeMap<String, BTreeMap<String, RustReexportBinding>>,
 }
 
 pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
@@ -30,6 +38,7 @@ pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_wi
         .map(|path| normalize_path(path))
         .collect::<BTreeSet<_>>();
     let mut bindings_by_source_file = BTreeMap::new();
+    let mut reexport_bindings_by_file = BTreeMap::new();
 
     for path in source_file_paths {
         if detect_language(path).ok() != Some(LanguageId::Rust) {
@@ -73,7 +82,11 @@ pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_wi
             })
             .collect::<BTreeMap<_, _>>();
         if !bindings.is_empty() {
-            bindings_by_source_file.insert(normalized_path, bindings);
+            bindings_by_source_file.insert(normalized_path.clone(), bindings);
+        }
+        let reexport_bindings = rust_reexport_bindings(root, &source)?;
+        if !reexport_bindings.is_empty() {
+            reexport_bindings_by_file.insert(normalized_path.clone(), reexport_bindings);
         }
     }
 
@@ -103,10 +116,60 @@ pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_wi
         parents_by_child_file,
         ambiguous_parent_files,
         cyclic_parent_files,
+        reexport_bindings_by_file,
     })
 }
 
 pub(in crate::symbol_dependency) fn resolve_rust_out_of_line_module_reference(
+    context: &RustOutOfLineModuleContext,
+    source_file_path: &str,
+    reference_name: &str,
+    import_root: Option<&RustImportRoot>,
+) -> Option<(String, String)> {
+    let mut visited = BTreeSet::new();
+    resolve_rust_out_of_line_module_reference_following_reexports(
+        context,
+        source_file_path,
+        reference_name,
+        import_root,
+        &mut visited,
+    )
+}
+
+fn resolve_rust_out_of_line_module_reference_following_reexports(
+    context: &RustOutOfLineModuleContext,
+    source_file_path: &str,
+    reference_name: &str,
+    import_root: Option<&RustImportRoot>,
+    visited: &mut BTreeSet<(String, String)>,
+) -> Option<(String, String)> {
+    let mut current_source_file = source_file_path.to_string();
+    let mut current_reference_name = reference_name.to_string();
+    let mut current_import_root = import_root.cloned();
+    loop {
+        if !visited.insert((current_source_file.clone(), current_reference_name.clone())) {
+            return None;
+        }
+        let (target_file_path, target_name) = resolve_rust_out_of_line_module_reference_once(
+            context,
+            &current_source_file,
+            &current_reference_name,
+            current_import_root.as_ref(),
+        )?;
+        let Some(reexport) = context
+            .reexport_bindings_by_file
+            .get(&target_file_path)
+            .and_then(|bindings| bindings.get(&target_name))
+        else {
+            return Some((target_file_path, target_name));
+        };
+        current_source_file = target_file_path;
+        current_reference_name = reexport.target_path.clone();
+        current_import_root = Some(reexport.import_root.clone());
+    }
+}
+
+fn resolve_rust_out_of_line_module_reference_once(
     context: &RustOutOfLineModuleContext,
     source_file_path: &str,
     reference_name: &str,
@@ -190,6 +253,181 @@ fn rust_parent_file(
         return None;
     }
     context.parents_by_child_file.get(source_file_path).cloned()
+}
+
+fn rust_reexport_bindings(
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, RustReexportBinding>> {
+    let mut bindings_by_local_name = BTreeMap::<String, Vec<RustReexportBinding>>::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "use_declaration" || !is_rust_pub_use_declaration(child, source)? {
+            continue;
+        }
+        let Some(argument) = child.child_by_field_name("argument") else {
+            continue;
+        };
+        let mut bindings = Vec::new();
+        collect_rust_reexport_bindings(argument, &[], source, &mut bindings)?;
+        for (local_name, binding) in bindings {
+            bindings_by_local_name
+                .entry(local_name)
+                .or_default()
+                .push(binding);
+        }
+    }
+    Ok(bindings_by_local_name
+        .into_iter()
+        .filter_map(|(local_name, bindings)| {
+            (bindings.len() == 1).then(|| (local_name, bindings[0].clone()))
+        })
+        .collect())
+}
+
+fn is_rust_pub_use_declaration(node: Node<'_>, source: &str) -> Result<bool> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "visibility_modifier" {
+            return Ok(node_text(child, source)?.trim().starts_with("pub"));
+        }
+    }
+    Ok(false)
+}
+
+fn collect_rust_reexport_bindings(
+    node: Node<'_>,
+    prefix: &[String],
+    source: &str,
+    bindings: &mut Vec<(String, RustReexportBinding)>,
+) -> Result<()> {
+    match node.kind() {
+        "scoped_use_list" => {
+            let Some(path) = node.child_by_field_name("path") else {
+                return Ok(());
+            };
+            let Some(path_components) = rust_import_path_components(path, source)? else {
+                return Ok(());
+            };
+            let Some(prefix) = rust_join_import_path_components(prefix, &path_components) else {
+                return Ok(());
+            };
+            let Some(list) = node.child_by_field_name("list") else {
+                return Ok(());
+            };
+            collect_rust_reexport_bindings(list, &prefix, source, bindings)?;
+        }
+        "use_list" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_rust_reexport_bindings(child, prefix, source, bindings)?;
+            }
+        }
+        "use_as_clause" => {
+            let Some(path) = node.child_by_field_name("path") else {
+                return Ok(());
+            };
+            let Some(alias) = node.child_by_field_name("alias") else {
+                return Ok(());
+            };
+            let Some(path_components) = rust_import_path_components(path, source)? else {
+                return Ok(());
+            };
+            let Some(target_components) =
+                rust_join_import_path_components(prefix, &path_components)
+            else {
+                return Ok(());
+            };
+            let alias = node_text(alias, source)?.trim();
+            if let Some(binding) = rust_reexport_binding(&target_components, alias) {
+                bindings.push(binding);
+            }
+        }
+        "scoped_identifier" | "identifier" => {
+            let Some(path_components) = rust_import_path_components(node, source)? else {
+                return Ok(());
+            };
+            let Some(target_components) =
+                rust_join_import_path_components(prefix, &path_components)
+            else {
+                return Ok(());
+            };
+            let Some(local_name) = target_components.last() else {
+                return Ok(());
+            };
+            if let Some(binding) = rust_reexport_binding(&target_components, local_name) {
+                bindings.push(binding);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn rust_import_path_components(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
+    if !matches!(
+        node.kind(),
+        "crate" | "self" | "super" | "identifier" | "scoped_identifier"
+    ) {
+        return Ok(None);
+    }
+    let spelling = node_text(node, source)?.trim();
+    let components = spelling
+        .split("::")
+        .filter(|component| !component.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if components.is_empty() || spelling.split("::").any(str::is_empty) {
+        return Ok(None);
+    }
+    Ok(Some(components))
+}
+
+fn rust_join_import_path_components(prefix: &[String], path: &[String]) -> Option<Vec<String>> {
+    if prefix.is_empty() {
+        return Some(path.to_vec());
+    }
+    (!matches!(
+        path.first().map(String::as_str),
+        Some("crate" | "self" | "super")
+    ))
+    .then(|| prefix.iter().chain(path).cloned().collect::<Vec<String>>())
+}
+
+fn rust_reexport_binding(
+    target_components: &[String],
+    local_name: &str,
+) -> Option<(String, RustReexportBinding)> {
+    if local_name.is_empty()
+        || target_components.len() < 2
+        || target_components
+            .iter()
+            .any(|component| component.is_empty())
+    {
+        return None;
+    }
+    let (import_root, root_len) = match target_components.first()?.as_str() {
+        "crate" => (RustImportRoot::Crate, 1),
+        "self" => (RustImportRoot::SelfModule, 1),
+        "super" => {
+            let levels = target_components
+                .iter()
+                .take_while(|component| component.as_str() == "super")
+                .count();
+            (RustImportRoot::Super { levels }, levels)
+        }
+        _ => (RustImportRoot::SelfModule, 0),
+    };
+    let target_components = target_components.get(root_len..)?;
+    (!target_components.is_empty()).then(|| {
+        (
+            local_name.to_string(),
+            RustReexportBinding {
+                target_path: target_components.join("::"),
+                import_root,
+            },
+        )
+    })
 }
 
 #[cfg(test)]
@@ -406,6 +644,234 @@ mod tests {
                 None,
             ),
             Some((normalize_path(&api), "helper".to_string()))
+        );
+    }
+
+    #[test]
+    fn follows_pub_use_reexports_to_the_defining_out_of_line_module() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let bridge = dir.join("bridge.rs");
+        let impl_mod = dir.join("impl_mod.rs");
+        fs::write(&root, "mod bridge;\nmod impl_mod;\n").unwrap();
+        fs::write(&bridge, "pub use crate::impl_mod::function;\n").unwrap();
+        fs::write(&impl_mod, "pub fn function() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), bridge.clone(), impl_mod.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::function",
+                None,
+            ),
+            Some((normalize_path(&impl_mod), "function".to_string()))
+        );
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::function",
+                Some(&RustImportRoot::Crate),
+            ),
+            Some((normalize_path(&impl_mod), "function".to_string()))
+        );
+    }
+
+    #[test]
+    fn follows_relative_pub_use_reexports_at_the_crate_root() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let api = dir.join("api.rs");
+        fs::write(&root, "mod api;\npub use api::helper;\n").unwrap();
+        fs::write(&api, "pub fn helper() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), api.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "helper",
+                Some(&RustImportRoot::Crate),
+            ),
+            Some((normalize_path(&api), "helper".to_string()))
+        );
+    }
+
+    #[test]
+    fn follows_nested_pub_use_reexport_chains() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let bridge = dir.join("bridge.rs");
+        let impl_mod = dir.join("impl_mod.rs");
+        let deeper = dir.join("deeper.rs");
+        fs::write(&root, "mod bridge;\nmod impl_mod;\nmod deeper;\n").unwrap();
+        fs::write(&bridge, "pub use crate::impl_mod::function;\n").unwrap();
+        fs::write(&impl_mod, "pub use crate::deeper::function;\n").unwrap();
+        fs::write(&deeper, "pub fn function() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[
+                root.clone(),
+                bridge.clone(),
+                impl_mod.clone(),
+                deeper.clone(),
+            ],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::function",
+                None,
+            ),
+            Some((normalize_path(&deeper), "function".to_string()))
+        );
+    }
+
+    #[test]
+    fn resolves_aliased_and_grouped_pub_use_reexports() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let bridge = dir.join("bridge.rs");
+        let impl_mod = dir.join("impl_mod.rs");
+        fs::write(&root, "mod bridge;\nmod impl_mod;\n").unwrap();
+        fs::write(
+            &bridge,
+            "pub use crate::impl_mod::function as renamed;\npub use crate::impl_mod::{other};\n",
+        )
+        .unwrap();
+        fs::write(&impl_mod, "pub fn function() {}\npub fn other() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), bridge.clone(), impl_mod.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::renamed",
+                None,
+            ),
+            Some((normalize_path(&impl_mod), "function".to_string()))
+        );
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::other",
+                None,
+            ),
+            Some((normalize_path(&impl_mod), "other".to_string()))
+        );
+    }
+
+    #[test]
+    fn ignores_private_use_and_ambiguous_or_cyclic_pub_use_reexports() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let bridge = dir.join("bridge.rs");
+        let impl_mod = dir.join("impl_mod.rs");
+        let other_mod = dir.join("other_mod.rs");
+        let api = dir.join("api.rs");
+        fs::write(
+            &root,
+            "mod bridge;\nmod impl_mod;\nmod other_mod;\nmod api;\n",
+        )
+        .unwrap();
+        fs::write(&bridge, "use crate::impl_mod::function;\n").unwrap();
+        fs::write(
+            &impl_mod,
+            "pub use crate::other_mod::ambiguous;\npub use crate::api::ambiguous;\npub use crate::other_mod::function;\n",
+        )
+        .unwrap();
+        fs::write(&other_mod, "pub fn ambiguous() {}\npub fn function() {}\n").unwrap();
+        fs::write(&api, "pub fn ambiguous() {}\npub fn helper() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[
+                root.clone(),
+                bridge.clone(),
+                impl_mod.clone(),
+                other_mod.clone(),
+                api.clone(),
+            ],
+            None,
+            None,
+        )
+        .unwrap();
+        // Private use does not re-export a name for sibling modules: the
+        // reference stays in the re-exporting file instead of being followed.
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "bridge::function",
+                None,
+            ),
+            Some((normalize_path(&bridge), "function".to_string()))
+        );
+        // Two pub-use re-exports of the same local name are ambiguous, so the
+        // name is not followed to either defining module.
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "impl_mod::ambiguous",
+                None,
+            ),
+            Some((normalize_path(&impl_mod), "ambiguous".to_string()))
+        );
+        // A unique pub-use re-export still resolves next to the ambiguous one.
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "impl_mod::function",
+                None,
+            ),
+            Some((normalize_path(&other_mod), "function".to_string()))
+        );
+    }
+
+    #[test]
+    fn fails_closed_on_cyclic_pub_use_reexports() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let api = dir.join("api.rs");
+        fs::write(&root, "mod api;\npub use api::helper;\n").unwrap();
+        fs::write(&api, "pub use crate::helper;\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), api.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "helper",
+                Some(&RustImportRoot::Crate),
+            )
+            .is_none()
         );
     }
 }
