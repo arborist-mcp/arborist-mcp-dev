@@ -115,6 +115,7 @@ fn collect_direct_local_calls(
     let self_type_path = rust_impl_self_type_path(symbol_node, source)?;
     let struct_field_types = source_file_struct_field_types(symbol_node, source)?;
     let struct_type_paths = source_file_struct_type_paths(symbol_node, source)?;
+    let inline_module_paths = source_file_inline_module_paths(symbol_node, source)?;
     let callable_return_types = source_file_callable_return_types(symbol_node, source)?;
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
@@ -128,6 +129,7 @@ fn collect_direct_local_calls(
         bindings: &bindings,
         module_or_import_names: &module_or_import_names,
         struct_type_paths: &struct_type_paths,
+        inline_module_paths: &inline_module_paths,
         module_components: module_components.clone(),
     };
     let local_variable_types =
@@ -155,6 +157,7 @@ fn collect_direct_local_calls(
         bindings: &bindings,
         module_or_import_names: &module_or_import_names,
         struct_type_paths: &struct_type_paths,
+        inline_module_paths: &inline_module_paths,
         module_components,
     };
     let context = RustDirectCallContext {
@@ -189,6 +192,7 @@ struct RustCallHopScope<'a> {
     bindings: &'a BTreeSet<String>,
     module_or_import_names: &'a BTreeSet<String>,
     struct_type_paths: &'a BTreeSet<String>,
+    inline_module_paths: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
 }
 
@@ -201,6 +205,7 @@ struct RustHopInputs<'a> {
     bindings: &'a BTreeSet<String>,
     module_or_import_names: &'a BTreeSet<String>,
     struct_type_paths: &'a BTreeSet<String>,
+    inline_module_paths: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
 }
 
@@ -655,6 +660,7 @@ fn collect_rust_let_binding_types(
                 bindings: inputs.bindings,
                 module_or_import_names: inputs.module_or_import_names,
                 struct_type_paths: inputs.struct_type_paths,
+                inline_module_paths: inputs.inline_module_paths,
                 module_components: inputs.module_components.clone(),
             };
             rust_let_binding_type_path(value, source, module_or_import_names, &hop)?
@@ -837,6 +843,47 @@ fn collect_rust_struct_type_paths(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         collect_rust_struct_type_paths(child, source, paths)?;
+    }
+    Ok(())
+}
+
+fn source_file_inline_module_paths(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut paths = BTreeSet::new();
+    collect_rust_inline_module_paths(root, source, &mut paths)?;
+    Ok(paths)
+}
+
+fn collect_rust_inline_module_paths(
+    node: Node<'_>,
+    source: &str,
+    paths: &mut BTreeSet<String>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_item" | "function_signature_item" | "closure_expression"
+    ) {
+        return Ok(());
+    }
+    if node.kind() == "mod_item"
+        && node.child_by_field_name("body").is_some()
+        && let Some(name) = rust_symbol_name(node, source)?
+        && let Some(module_components) = rust_inline_module_path_components(node, source)?
+    {
+        let mut module_path = module_components;
+        module_path.push(name);
+        paths.insert(module_path.join("::"));
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_rust_inline_module_paths(child, source, paths)?;
     }
     Ok(())
 }
@@ -1041,6 +1088,7 @@ fn collect_rust_parameter_types(
         bindings: inputs.bindings,
         module_or_import_names: inputs.module_or_import_names,
         struct_type_paths: inputs.struct_type_paths,
+        inline_module_paths: inputs.inline_module_paths,
         module_components: inputs.module_components.clone(),
     };
     let mut cursor = parameters.walk();
@@ -1387,6 +1435,7 @@ fn collect_direct_local_calls_from_node(
                     import_root.as_ref(),
                     context.out_of_line_modules,
                 )
+                || is_rust_inline_module_static_call(&path, import_root.as_ref(), &context.hop)
             {
                 references.insert(path, import_root);
             } else if let Some((target_path, target_root)) = is_rust_module_binding_qualified_call(
@@ -1436,6 +1485,33 @@ fn is_rust_type_qualified_static_call(
         return false;
     }
     rust_type_name_like(first)
+}
+
+fn is_rust_inline_module_static_call(
+    path: &str,
+    import_root: Option<&RustImportRoot>,
+    scope: &RustCallHopScope<'_>,
+) -> bool {
+    if import_root.is_some() {
+        return false;
+    }
+    let components = path.split("::").collect::<Vec<_>>();
+    if components.len() < 3
+        || components.iter().any(|component| component.is_empty())
+        || !rust_type_name_like(components[components.len() - 2])
+    {
+        return false;
+    }
+    let (leading, _) = components.split_at(components.len() - 2);
+    let first = leading[0];
+    if scope.bindings.contains(first)
+        || scope.receiver_types.contains_key(first)
+        || scope.local_functions.contains_key(first)
+        || scope.module_or_import_names.contains(first)
+    {
+        return false;
+    }
+    scope.inline_module_paths.contains(&leading.join("::"))
 }
 
 fn is_rust_module_binding_qualified_call(

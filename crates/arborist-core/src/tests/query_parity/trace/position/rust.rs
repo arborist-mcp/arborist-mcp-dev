@@ -1792,15 +1792,24 @@ fn traces_rust_constructor_call_binding_method_calls_in_inline_modules_in_live_w
 
     let live = trace_symbol_graph(&dir, "api::caller", TraceDirection::Callees).unwrap();
     assert_eq!(live.indexed_files, 1);
-    assert_eq!(live.callees.len(), 1);
-    assert_eq!(live.callees[0].symbol_id, "api::Counter::increment");
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::increment", "api::Counter::new"]);
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Callees).unwrap();
-    assert_eq!(persisted.indexed_files, 1);
-    assert_eq!(persisted.callees.len(), 1);
-    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::increment");
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::increment", "api::Counter::new"]);
 }
 
 #[test]
@@ -2960,7 +2969,12 @@ fn traces_rust_module_qualified_constructor_binding_method_calls_in_live_workspa
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["api::Counter::increment", "outer::inner::Unit::run"]
+        [
+            "api::Counter::increment",
+            "api::Counter::new",
+            "outer::inner::Unit::new",
+            "outer::inner::Unit::run",
+        ]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -2974,7 +2988,12 @@ fn traces_rust_module_qualified_constructor_binding_method_calls_in_live_workspa
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["api::Counter::increment", "outer::inner::Unit::run"]
+        [
+            "api::Counter::increment",
+            "api::Counter::new",
+            "outer::inner::Unit::new",
+            "outer::inner::Unit::run",
+        ]
     );
 }
 
@@ -3079,6 +3098,92 @@ fn keeps_rust_module_qualified_receiver_types_fail_closed_in_live_workspace_and_
                 .iter()
                 .any(|callee| callee.symbol_id == forbidden),
             "{caller} must not trace {forbidden} for an unresolvable module-qualified receiver type from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn traces_rust_inline_module_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n    }\n    pub fn caller() {\n        let _ = Counter::new();\n    }\n}\nmod outer {\n    pub mod inner {\n        pub struct Unit {}\n        impl Unit {\n            pub fn run() {}\n        }\n    }\n}\nfn caller() {\n    let _ = api::Counter::new();\n    let _ = outer::inner::Unit::run();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::new", "outer::inner::Unit::run"]);
+
+    let live = trace_symbol_graph(&dir, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Counter::new");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::new", "outer::inner::Unit::run"]);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::new");
+}
+
+#[test]
+fn keeps_rust_inline_module_static_calls_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n    }\n}\nfn unknown_module_caller() { api_missing::Type::new(); }\nfn unknown_type_caller() { api::Missing::new(); }\nfn non_type_tail_caller() { api::helper::thing(); }\nfn shadowed_module_caller(api: &Other) { api::Counter::new(); }\nfn shadowed_module_binding_caller() {\n    let api = Other {};\n    api::Counter::new();\n}\nstruct Other {}\nimpl Other { fn new() -> Other { Other {} } }\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "unknown_module_caller",
+        "unknown_type_caller",
+        "non_type_tail_caller",
+        "shadowed_module_caller",
+        "shadowed_module_binding_caller",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for an unresolvable inline-module static call"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "unknown_module_caller",
+        "unknown_type_caller",
+        "non_type_tail_caller",
+        "shadowed_module_caller",
+        "shadowed_module_binding_caller",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for an unresolvable inline-module static call from the persisted index"
         );
     }
 }
