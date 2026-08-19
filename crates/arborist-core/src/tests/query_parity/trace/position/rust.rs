@@ -1811,7 +1811,7 @@ fn keeps_rust_constructor_call_binding_method_calls_fail_closed_in_live_workspac
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn path_constructor_caller() {\n    let c = api::Counter::new();\n    c.increment();\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn path_constructor_caller() {\n    let c = crate::api::Counter::new();\n    c.increment();\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
     )
     .unwrap();
 
@@ -2909,6 +2909,176 @@ fn keeps_rust_tuple_and_unit_struct_receivers_fail_closed_in_live_workspace_and_
         assert!(
             persisted.callees.is_empty(),
             "{caller} must fail closed for an unknown or shadowed tuple/unit struct receiver from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn traces_rust_module_qualified_typed_parameter_method_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn increment(&self) {}\n    }\n}\nfn caller(c: &api::Counter, d: &mut api::Counter) {\n    c.increment();\n    d.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::increment");
+}
+
+#[test]
+fn traces_rust_module_qualified_constructor_binding_method_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nmod outer {\n    pub mod inner {\n        pub struct Unit {}\n        impl Unit {\n            pub fn new() -> Unit { Unit {} }\n            pub fn run(&self) {}\n        }\n    }\n}\nfn caller() {\n    let c = api::Counter::new();\n    c.increment();\n    let u = outer::inner::Unit::new();\n    u.run();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["api::Counter::increment", "outer::inner::Unit::run"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["api::Counter::increment", "outer::inner::Unit::run"]
+    );
+}
+
+#[test]
+fn traces_rust_module_qualified_tuple_unit_struct_and_struct_literal_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nfn caller() {\n    api::Counter(1).increment();\n    let c = api::Counter(1);\n    c.increment();\n    api::Unit.run();\n    let u = api::Unit;\n    u.run();\n    api::Plain {}.step();\n    let p = api::Plain {};\n    p.step();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        [
+            "api::Counter::increment",
+            "api::Plain::step",
+            "api::Unit::run"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        [
+            "api::Counter::increment",
+            "api::Plain::step",
+            "api::Unit::run"
+        ]
+    );
+}
+
+#[test]
+fn keeps_rust_module_qualified_receiver_types_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nfn unknown_module_parameter_caller(c: &outside::Counter) { c.increment(); }\nfn crate_qualified_parameter_caller(c: &crate::api::Counter) { c.increment(); }\nfn unknown_struct_constructor_caller() {\n    let c = api::Unknown::new();\n    c.increment();\n}\nfn crate_qualified_constructor_caller() {\n    let c = crate::api::Counter::new();\n    c.increment();\n}\nfn shadowed_module_constructor_caller(api: &Other) {\n    let c = api::Counter::new();\n    c.increment();\n}\nfn shadowed_module_tuple_caller() {\n    let api = Other {};\n    api::Counter(1).increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+    )
+    .unwrap();
+
+    let forbidden_targets = [
+        ("unknown_module_parameter_caller", "api::Counter::increment"),
+        (
+            "crate_qualified_parameter_caller",
+            "api::Counter::increment",
+        ),
+        (
+            "unknown_struct_constructor_caller",
+            "api::Counter::increment",
+        ),
+        (
+            "crate_qualified_constructor_caller",
+            "api::Counter::increment",
+        ),
+        (
+            "shadowed_module_constructor_caller",
+            "api::Counter::increment",
+        ),
+        ("shadowed_module_constructor_caller", "Other::increment"),
+        ("shadowed_module_tuple_caller", "api::Counter::increment"),
+    ];
+    for (caller, forbidden) in forbidden_targets {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !live
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolvable module-qualified receiver type"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, forbidden) in forbidden_targets {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            !persisted
+                .callees
+                .iter()
+                .any(|callee| callee.symbol_id == forbidden),
+            "{caller} must not trace {forbidden} for an unresolvable module-qualified receiver type from the persisted index"
         );
     }
 }
