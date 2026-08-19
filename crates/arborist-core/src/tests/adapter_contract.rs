@@ -244,62 +244,105 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
 
 fn trace_contract_source(language_id: LanguageId) -> &'static str {
     match language_id {
-        LanguageId::Python => {
-            "def compute(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return compute(value)\n"
-        }
-        LanguageId::C => {
-            "int compute(int value) { return value + 1; }\nint caller(int value) { return compute(value); }\n"
-        }
-        LanguageId::Cpp => {
-            "int compute(int value) { return value + 1; }\nint caller(int value) { return compute(value); }\n"
-        }
-        LanguageId::CSharp => {
-            "namespace Demo { public static class DemoClass { public static int Compute(int value) => value + 1; public static int Caller(int value) => Compute(value); } }\n"
-        }
-        LanguageId::JavaScript => {
-            "export function compute(value) { return value + 1; }\nexport function caller(value) { return compute(value); }\n"
-        }
-        LanguageId::TypeScript => {
-            "export function compute(value: number): number { return value + 1; }\nexport function caller(value: number): number { return compute(value); }\n"
-        }
-        LanguageId::Tsx => {
-            "export function compute(value: number): number { return value + 1; }\nexport function caller(value: number) { return <div>{compute(value)}</div>; }\n"
-        }
-        LanguageId::Rust => {
-            "pub fn compute(value: i32) -> i32 { value + 1 }\npub fn caller(value: i32) -> i32 { compute(value) }\n"
-        }
-        LanguageId::Go => {
-            "package demo\n\nfunc compute(value int) int { return value + 1 }\nfunc caller(value int) int { return compute(value) }\n"
-        }
-        LanguageId::Java => {
-            "package demo; public final class Demo { public static int compute(int value) { return value + 1; } public static int caller(int value) { return compute(value); } }\n"
-        }
-        LanguageId::Kotlin => {
-            "package demo\n\nfun compute(value: Int): Int = value + 1\nfun caller(value: Int): Int = compute(value)\n"
-        }
+        LanguageId::Python => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/python/resolver_direct_calls.py"
+        )),
+        LanguageId::C => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/c/resolver_direct_calls.c"
+        )),
+        LanguageId::Cpp => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/cpp/resolver_direct_calls.cpp"
+        )),
+        LanguageId::CSharp => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/csharp/resolver_direct_calls.cs"
+        )),
+        LanguageId::JavaScript => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/javascript/resolver_direct_calls.js"
+        )),
+        LanguageId::TypeScript => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/typescript/resolver_direct_calls.ts"
+        )),
+        LanguageId::Tsx => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/tsx/resolver_direct_calls.tsx"
+        )),
+        LanguageId::Rust => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/rust/resolver_direct_calls.rs"
+        )),
+        LanguageId::Go => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/go/resolver_direct_calls.go"
+        )),
+        LanguageId::Java => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/java/resolver_direct_calls.java"
+        )),
+        LanguageId::Kotlin => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/kotlin/resolver_direct_calls.kt"
+        )),
     }
 }
 
-fn unresolved_trace_contract_source(language_id: LanguageId) -> String {
-    let source = trace_contract_source(language_id);
+fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
     match language_id {
-        LanguageId::Python => source.replace("return compute(value)", "return missing(value)"),
-        LanguageId::C | LanguageId::Cpp | LanguageId::JavaScript | LanguageId::TypeScript => {
-            source.replace("return compute(value)", "return missing(value)")
-        }
-        LanguageId::CSharp => source.replace("=> Compute(value)", "=> Missing(value)"),
-        LanguageId::Tsx => source.replace("{compute(value)}", "{missing(value)}"),
-        LanguageId::Rust => source.replace("{ compute(value) }", "{ missing(value) }"),
-        LanguageId::Go | LanguageId::Java => {
-            source.replace("return compute(value)", "return missing(value)")
-        }
-        LanguageId::Kotlin => source.replace("= compute(value)", "= missing(value)"),
+        LanguageId::Python => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/python/resolver_unresolved_calls.py"
+        )),
+        LanguageId::C => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/c/resolver_unresolved_calls.c"
+        )),
+        LanguageId::Cpp => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/cpp/resolver_unresolved_calls.cpp"
+        )),
+        LanguageId::CSharp => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/csharp/resolver_unresolved_calls.cs"
+        )),
+        LanguageId::JavaScript => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/javascript/resolver_unresolved_calls.js"
+        )),
+        LanguageId::TypeScript => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/typescript/resolver_unresolved_calls.ts"
+        )),
+        LanguageId::Tsx => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/tsx/resolver_unresolved_calls.tsx"
+        )),
+        LanguageId::Rust => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/rust/resolver_unresolved_calls.rs"
+        )),
+        LanguageId::Go => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/go/resolver_unresolved_calls.go"
+        )),
+        LanguageId::Java => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/java/resolver_unresolved_calls.java"
+        )),
+        LanguageId::Kotlin => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/kotlin/resolver_unresolved_calls.kt"
+        )),
     }
 }
 
 fn trace_contract_symbol_base_name(language_id: LanguageId, caller: bool) -> &'static str {
     match (language_id, caller) {
-        (LanguageId::CSharp, true) => "Caller",
+        (LanguageId::CSharp, true) => "Orchestrate",
         (LanguageId::CSharp, false) => "Compute",
         (_, true) => "caller",
         (_, false) => "compute",

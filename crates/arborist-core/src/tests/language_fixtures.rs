@@ -20,9 +20,12 @@ fn expected_language_for_directory(name: &str) -> LanguageId {
         "cpp" => LanguageId::Cpp,
         "javascript" => LanguageId::JavaScript,
         "typescript" => LanguageId::TypeScript,
+        "tsx" => LanguageId::Tsx,
         "rust" => LanguageId::Rust,
         "go" => LanguageId::Go,
         "java" => LanguageId::Java,
+        "kotlin" => LanguageId::Kotlin,
+        "csharp" => LanguageId::CSharp,
         other => panic!("unexpected language fixture directory {other:?}"),
     }
 }
@@ -36,9 +39,12 @@ fn language_fixture_tree_has_expected_directories() {
         "cpp",
         "javascript",
         "typescript",
+        "tsx",
         "rust",
         "go",
         "java",
+        "kotlin",
+        "csharp",
     ] {
         let path = root.join(directory);
         assert!(

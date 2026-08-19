@@ -729,6 +729,8 @@ completed item can land in its own commit unless two changes are inseparable.
   and rejects a stale language analysis revision before reading symbols.
 - [x] Add a reusable resolver-safety contract for every traceable language, proving
   direct-call live/persisted parity and fail-closed behavior for unresolved calls.
+- [x] Establish dedicated language fixture directories with direct-call and unresolved-call
+  sources for every registered adapter, and consume them from common trace contracts.
 
 ## Suggested Commit Sequence
 

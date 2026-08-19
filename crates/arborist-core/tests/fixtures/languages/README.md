@@ -16,12 +16,17 @@ tests/fixtures/languages/
   rust/
   go/
   java/
+  kotlin/
+  csharp/
+  tsx/
 ```
 
 ## Conventions
 
 - Files are LF-only and intentionally tiny.
-- `direct_calls.*` covers direct calls plus imports/qualified calls.
+- `direct_calls.*` covers direct calls plus imports/qualified calls for the fixture smoke suite.
+- `resolver_direct_calls.*` and `resolver_unresolved_calls.*` are minimal same-file
+  positive/negative resolver fixtures consumed by the common adapter contract.
 - `shadowing.*` covers shadowed names and nested scopes.
 - `overloads.*` (languages with meaningful overloading) covers overloads.
 - `malformed.*` is intentionally invalid syntax for parser robustness tests.
