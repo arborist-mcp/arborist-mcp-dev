@@ -242,6 +242,13 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
     }
 }
 
+fn overlay_source(language_id: LanguageId, source: &str) -> String {
+    match language_id {
+        LanguageId::Tsx => source.replace("{value}", "{value + 2}"),
+        _ => source.replace("value + 1", "value + 2"),
+    }
+}
+
 fn semantic_target_for_patch_contract(
     language_id: LanguageId,
     path: &Path,
@@ -371,6 +378,67 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn vfs_overlay_reads_match_persisted_index_source_overlays_for_every_language() {
+    use crate::{VirtualFileSystem, read_symbol_from_index_with_source, rebuild_symbol_index};
+
+    for language_id in registered_languages() {
+        let dir = super::support::temporary_dir();
+        let relative_path = sample_path(language_id);
+        let path = dir.join(
+            relative_path
+                .file_name()
+                .expect("sample path must have a file name"),
+        );
+        let source = sample_source(language_id);
+        let dirty_source = overlay_source(language_id, source);
+        assert_ne!(
+            source, dirty_source,
+            "{language_id:?} contract source must contain the overlay marker"
+        );
+        fs::write(&path, source).unwrap();
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path)
+            .unwrap_or_else(|error| panic!("{language_id:?} index rebuild failed: {error}"));
+
+        let semantic_target = semantic_target_for_patch_contract(language_id, &path, source);
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(&path, Some(&dirty_source))
+            .unwrap_or_else(|error| panic!("{language_id:?} VFS overlay failed: {error}"));
+
+        let vfs_read = vfs
+            .read_symbol(&dir, &semantic_target)
+            .unwrap_or_else(|error| panic!("{language_id:?} VFS read failed: {error}"));
+        let persisted_read =
+            read_symbol_from_index_with_source(&db_path, &path, &dirty_source, &semantic_target)
+                .unwrap_or_else(|error| {
+                    panic!("{language_id:?} persisted overlay read failed: {error}")
+                });
+
+        assert_eq!(
+            vfs_read.symbol.symbol_id, persisted_read.symbol.symbol_id,
+            "{language_id:?} overlay symbol IDs must match"
+        );
+        assert_eq!(
+            vfs_read.symbol.semantic_path, persisted_read.symbol.semantic_path,
+            "{language_id:?} overlay semantic paths must match"
+        );
+        assert_eq!(
+            vfs_read.source, persisted_read.source,
+            "{language_id:?} VFS and persisted source overlays must match"
+        );
+        assert!(
+            vfs_read.source.contains("value + 2"),
+            "{language_id:?} overlay read must expose the virtual source"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            source,
+            "{language_id:?} VFS overlay queries must not mutate disk source"
+        );
     }
 }
 

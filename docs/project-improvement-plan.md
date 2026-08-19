@@ -723,6 +723,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add a reusable patch-preview contract that exercises every adapter advertising
   patch targeting and validation, covering successful previews and fail-closed
   unresolved-reference rejection.
+- [x] Add a reusable VFS overlay parity contract that compares virtual reads with
+  persisted-index source overlays for every registered language without mutating disk.
 
 ## Suggested Commit Sequence
 
