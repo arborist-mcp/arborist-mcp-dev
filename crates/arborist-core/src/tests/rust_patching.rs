@@ -236,3 +236,317 @@ fn rejects_invalid_rust_replacements_without_writing_the_source_file() {
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), RUST_SOURCE);
 }
+
+#[test]
+fn validates_rust_function_patch_bindings_for_locals_items_and_imports() {
+    let source = r#"use crate::api::helper as imported_helper;
+
+pub const LIMIT: usize = 10;
+
+fn helper(value: i32) -> i32 {
+    value + 1
+}
+
+pub fn compute(value: i32) -> i32 {
+    let bonus = 2;
+    value + bonus
+}
+"#;
+
+    let replacement = r#"pub fn compute(value: i32) -> i32 {
+    let bonus = 2;
+    helper(value) + bonus + LIMIT + imported_helper(value) + Some(value).unwrap_or(0) + crate::LIMIT
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(result.validation.syntax_errors.is_empty());
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    assert_eq!(result.validation.ambiguous_identifiers.len(), 0);
+
+    for name in ["value", "bonus", "helper", "LIMIT", "imported_helper"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "missing resolved decision for {name}: {:#?}",
+            result.validation.binding_decisions
+        );
+    }
+    let helper_binding = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .unwrap();
+    assert_eq!(helper_binding.symbol.scope_path, None);
+    assert_eq!(helper_binding.symbol.node_kind, "function_item");
+    assert_eq!(helper_binding.symbol.origin_type, "module_scope");
+    let imported_binding = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "imported_helper")
+        .unwrap();
+    assert_eq!(imported_binding.symbol.node_kind, "use_declaration");
+    assert_eq!(imported_binding.symbol.origin_type, "imported_module");
+    let local_binding = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "bonus")
+        .unwrap();
+    assert_eq!(local_binding.symbol.node_kind, "let_declaration");
+    assert_eq!(local_binding.symbol.origin_type, "local_scope");
+    assert_eq!(local_binding.symbol.scope_path.as_deref(), Some("compute"));
+}
+
+#[test]
+fn rejects_rust_function_patch_with_unresolved_identifier() {
+    let source = "pub fn compute(value: i32) -> i32 {\n    value + 1\n}\n";
+
+    let replacement = "pub fn compute(value: i32) -> i32 {\n    missing_helper(value) + 1\n}";
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["missing_helper"]
+    );
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing_helper" && decision.status == "unresolved")
+    );
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rejects_rust_function_patch_with_unresolved_receiver_and_let_initializer() {
+    let source = "pub fn compute(value: i32) -> i32 {\n    value + 1\n}\n";
+
+    let replacement = r#"pub fn compute(value: i32) -> i32 {
+    let missing_local = value + 1;
+    missing_local + other.increment()
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["other"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing_local" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rust_patch_binding_validation_resolves_scoped_patterns_guards_and_closures() {
+    let source = r#"pub fn compute(values: Vec<i32>, maybe: Option<i32>) -> i32 {
+    let mut total = 0;
+    for item in values {
+        total += item;
+    }
+    let doubled = |x: i32| x * 2;
+    total += doubled(total);
+    match maybe {
+        Some(v) if v > 0 => total += v,
+        None => total += 0,
+    }
+    if let Some(w) = maybe {
+        total += w;
+    }
+    total
+}
+"#;
+
+    let replacement = r#"pub fn compute(values: Vec<i32>, maybe: Option<i32>) -> i32 {
+    let mut total = 0;
+    for item in values {
+        total += item * 2;
+    }
+    let doubled = |x: i32| x * 2;
+    total += doubled(total);
+    match maybe {
+        Some(v) if v > 0 => total += v,
+        None => total += 0,
+    }
+    if let Some(w) = maybe {
+        total += w;
+    }
+    total
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["values", "total", "item", "doubled", "x", "v", "w", "maybe"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "missing resolved decision for {name}: {:#?}",
+            result.validation.binding_decisions
+        );
+    }
+}
+
+#[test]
+fn rust_patch_binding_validation_resolves_method_bodies_without_member_checks() {
+    let source = r#"pub struct Counter {
+    count: i32,
+}
+
+impl Counter {
+    pub fn increment(&mut self) -> i32 {
+        self.count += 1;
+        self.count
+    }
+}
+"#;
+
+    let replacement = r#"pub fn increment(&mut self) -> i32 {
+    self.count += 1;
+    self.count * 2
+}"#;
+    let result = patch_ast_node(
+        Path::new("point.rs"),
+        source,
+        "Counter::increment",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+}
+
+#[test]
+fn rust_patch_binding_validation_ignores_type_annotations() {
+    let source = "pub fn compute(value: i32) -> i32 {\n    value + 1\n}\n";
+
+    let replacement = "pub fn compute(value: MissingType) -> MissingReturn {\n    value\n}";
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .all(|decision| decision.name != "MissingType" && decision.name != "MissingReturn")
+    );
+}
+
+#[test]
+fn rust_patch_binding_validation_resolves_and_rejects_const_item_references() {
+    let source = "pub const BASE: usize = 10;\npub const LIMIT: usize = BASE;\n";
+
+    let allowed = patch_ast_node(
+        Path::new("sample.rs"),
+        source,
+        "LIMIT",
+        "pub const LIMIT: usize = BASE + 1;",
+        None,
+    )
+    .unwrap();
+    assert!(allowed.applied, "{allowed:#?}");
+    assert!(
+        allowed
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "BASE" && decision.status == "resolved")
+    );
+
+    let rejected = patch_ast_node(
+        Path::new("sample.rs"),
+        source,
+        "LIMIT",
+        "pub const LIMIT: usize = BASE + MISSING;",
+        None,
+    )
+    .unwrap();
+    assert!(!rejected.applied, "{rejected:#?}");
+    assert_eq!(rejected.validation.unresolved_identifiers, vec!["MISSING"]);
+}
+
+#[test]
+fn rust_patch_binding_validation_resolves_hoisted_nested_items() {
+    let source = "pub fn compute(value: i32) -> i32 {\n    value + 1\n}\n";
+
+    let replacement = r#"pub fn compute(value: i32) -> i32 {
+    let result = nested_helper(value);
+    fn nested_helper(x: i32) -> i32 {
+        x
+    }
+    result
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "nested_helper" && decision.status == "resolved")
+    );
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "x" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rust_patch_binding_validation_resolves_same_file_type_items_in_value_positions() {
+    let source = "pub struct Unit;\npub struct Counter(i32);\npub fn compute(value: i32) -> i32 {\n    value + 1\n}\n";
+
+    let replacement = r#"pub fn compute(value: i32) -> i32 {
+    let u = Unit;
+    let c = Counter(1);
+    value + c.0
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.rs"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["Unit", "Counter"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
