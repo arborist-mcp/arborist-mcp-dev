@@ -3616,3 +3616,36 @@ fn traces_rust_turbofish_struct_tuple_and_unit_construction_receivers_in_live_wo
     actual.sort_unstable();
     assert_eq!(actual, expected);
 }
+#[test]
+fn traces_rust_turbofish_member_chain_call_hops_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Inner {}\nimpl Inner {\n    fn run(&self) {}\n}\nstruct Root {}\nimpl Root {\n    fn get_inner(&self) -> Inner { Inner {} }\n    fn go(&self) {}\n}\nfn make_root() -> Root { Root {} }\nfn caller() {\n    let root = Root {};\n    root.get_inner::<u8>().run();\n    make_root::<u8>().go();\n    let inner = root.get_inner::<u8>();\n    inner.run();\n    let r = make_root::<u8>();\n    r.go();\n}\n",
+    )
+    .unwrap();
+
+    let expected = ["Inner::run", "Root::get_inner", "Root::go", "make_root"];
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+}

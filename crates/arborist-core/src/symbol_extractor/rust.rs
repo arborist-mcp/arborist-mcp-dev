@@ -1424,6 +1424,16 @@ fn rust_call_hop_return_type_path(
     let Some(function) = receiver.child_by_field_name("function") else {
         return Ok(None);
     };
+    // A generic_function such as `get_inner::<u8>` wraps the called path in its
+    // `function` field; resolve it like a plain call hop.
+    let function = if function.kind() == "generic_function" {
+        let Some(inner) = function.child_by_field_name("function") else {
+            return Ok(None);
+        };
+        inner
+    } else {
+        function
+    };
     if function.kind() == "identifier" {
         let name = node_text(function, scope.source)?.trim();
         if name.is_empty() || scope.bindings.contains(name) {
