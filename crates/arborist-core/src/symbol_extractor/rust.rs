@@ -718,6 +718,14 @@ fn rust_tuple_or_unit_struct_value_type_path(
             Ok(rust_inline_module_struct_type_path(&components, hop))
         }
         "call_expression" => rust_tuple_struct_construction_type_path(value, hop),
+        "generic_function" => {
+            // A generic_function such as `Unit::<u8>` wraps the underlying unit-struct
+            // path in its `function` field; resolve it like a plain unit-struct value.
+            let Some(function) = value.child_by_field_name("function") else {
+                return Ok(None);
+            };
+            rust_tuple_or_unit_struct_value_type_path(function, hop)
+        }
         _ => Ok(None),
     }
 }
@@ -1199,9 +1207,19 @@ fn rust_struct_expression_type_components(
     let Some(type_node) = node.named_child(0) else {
         return Ok(None);
     };
+    // A generic_type_with_turbofish such as `Counter::<u8>` wraps the underlying
+    // type path in its `type` field; resolve it like a plain struct-literal path.
+    let type_node = if type_node.kind() == "generic_type_with_turbofish" {
+        let Some(inner) = type_node.child_by_field_name("type") else {
+            return Ok(None);
+        };
+        inner
+    } else {
+        type_node
+    };
     if !matches!(
         type_node.kind(),
-        "type_identifier" | "scoped_type_identifier"
+        "type_identifier" | "scoped_identifier" | "scoped_type_identifier"
     ) {
         return Ok(None);
     }
@@ -1319,6 +1337,16 @@ fn rust_tuple_struct_construction_type_path(
 ) -> Result<Option<String>> {
     let Some(function) = receiver.child_by_field_name("function") else {
         return Ok(None);
+    };
+    // A generic_function such as `Counter::<u8>` wraps the called path in its
+    // `function` field; resolve it like a plain tuple-struct construction.
+    let function = if function.kind() == "generic_function" {
+        let Some(inner) = function.child_by_field_name("function") else {
+            return Ok(None);
+        };
+        inner
+    } else {
+        function
     };
     match function.kind() {
         "identifier" => {

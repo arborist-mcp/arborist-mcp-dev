@@ -3577,3 +3577,42 @@ fn traces_rust_generic_function_turbofish_calls_in_live_workspace_and_persisted_
         ]
     );
 }
+#[test]
+fn traces_rust_turbofish_struct_tuple_and_unit_construction_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct RootCounter(u32);\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter(0) }\n    fn increment(&self) {}\n}\nmod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nfn caller() {\n    let c = RootCounter::<u8>(1);\n    c.increment();\n    RootCounter::<u8>(1).increment();\n    let u = api::Unit::<u8>;\n    u.run();\n    api::Counter::<u8>(1).increment();\n    let p = api::Plain::<u8> {};\n    p.step();\n    api::Plain::<u8> {}.step();\n    Unknown::<u8> {}.step();\n    Unknown::<u8>(1).increment();\n    let q = Unknown::<u8>;\n    q.run();\n}\n",
+    )
+    .unwrap();
+
+    let expected = [
+        "RootCounter::increment",
+        "api::Counter::increment",
+        "api::Plain::step",
+        "api::Unit::run",
+    ];
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+}
