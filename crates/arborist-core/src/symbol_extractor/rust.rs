@@ -768,7 +768,11 @@ fn rust_constructor_call_type_path(
         return Ok(None);
     }
     let spelling = node_text(function, source)?.trim();
-    let components = spelling.split("::").collect::<Vec<_>>();
+    let mut components = spelling.split("::").collect::<Vec<_>>();
+    // A turbofish generic segment such as `<u8>` between the type path and the
+    // constructor name is not part of the semantic type path, so drop it and
+    // resolve the surrounding path like a plain constructor call.
+    components.retain(|component| !component.starts_with('<'));
     match components.as_slice() {
         [type_name, constructor_name] => {
             if type_name.is_empty() || constructor_name.is_empty() {

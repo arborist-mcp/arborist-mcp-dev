@@ -1820,12 +1820,12 @@ fn keeps_rust_constructor_call_binding_method_calls_fail_closed_in_live_workspac
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn unknown_turbofish_constructor_caller() {\n    let c = Unknown::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
     )
     .unwrap();
 
     let forbidden_targets = [
-        ("turbofish_constructor_caller", "RootCounter::increment"),
+        ("unknown_turbofish_constructor_caller", "Unknown::increment"),
         ("unknown_type_constructor_caller", "Unknown::increment"),
         ("shadowed_constructor_caller", "RootCounter::increment"),
         ("shadowed_constructor_caller", "Other::increment"),
@@ -3387,4 +3387,43 @@ fn keeps_rust_self_and_super_rooted_receiver_type_paths_fail_closed_in_live_work
             "{caller} must fail closed for a self/super-rooted receiver type path from the persisted index"
         );
     }
+}
+
+#[test]
+fn traces_rust_turbofish_constructor_binding_method_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nmod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nfn caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n    let a = api::Counter::<u8>::new();\n    a.increment();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["RootCounter::increment", "api::Counter::increment"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["RootCounter::increment", "api::Counter::increment"]
+    );
 }
