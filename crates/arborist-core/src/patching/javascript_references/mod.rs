@@ -1,0 +1,433 @@
+mod scope;
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::Result;
+use tree_sitter::Node;
+
+use super::{ReferenceValidation, resolved_binding_decision, unresolved_binding_decision};
+use crate::deadline::DeadlineCheck;
+use crate::language::{ParsedDocument, node_text, normalize_path};
+use crate::model::{SymbolSummary, SymbolSummaryInit, ValidationBinding};
+use crate::semantic::javascript::{
+    javascript_parameters, javascript_return_type, javascript_semantic_path, javascript_signature,
+    javascript_symbol_name,
+};
+
+use scope::{JavaScriptBinding, scan_javascript_symbol_scope};
+
+/// Names that JavaScript/TypeScript make available without an explicit
+/// same-file declaration or import. They are intentionally not reported as
+/// unresolved so patched code can keep using standard library and host
+/// bindings without a visible local declaration.
+const JAVASCRIPT_PREDECLARED_NAMES: &[&str] = &[
+    "Array",
+    "ArrayBuffer",
+    "BigInt",
+    "BigInt64Array",
+    "BigUint64Array",
+    "Boolean",
+    "Buffer",
+    "DataView",
+    "Date",
+    "Error",
+    "EvalError",
+    "Float32Array",
+    "Float64Array",
+    "Function",
+    "Infinity",
+    "Int16Array",
+    "Int32Array",
+    "Int8Array",
+    "JSON",
+    "Map",
+    "Math",
+    "NaN",
+    "Number",
+    "Object",
+    "Promise",
+    "Proxy",
+    "RangeError",
+    "ReferenceError",
+    "Reflect",
+    "RegExp",
+    "Set",
+    "String",
+    "Symbol",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "Uint16Array",
+    "Uint32Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "WeakMap",
+    "WeakSet",
+    "__dirname",
+    "__filename",
+    "alert",
+    "clearInterval",
+    "clearTimeout",
+    "console",
+    "decodeURI",
+    "decodeURIComponent",
+    "document",
+    "encodeURI",
+    "encodeURIComponent",
+    "eval",
+    "exports",
+    "fetch",
+    "global",
+    "globalThis",
+    "isFinite",
+    "isNaN",
+    "localStorage",
+    "location",
+    "module",
+    "navigator",
+    "parseFloat",
+    "parseInt",
+    "process",
+    "queueMicrotask",
+    "require",
+    "sessionStorage",
+    "setInterval",
+    "setTimeout",
+    "structuredClone",
+    "undefined",
+    "window",
+];
+
+pub(crate) fn collect_javascript_reference_validation_with_deadline(
+    path: &Path,
+    document: &ParsedDocument,
+    source: &str,
+    symbol_node: Node<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<ReferenceValidation> {
+    let normalized_path = normalize_path(path);
+    let scope_scan = scan_javascript_symbol_scope(symbol_node, source, deadline)?;
+    let mut file_items = BTreeMap::new();
+    collect_javascript_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
+    let scope_path = javascript_symbol_scope_path(symbol_node, source)?;
+
+    let mut validation = ReferenceValidation::default();
+    for name in &scope_scan.local_references {
+        let Some(binding) = scope_scan
+            .local_bindings
+            .iter()
+            .find(|binding| &binding.name == name)
+        else {
+            continue;
+        };
+        let summary = javascript_local_symbol_summary(&normalized_path, &scope_path, binding);
+        validation
+            .binding_decisions
+            .push(resolved_binding_decision(name, &summary));
+        validation.resolved_identifiers.push(ValidationBinding {
+            name: name.clone(),
+            symbol: summary,
+        });
+    }
+    for name in &scope_scan.external_references {
+        if let Some(deadline) = deadline {
+            deadline.check("validating JavaScript references")?;
+        }
+        // A name that is also visible as a local binding anywhere in the symbol
+        // resolves locally; a reference site outside that binding's scope is
+        // conservatively treated as the same visible binding rather than being
+        // reported unresolved.
+        if scope_scan.local_references.contains(name) {
+            continue;
+        }
+        if JAVASCRIPT_PREDECLARED_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+        match file_items.get(name) {
+            Some(item) => {
+                let summary = javascript_item_symbol_summary(&normalized_path, source, item);
+                validation
+                    .binding_decisions
+                    .push(resolved_binding_decision(name, &summary));
+                validation.resolved_identifiers.push(ValidationBinding {
+                    name: name.clone(),
+                    symbol: summary,
+                });
+            }
+            None => {
+                validation
+                    .binding_decisions
+                    .push(unresolved_binding_decision(name));
+                validation.unresolved_identifiers.push(name.clone());
+            }
+        }
+    }
+    Ok(validation)
+}
+
+fn javascript_symbol_scope_path(symbol_node: Node<'_>, source: &str) -> Result<Option<String>> {
+    match javascript_symbol_name(symbol_node, source)? {
+        Some(name) => javascript_semantic_path(symbol_node, source, &name).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn javascript_local_symbol_summary(
+    normalized_path: &str,
+    scope_path: &Option<String>,
+    binding: &JavaScriptBinding,
+) -> SymbolSummary {
+    SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: format!(
+            "{}::javascript::{}::{}::{}",
+            normalized_path,
+            scope_path.as_deref().unwrap_or("<symbol>"),
+            binding.node_kind,
+            binding.name
+        ),
+        semantic_path: binding.name.clone(),
+        scope_path: scope_path.clone(),
+        file_path: normalized_path.to_string(),
+        node_kind: binding.node_kind.to_string(),
+        origin_type: "local_scope".to_string(),
+        byte_range: (binding.start_byte, binding.end_byte),
+        signature: None,
+        parameters: Vec::new(),
+        return_type: None,
+        docstring: None,
+    })
+}
+
+fn javascript_item_symbol_summary(
+    normalized_path: &str,
+    source: &str,
+    item: &JavaScriptFileItem<'_>,
+) -> SymbolSummary {
+    let is_function = matches!(
+        item.node_kind,
+        "function_declaration" | "generator_function_declaration"
+    );
+    SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: format!(
+            "{}::javascript::<module>::{}::{}",
+            normalized_path, item.node_kind, item.name
+        ),
+        semantic_path: item.name.clone(),
+        scope_path: None,
+        file_path: normalized_path.to_string(),
+        node_kind: item.node_kind.to_string(),
+        origin_type: item.origin_type.to_string(),
+        byte_range: (item.node.start_byte(), item.node.end_byte()),
+        signature: if is_function {
+            javascript_signature(item.node, source)
+        } else {
+            None
+        },
+        parameters: if is_function {
+            javascript_parameters(item.node, source)
+        } else {
+            Vec::new()
+        },
+        return_type: if is_function {
+            javascript_return_type(item.node, source)
+        } else {
+            None
+        },
+        docstring: None,
+    })
+}
+
+struct JavaScriptFileItem<'tree> {
+    name: String,
+    node_kind: &'static str,
+    node: Node<'tree>,
+    origin_type: &'static str,
+}
+
+fn collect_javascript_file_items<'tree>(
+    root: Node<'tree>,
+    source: &str,
+    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("scanning JavaScript file items")?;
+        }
+        match child.kind() {
+            "function_declaration"
+            | "generator_function_declaration"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "enum_declaration"
+            | "interface_declaration"
+            | "type_alias_declaration" => {
+                insert_javascript_declaration_item(child, source, child.kind(), items)?
+            }
+            "lexical_declaration" | "variable_declaration" => {
+                collect_javascript_top_level_declarator_names(child, source, items)?
+            }
+            "import_statement" => collect_javascript_import_names(child, source, items)?,
+            "export_statement" => collect_javascript_export_names(child, source, items)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn insert_javascript_declaration_item<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    node_kind: &'static str,
+    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+) -> Result<()> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(());
+    };
+    let name = node_text(name_node, source)?.trim().to_string();
+    if name.is_empty() {
+        return Ok(());
+    }
+    items.insert(
+        name.clone(),
+        JavaScriptFileItem {
+            name,
+            node_kind,
+            node,
+            origin_type: "module_scope",
+        },
+    );
+    Ok(())
+}
+
+fn collect_javascript_top_level_declarator_names<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for declarator in node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator")
+    {
+        let Some(name_node) = declarator.child_by_field_name("name") else {
+            continue;
+        };
+        if name_node.kind() != "identifier" {
+            continue;
+        }
+        let name = node_text(name_node, source)?.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        items.insert(
+            name.clone(),
+            JavaScriptFileItem {
+                name,
+                node_kind: "variable_declarator",
+                node: declarator,
+                origin_type: "module_scope",
+            },
+        );
+    }
+    Ok(())
+}
+
+fn collect_javascript_import_names<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+) -> Result<()> {
+    let mut pending = vec![node];
+    while let Some(current) = pending.pop() {
+        match current.kind() {
+            "namespace_import" => {
+                if let Some(name_node) = current.child_by_field_name("name") {
+                    let name = node_text(name_node, source)?.trim().to_string();
+                    if !name.is_empty() {
+                        items.insert(
+                            name.clone(),
+                            JavaScriptFileItem {
+                                name,
+                                node_kind: "namespace_import",
+                                node: current,
+                                origin_type: "imported_module",
+                            },
+                        );
+                    }
+                }
+            }
+            "import_specifier" => {
+                let name_node = current
+                    .child_by_field_name("alias")
+                    .or_else(|| current.child_by_field_name("name"));
+                if let Some(name_node) = name_node {
+                    let name = node_text(name_node, source)?.trim().to_string();
+                    if !name.is_empty() {
+                        items.insert(
+                            name.clone(),
+                            JavaScriptFileItem {
+                                name,
+                                node_kind: "import_specifier",
+                                node: current,
+                                origin_type: "imported_module",
+                            },
+                        );
+                    }
+                }
+            }
+            "identifier" => {
+                // A bare identifier under the import clause is the default
+                // import binding (`import def from "./module"`).
+                let name = node_text(current, source)?.trim().to_string();
+                if !name.is_empty() {
+                    items.insert(
+                        name.clone(),
+                        JavaScriptFileItem {
+                            name,
+                            node_kind: "default_import",
+                            node: current,
+                            origin_type: "imported_module",
+                        },
+                    );
+                }
+            }
+            _ => {
+                let mut children = current
+                    .named_children(&mut current.walk())
+                    .collect::<Vec<_>>();
+                children.reverse();
+                pending.extend(children);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_javascript_export_names<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "function_declaration"
+            | "generator_function_declaration"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "enum_declaration"
+            | "interface_declaration"
+            | "type_alias_declaration" => {
+                insert_javascript_declaration_item(child, source, child.kind(), items)?
+            }
+            "lexical_declaration" | "variable_declaration" => {
+                collect_javascript_top_level_declarator_names(child, source, items)?
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}

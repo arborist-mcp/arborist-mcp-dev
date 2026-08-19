@@ -140,3 +140,364 @@ fn rejects_invalid_typescript_replacements_without_writing_the_source_file() {
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), TYPESCRIPT_SOURCE);
 }
+
+#[test]
+fn validates_javascript_patch_bindings_for_params_locals_destructuring_and_imports() {
+    let source = r#"import { helper as h } from "./util";
+import other from "./other";
+const limit = 10;
+
+function pair() {
+    return { x: 1, y: 2 };
+}
+
+function compute(value, { a, b = 1 } = {}) {
+    const list = [1, 2, 3];
+    const total = h(value) + other(a) + limit + b;
+    return total;
+}
+"#;
+    let replacement = r#"function compute(value, { a, b = 1 } = {}) {
+    const list = [1, 2, 3];
+    const { x, y: renamed } = pair();
+    const mapped = list.map((item) => item * 2);
+    const total = h(value) + other(a) + limit + b + x + renamed + mapped.length;
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in [
+        "value", "a", "b", "list", "x", "renamed", "item", "mapped", "pair", "h", "other", "limit",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let h_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "h")
+        .unwrap();
+    assert_eq!(
+        h_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+    let limit_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "limit")
+        .unwrap();
+    assert_eq!(
+        limit_decision.candidates.first().unwrap().origin_type,
+        "module_scope"
+    );
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn rejects_javascript_patch_with_unresolved_identifier() {
+    let source = "function compute(value) {\n    return value + 1;\n}\n";
+    let replacement = "function compute(value) {\n    return missing(value);\n}";
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["missing"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn validates_javascript_scoped_loop_catch_and_arrow_bindings() {
+    let source = r#"function risky() {
+    return 0;
+}
+
+function log(value) {
+    return value;
+}
+
+function compute(list) {
+    let total = 0;
+    for (const item of list) {
+        total += item;
+    }
+    for (let i = 0; i < 3; i++) {
+        total += i;
+    }
+    try {
+        risky();
+    } catch (err) {
+        total += log(err);
+    }
+    list.forEach((entry, index) => {
+        total += entry + index;
+    });
+    const pairs = [[1, 2]];
+    for (const [head, ...tail] of pairs) {
+        total += head + tail.length;
+    }
+    return total;
+}
+"#;
+    let replacement = r#"function compute(list) {
+    let total = 0;
+    for (const item of list) {
+        total += item;
+    }
+    for (let i = 0; i < 3; i++) {
+        total += i;
+    }
+    try {
+        risky();
+    } catch (err) {
+        total += log(err);
+    }
+    list.forEach((entry, index) => {
+        total += entry + index;
+    });
+    const pairs = [[1, 2]];
+    for (const [head, ...tail] of pairs) {
+        total += head + tail.length;
+    }
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in [
+        "list", "total", "item", "i", "err", "entry", "index", "pairs", "head", "tail", "risky",
+        "log",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_ignores_member_names_keys_labels_and_types() {
+    let source = r#"interface Config {
+    label: string;
+}
+
+function outer() {
+    const config = { name: "x", value: 1 };
+    let total = 0;
+    loop: for (const key of ["a", "b"]) {
+        total += config.value + key.length;
+    }
+    return total;
+}
+"#;
+    let replacement = r#"function outer(): number {
+    const config = { name: "x", value: 1 };
+    const value: number = config.value;
+    let total = 0;
+    loop: for (const key of ["a", "b"]) {
+        total += value + key.length;
+    }
+    return total;
+}"#;
+    let result = patch_ast_node(Path::new("outer.ts"), source, "outer", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["config", "value", "key", "total"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn typescript_patch_binding_validation_resolves_class_fields_and_imports() {
+    let source = r#"import { helper } from "./util";
+const defaultCount = 5;
+
+class Counter {
+    private count: number = defaultCount;
+
+    constructor(private initial: number) {
+        this.count = initial;
+    }
+
+    increment(amount: number): number {
+        const bonus: number = amount + 1;
+        return this.count + bonus + helper(this.initial);
+    }
+}
+"#;
+    let replacement = r#"class Counter {
+    private count: number = defaultCount;
+
+    constructor(private initial: number) {
+        this.count = initial;
+    }
+
+    increment(amount: number): number {
+        const bonus: number = amount + 1;
+        return this.count + bonus + helper(this.initial);
+    }
+
+    doubled(): number {
+        const base = this.count + 1;
+        return helper(base) * 2;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("counter.ts"),
+        source,
+        "Counter",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["amount", "bonus", "base", "helper", "defaultCount"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let helper_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .unwrap();
+    assert_eq!(
+        helper_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_nested_function_declarations() {
+    let source = r#"function outer(value) {
+    function inner(input) {
+        return input + 1;
+    }
+    return inner(value);
+}
+"#;
+    let replacement = r#"function outer(value) {
+    function inner(input) {
+        return input + 1;
+    }
+    return inner(value) + outer(value - 1);
+}"#;
+    let result = patch_ast_node(Path::new("outer.js"), source, "outer", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["value", "inner", "input", "outer"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn tsx_patch_binding_validation_ignores_jsx_tag_and_attribute_names() {
+    let source = r#"function format(value: number): string {
+    return String(value);
+}
+
+export function App(props: { name: string }) {
+    const items = [1, 2];
+    return <main className="x">{items.map((item) => <span key={item}>{item}</span>)}</main>;
+}
+"#;
+    let replacement = r#"export function App(props: { name: string }) {
+    const items = [1, 2];
+    return <main className="x">{items.map((item) => <span key={item}>{format(item)}</span>)}</main>;
+}"#;
+    let result = patch_ast_node(Path::new("app.tsx"), source, "App", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["items", "item", "format"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}

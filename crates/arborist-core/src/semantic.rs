@@ -144,6 +144,15 @@ pub(crate) fn ascend_javascript_to_symbol(node: Node<'_>) -> Option<Node<'_>> {
         if javascript::is_javascript_symbol_node(candidate) {
             return Some(candidate);
         }
+        // An `export` statement wraps the exported declaration; descend into
+        // it so exported symbols still resolve to the inner declaration.
+        if candidate.kind() == "export_statement"
+            && let Some(declaration) = candidate
+                .named_children(&mut candidate.walk())
+                .find(|child| javascript::is_javascript_symbol_node(*child))
+        {
+            return Some(declaration);
+        }
         current = candidate.parent();
     }
 

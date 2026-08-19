@@ -4,6 +4,7 @@ mod commit_gate;
 pub(crate) mod csharp_references;
 pub(crate) mod go_references;
 pub(crate) mod java_references;
+pub(crate) mod javascript_references;
 pub(crate) mod kotlin_references;
 mod python_bindings;
 mod python_imports;
