@@ -1,7 +1,236 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::node_text;
+use super::{node_text, normalize_absolute_path, parse_document};
+
+pub(crate) fn csharp_local_file_dependency_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    let normalized_path = normalize_absolute_path(path)?;
+    let mut dependencies = BTreeSet::new();
+
+    for import in csharp_file_type_alias_imports(root, source)? {
+        dependencies.extend(csharp_type_source_paths(
+            path,
+            &import.semantic_type_path,
+            &normalized_path,
+        ));
+    }
+    for import in csharp_file_static_type_imports(root, source)? {
+        dependencies.extend(csharp_type_source_paths(
+            path,
+            &import.semantic_type_path,
+            &normalized_path,
+        ));
+    }
+    for base_type in csharp_file_base_types(root, source)? {
+        dependencies.extend(csharp_type_source_paths(
+            path,
+            &base_type.semantic_base_type_path,
+            &normalized_path,
+        ));
+    }
+    for interface_parent in csharp_file_interface_parents(root, source)? {
+        dependencies.extend(csharp_type_source_paths(
+            path,
+            &interface_parent.semantic_type_path,
+            &normalized_path,
+        ));
+    }
+    for import in csharp_file_namespace_imports(root, source)? {
+        dependencies.extend(csharp_namespace_source_paths(
+            path,
+            &import.semantic_namespace_path,
+            &normalized_path,
+        ));
+    }
+
+    Ok(dependencies)
+}
+
+fn csharp_type_source_paths(
+    path: &Path,
+    semantic_type_path: &str,
+    normalized_path: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut candidates = BTreeSet::new();
+    let segments = semantic_type_path.split("::").collect::<Vec<_>>();
+    if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
+        return candidates;
+    }
+
+    let Some(parent) = path.parent() else {
+        return candidates;
+    };
+    for entry in fs::read_dir(parent).ok().into_iter().flatten().flatten() {
+        let candidate = entry.path();
+        if !candidate
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cs"))
+        {
+            continue;
+        }
+        if csharp_candidate_declares_type(&candidate, semantic_type_path)
+            && let Ok(candidate) = normalize_absolute_path(&candidate)
+            && candidate != normalized_path
+        {
+            candidates.insert(candidate);
+        }
+    }
+
+    let mut source_root = parent.to_path_buf();
+    loop {
+        for prefix_len in (1..=segments.len()).rev() {
+            let mut candidate = source_root.clone();
+            for segment in &segments[..prefix_len] {
+                candidate.push(segment);
+            }
+            candidate.set_extension("cs");
+            if csharp_candidate_declares_type(&candidate, semantic_type_path)
+                && let Ok(candidate) = normalize_absolute_path(&candidate)
+                && candidate != normalized_path
+            {
+                candidates.insert(candidate);
+            }
+        }
+        if !source_root.pop() {
+            break;
+        }
+    }
+
+    candidates
+}
+
+fn csharp_namespace_source_paths(
+    path: &Path,
+    semantic_namespace_path: &str,
+    normalized_path: &Path,
+) -> BTreeSet<PathBuf> {
+    let mut candidates = BTreeSet::new();
+    let Some(parent) = path.parent() else {
+        return candidates;
+    };
+
+    // C# does not require a namespace to match a directory layout. Scan the
+    // importing file's directory and bounded namespace-directory candidates;
+    // this covers common source-root layouts without package-manager or
+    // recursive workspace discovery.
+    collect_csharp_namespace_directory(
+        parent,
+        semantic_namespace_path,
+        normalized_path,
+        &mut candidates,
+    );
+
+    let segments = semantic_namespace_path.split("::").collect::<Vec<_>>();
+    if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
+        return candidates;
+    }
+    let mut source_root = parent.to_path_buf();
+    loop {
+        let mut namespace_directory = source_root.clone();
+        for segment in &segments {
+            namespace_directory.push(segment);
+        }
+        collect_csharp_namespace_directory(
+            &namespace_directory,
+            semantic_namespace_path,
+            normalized_path,
+            &mut candidates,
+        );
+        if !source_root.pop() {
+            break;
+        }
+    }
+
+    candidates
+}
+
+fn collect_csharp_namespace_directory(
+    directory: &Path,
+    semantic_namespace_path: &str,
+    normalized_path: &Path,
+    candidates: &mut BTreeSet<PathBuf>,
+) {
+    let entries = fs::read_dir(directory).ok().into_iter().flatten();
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        if !candidate
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cs"))
+        {
+            continue;
+        }
+        if csharp_candidate_declares_namespace(&candidate, semantic_namespace_path)
+            && let Ok(candidate) = normalize_absolute_path(&candidate)
+            && candidate != normalized_path
+        {
+            candidates.insert(candidate);
+        }
+    }
+}
+
+fn csharp_candidate_declares_type(candidate: &Path, semantic_type_path: &str) -> bool {
+    let Ok(source) = fs::read_to_string(candidate) else {
+        return false;
+    };
+    let Ok(document) = parse_document(candidate, &source) else {
+        return false;
+    };
+    if document.tree.root_node().has_error() {
+        return false;
+    }
+    crate::semantic::csharp::build_csharp_skeleton(
+        candidate,
+        &source,
+        &document.tree,
+        usize::MAX,
+        &[],
+        None,
+    )
+    .ok()
+    .is_some_and(|skeleton| {
+        skeleton.available_paths.iter().any(|available_path| {
+            available_path == semantic_type_path
+                || available_path.starts_with(&format!("{semantic_type_path}::"))
+        })
+    })
+}
+
+fn csharp_candidate_declares_namespace(candidate: &Path, semantic_namespace_path: &str) -> bool {
+    let Ok(source) = fs::read_to_string(candidate) else {
+        return false;
+    };
+    let Ok(document) = parse_document(candidate, &source) else {
+        return false;
+    };
+    if document.tree.root_node().has_error() {
+        return false;
+    }
+    crate::semantic::csharp::build_csharp_skeleton(
+        candidate,
+        &source,
+        &document.tree,
+        usize::MAX,
+        &[],
+        None,
+    )
+    .ok()
+    .is_some_and(|skeleton| {
+        skeleton.available_paths.iter().any(|available_path| {
+            available_path == semantic_namespace_path
+                || available_path.starts_with(&format!("{semantic_namespace_path}::"))
+        })
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CSharpFileTypeAliasImport {
@@ -708,13 +937,16 @@ fn is_safe_csharp_identifier(identifier: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
         csharp_file_static_type_imports, csharp_file_type_alias_imports,
         csharp_global_namespace_imports, csharp_global_static_type_imports,
-        csharp_global_type_alias_imports,
+        csharp_global_type_alias_imports, csharp_local_file_dependency_paths,
     };
     use crate::language::parse_document;
 
@@ -1214,5 +1446,98 @@ class Caller {}
                 raw_enclosing_generic_argument_spellings: vec![vec![], vec![]],
             }]
         );
+    }
+    #[test]
+    fn resolves_csharp_local_dependencies_from_explicit_type_paths() {
+        let root = temporary_dir();
+        let source_path = root.join("src/Demo/App/Caller.cs");
+        let helper_path = root.join("src/Demo/Shared/Helper.cs");
+        let outer_path = root.join("src/Demo/Shared/Outer.cs");
+        let base_path = root.join("src/Demo/Shared/Base.cs");
+        let parent_path = root.join("src/Demo/Shared/IParent.cs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
+        fs::write(
+            &helper_path,
+            "namespace Demo.Shared; public static class Helper { public static void Ping() {} }\n",
+        )
+        .unwrap();
+        fs::write(
+            &outer_path,
+            "namespace Demo.Shared; public class Outer { public class Inner {} }\n",
+        )
+        .unwrap();
+        fs::write(&base_path, "namespace Demo.Shared; public class Base {}\n").unwrap();
+        fs::write(
+            &parent_path,
+            "namespace Demo.Shared; public interface IParent {}\n",
+        )
+        .unwrap();
+        let source = r#"
+using static Demo.Shared.Helper;
+using InnerAlias = Demo.Shared.Outer.Inner;
+namespace Demo.App;
+class Caller : Demo.Shared.Base { void Run() { Helper.Ping(); InnerAlias value = null; } }
+interface Child : Demo.Shared.IParent {}
+"#;
+        fs::write(&source_path, source).unwrap();
+        let document = parse_document(&source_path, source).unwrap();
+
+        let dependencies =
+            csharp_local_file_dependency_paths(&source_path, document.tree.root_node(), source)
+                .unwrap();
+
+        assert_eq!(
+            dependencies,
+            [helper_path, outer_path, base_path, parent_path]
+                .into_iter()
+                .collect()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_namespace_import_dependencies_from_a_bounded_source_root() {
+        let root = temporary_dir();
+        let source_path = root.join("src/Demo/App/Caller.cs");
+        let helper_path = root.join("src/Demo/Shared/Helper.cs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
+        fs::write(
+            &helper_path,
+            "namespace Demo.Shared; public static class Helper { public static void Ping() {} }\n",
+        )
+        .unwrap();
+        let source = r#"
+using Demo.Shared;
+namespace Demo.App;
+class Caller { void Run() { Helper.Ping(); } }
+"#;
+        fs::write(&source_path, source).unwrap();
+        let document = parse_document(&source_path, source).unwrap();
+
+        let dependencies =
+            csharp_local_file_dependency_paths(&source_path, document.tree.root_node(), source)
+                .unwrap();
+
+        assert_eq!(dependencies, [helper_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temporary_dir() -> PathBuf {
+        static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let suffix = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(format!("arborist-csharp-language-{suffix}"));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        directory
     }
 }

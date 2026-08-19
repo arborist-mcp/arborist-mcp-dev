@@ -511,11 +511,12 @@ static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "csharp-patch-targeting-v35",
+    analysis_revision: "csharp-file-dependencies-v36",
     grammar: csharp_grammar,
 };
 
@@ -1750,7 +1751,7 @@ impl LanguageAdapter for CSharpAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1759,8 +1760,8 @@ impl LanguageAdapter for CSharpAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::csharp_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

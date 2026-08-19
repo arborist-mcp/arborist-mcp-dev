@@ -338,8 +338,8 @@ fn refreshes_csharp_dependents_when_a_type_becomes_ambiguous() {
 
     fs::write(&competing, "namespace Demo; class Helper {}\n").unwrap();
     let stats = refresh_symbol_index_for_file(&dir, &db_path, &competing).unwrap();
-    assert_eq!(stats.rebuilt_files, 1);
-    assert_eq!(stats.reused_files, 2);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
 
     let ambiguous =
         trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
@@ -466,8 +466,8 @@ namespace Demo; class Caller { int Call(int value) => Ping(value); }
     )
     .unwrap();
     let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
-    assert_eq!(stats.rebuilt_files, 1);
-    assert_eq!(stats.reused_files, 1);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 0);
 
     let refreshed =
         trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)

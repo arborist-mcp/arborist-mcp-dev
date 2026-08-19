@@ -742,6 +742,7 @@ completed item can land in its own commit unless two changes are inseparable.
   adapter, proving changed source is reindexed without losing its semantic target.
 - [x] Add a reusable persisted-symbol stability contract for every registered
   adapter, proving unchanged rebuilds preserve public IDs and symbol source.
+- [x] Align C#'s declared file-dependency capability with bounded source-level extraction for explicit aliases/static imports, direct base/interface references, and same-directory namespace imports.
 
 ## Suggested Commit Sequence
 
