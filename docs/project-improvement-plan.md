@@ -740,6 +740,8 @@ completed item can land in its own commit unless two changes are inseparable.
   proving complex malformed input fails explicitly once its parse budget expires.
 - [x] Add a reusable incremental-refresh contract for every registered
   adapter, proving changed source is reindexed without losing its semantic target.
+- [x] Add a reusable persisted-symbol stability contract for every registered
+  adapter, proving unchanged rebuilds preserve public IDs and symbol source.
 
 ## Suggested Commit Sequence
 

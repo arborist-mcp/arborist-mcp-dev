@@ -1244,6 +1244,49 @@ fn indexed_symbols_are_reused_across_rebuilds_for_every_language() {
 }
 
 #[test]
+fn persisted_symbol_ids_remain_stable_across_unchanged_rebuilds_for_every_language() {
+    use crate::{read_symbol_from_index, rebuild_symbol_index};
+
+    for language_id in registered_languages() {
+        let dir = super::support::temporary_dir();
+        let path = dir.join(sample_path(language_id).file_name().unwrap());
+        let source = sample_source(language_id);
+        fs::write(&path, source).unwrap();
+        let semantic_target = semantic_target_for_patch_contract(language_id, &path, source);
+        let db_path = dir.join("symbols.db");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} initial index rebuild failed: {error}")
+        });
+        let first = read_symbol_from_index(&db_path, &semantic_target)
+            .unwrap_or_else(|error| panic!("{language_id:?} initial symbol read failed: {error}"));
+
+        let stats = rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} unchanged index rebuild failed: {error}")
+        });
+        assert_eq!(
+            stats.rebuilt_files, 0,
+            "{language_id:?} unchanged rebuild must reuse the indexed source"
+        );
+        assert_eq!(
+            stats.reused_files, 1,
+            "{language_id:?} unchanged rebuild must reuse exactly one source file"
+        );
+
+        let second = read_symbol_from_index(&db_path, &semantic_target)
+            .unwrap_or_else(|error| panic!("{language_id:?} reloaded symbol read failed: {error}"));
+        assert_eq!(
+            second.symbol.symbol_id, first.symbol.symbol_id,
+            "{language_id:?} unchanged rebuild must preserve the public symbol ID"
+        );
+        assert_eq!(
+            second.source, first.source,
+            "{language_id:?} unchanged rebuild must preserve the symbol source"
+        );
+    }
+}
+
+#[test]
 fn incremental_refresh_reindexes_changed_source_for_every_language() {
     use crate::{read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file};
 
