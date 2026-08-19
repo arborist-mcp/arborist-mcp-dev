@@ -54,7 +54,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   named default re-exports (`export { default } from "./module"`) through the terminal module's full CommonJS interop default,
   TypeScript `export = <callable>` / `export = require(...)` / `export = { ... }` export assignments,
   static local dependency refresh, structural patching, and
-  queries.
+  queries. Patch binding validation resolves identifier references inside a patched symbol to visible parameters (including destructured, default, rest, and TypeScript parameter-property bindings), local `const`/`let`/`var` declarators including destructured declarations, loop variables, catch parameters, nested callable parameters, same-file top-level declarations, or explicit named, default, and namespace imports, while member names, object keys, labels, JSX tag and attribute names, type spellings, and standard host/global names are ignored, and unknown bare identifiers fail closed.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing,
@@ -588,7 +588,10 @@ for response shapes, error behavior, and examples.
   chains and default exports, namespace-object calls that resolve CommonJS
   callable exports, star re-export chains for named imports, static
   local module dependency refresh, and structural patching with syntax-level
-  validation; language-specific reference-binding validation remains deferred.
+  validation, and patch binding validation that resolves identifier references inside a patched symbol to
+  visible parameters, local declarators, loop variables, catch parameters, same-file declarations, or explicit
+  imports while member names, keys, labels, JSX names, type spellings, and standard host/global names are
+  ignored and unknown bare identifiers fail closed.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
   It traces unshadowed bare direct calls to functions in the same source-file module, qualified direct
@@ -758,7 +761,7 @@ Remaining larger work includes:
   and aliased-import bindings.
 - Extending Kotlin trace resolution beyond conservative same-package, imported, and companion-object bindings,
   and extending Kotlin patch binding validation beyond local, same-file, import, and class-parameter bindings.
-- Language-specific JavaScript/TypeScript patch binding validation.
+- Extending JavaScript/TypeScript patch binding validation beyond local, same-file, and import bindings.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond overload-aware callable identities to
