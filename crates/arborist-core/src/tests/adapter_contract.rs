@@ -715,7 +715,7 @@ fn direct_and_unresolved_call_traces_match_live_and_persisted_indexes_for_tracea
         );
 
         let unresolved_source = unresolved_trace_contract_source(language_id);
-        fs::write(&path, &unresolved_source).unwrap();
+        fs::write(&path, unresolved_source).unwrap();
         let live_unresolved = trace_symbol_graph(&dir, &caller_target, TraceDirection::Both)
             .unwrap_or_else(|error| {
                 panic!("{language_id:?} unresolved live trace failed: {error}")
