@@ -4,8 +4,10 @@ use std::path::Path;
 
 use crate::language::{
     LanguageCapabilities, MAX_SOURCE_FILE_BYTES, builtin_language_registry, parse_document,
+    point_for_offset, position_from,
 };
 use crate::model::{LanguageId, TraceDirection};
+use crate::symbol_index_model::symbol_base_name_ref;
 
 /// Common adapter contract invariants (design doc §17.1).
 ///
@@ -374,6 +376,57 @@ fn semantic_target_for_symbol_base(
         .unwrap_or_else(|| panic!("{language_id:?} contract sample must expose {base_name}"))
 }
 
+fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => "def compute(value: int) -> int:\n    return value + len(\"é\")\n",
+        LanguageId::C | LanguageId::Cpp => {
+            "/* café */ int compute(int value) { return value + 1; }\n"
+        }
+        LanguageId::CSharp => {
+            "namespace Demo { public static class DemoClass { /* café */ public static int Compute(int value) => value + 1; } }\n"
+        }
+        LanguageId::JavaScript => {
+            "/* café */ export function compute(value) { return value + 1; }\n"
+        }
+        LanguageId::TypeScript => {
+            "/* café */ export function compute(value: number): number { return value + 1; }\n"
+        }
+        LanguageId::Tsx => {
+            "/* café */ export function compute(value: number) { return <div>{value}</div>; }\n"
+        }
+        LanguageId::Rust => "/* café */ pub fn compute(value: i32) -> i32 { value + 1 }\n",
+        LanguageId::Go => {
+            "package demo\n\n/* café */ func compute(value int) int { return value + 1 }\n"
+        }
+        LanguageId::Java => {
+            "/* café */ package demo; public final class Demo { public static int compute(int value) { return value + 1; } }\n"
+        }
+        LanguageId::Kotlin => {
+            "package demo\n\n/* café */ fun compute(value: Int): Int = value + 1\n"
+        }
+    }
+}
+
+fn utf8_position_contract_offset(language_id: LanguageId, source: &str) -> usize {
+    if language_id == LanguageId::Python {
+        source
+            .find("é")
+            .expect("Python UTF-8 fixture must contain é")
+            + "é".len()
+    } else {
+        source
+            .rfind(utf8_position_contract_symbol_base_name(language_id))
+            .expect("UTF-8 fixture must contain its symbol name")
+    }
+}
+
+fn utf8_position_contract_symbol_base_name(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::CSharp => "Compute",
+        _ => "compute",
+    }
+}
+
 fn semantic_target_for_patch_contract(
     language_id: LanguageId,
     path: &Path,
@@ -493,6 +546,63 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn utf8_positions_resolve_symbols_consistently_for_every_language() {
+    use crate::{
+        read_symbol_at_position, read_symbol_at_position_from_index, rebuild_symbol_index,
+    };
+
+    for language_id in registered_languages() {
+        let path = sample_path(language_id);
+        let source = utf8_position_contract_source(language_id);
+        let symbol_name = utf8_position_contract_symbol_base_name(language_id);
+        let symbol_offset = utf8_position_contract_offset(language_id, source);
+        let position = position_from(
+            point_for_offset(source, symbol_offset).unwrap_or_else(|error| {
+                panic!("{language_id:?} position conversion failed: {error}")
+            }),
+        );
+        let line_start = source[..symbol_offset]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        let line_prefix = &source[line_start..symbol_offset];
+        assert!(
+            position.column > line_prefix.chars().count(),
+            "{language_id:?} position must use UTF-8 byte columns: byte {}, chars {}",
+            position.column,
+            line_prefix.chars().count()
+        );
+
+        let dir = super::support::temporary_dir();
+        let file_path = dir.join(path.file_name().expect("sample path must have a file name"));
+        fs::write(&file_path, source).unwrap();
+        let live = read_symbol_at_position(&dir, &file_path, &position).unwrap_or_else(|error| {
+            panic!("{language_id:?} live UTF-8 position read failed: {error}")
+        });
+        assert_eq!(
+            symbol_base_name_ref(&live.symbol.semantic_path),
+            symbol_name,
+            "{language_id:?} live position read must resolve the expected symbol"
+        );
+
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path)
+            .unwrap_or_else(|error| panic!("{language_id:?} index rebuild failed: {error}"));
+        let persisted = read_symbol_at_position_from_index(&db_path, &file_path, &position)
+            .unwrap_or_else(|error| {
+                panic!("{language_id:?} persisted UTF-8 position read failed: {error}")
+            });
+        assert_eq!(
+            persisted.symbol.symbol_id, live.symbol.symbol_id,
+            "{language_id:?} live and persisted UTF-8 position reads must agree"
+        );
+        assert_eq!(
+            persisted.source, live.source,
+            "{language_id:?} live and persisted symbol source must agree"
+        );
     }
 }
 
