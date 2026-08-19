@@ -223,3 +223,272 @@ fn rejects_invalid_go_replacements_without_writing_the_source_file() {
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), GO_SOURCE);
 }
+
+#[test]
+fn validates_go_function_patch_bindings_for_locals_items_and_imports() {
+    let source = r#"package sample
+
+import "fmt"
+
+const LIMIT = 10
+
+func helper() int {
+	return 1
+}
+
+func compute(value int) int {
+	return value + 1
+}
+"#;
+
+    let replacement = r#"func compute(value int) int {
+	bonus := value + 1
+	total := helper() + LIMIT + bonus
+	fmt.Sprintf("%d", total)
+	return total
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["value", "bonus", "total", "helper", "LIMIT", "fmt"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let helper_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .unwrap();
+    assert!(
+        helper_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::go::<module>::function_declaration::helper")),
+        "{helper_decision:#?}"
+    );
+    let fmt_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "fmt")
+        .unwrap();
+    assert_eq!(
+        fmt_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+}
+
+#[test]
+fn rejects_go_function_patch_with_unresolved_identifier() {
+    let source = "package sample\n\nfunc compute(value int) int {\n\treturn value + 1\n}\n";
+    let replacement = "func compute(value int) int {\n\treturn missing(value)\n}";
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["missing"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rejects_go_function_patch_with_unresolved_receiver_and_short_var_initializer() {
+    let source = "package sample\n\nfunc compute(value int) int {\n\treturn value + 1\n}\n";
+    let replacement = r#"func compute(value int) int {
+	missing := value + 1
+	return missing + other.Count
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["other"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn go_patch_binding_validation_resolves_scoped_patterns_guards_and_closures() {
+    let source = "package sample\n\nfunc compute(values []int) int {\n\treturn len(values)\n}\n";
+    let replacement = r#"func compute(values []int) int {
+	total := 0
+	for i, value := range values {
+		_ = i
+		if doubled := value * 2; doubled > total {
+			total = doubled
+		}
+	}
+	apply := func(extra int) int {
+		return total + extra
+	}
+	switch tag := total; tag {
+	case 0:
+		_ = tag
+		return apply(1)
+	}
+	return apply(2)
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in [
+        "values", "total", "i", "value", "doubled", "extra", "tag", "apply",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn go_patch_binding_validation_resolves_method_bodies_without_member_checks() {
+    let source = r#"package sample
+
+type Counter struct {
+	count int
+}
+
+func (c *Counter) Increment() int {
+	c.count++
+	return c.count
+}
+"#;
+
+    let replacement = r#"func (c *Counter) Increment() int {
+	c.count += 2
+	return c.count
+}"#;
+    let result = patch_ast_node(
+        Path::new("counter.go"),
+        source,
+        "Counter::Increment",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "c" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn go_patch_binding_validation_ignores_type_annotations() {
+    let source = "package sample\n\nfunc compute(value int) int {\n\treturn value\n}\n";
+    let replacement = "func compute(value MissingType) MissingReturn {\n\treturn value\n}";
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .all(|decision| decision.name != "MissingType" && decision.name != "MissingReturn")
+    );
+}
+
+#[test]
+fn go_patch_binding_validation_resolves_and_rejects_const_and_var_item_references() {
+    let source = "package sample\n\nconst BASE = 10\n\nvar count = BASE\n\nfunc compute(value int) int {\n\treturn value + count\n}\n";
+    let allowed = patch_ast_node(
+        Path::new("sample.go"),
+        source,
+        "compute",
+        "func compute(value int) int {\n\treturn value + BASE + count\n}",
+        None,
+    )
+    .unwrap();
+    assert!(allowed.applied, "{allowed:#?}");
+    for name in ["BASE", "count"] {
+        assert!(
+            allowed
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {allowed:#?}"
+        );
+    }
+
+    let rejected = patch_ast_node(
+        Path::new("sample.go"),
+        source,
+        "compute",
+        "func compute(value int) int {\n\treturn value + BASE + MISSING\n}",
+        None,
+    )
+    .unwrap();
+    assert!(!rejected.applied, "{rejected:#?}");
+    assert_eq!(rejected.validation.unresolved_identifiers, vec!["MISSING"]);
+}
+
+#[test]
+fn go_patch_binding_validation_resolves_same_file_type_items_in_static_calls() {
+    let source = r#"package sample
+
+type Counter struct {
+	count int
+}
+
+func (c *Counter) Increment() int {
+	c.count++
+	return c.count
+}
+
+func compute(value int) int {
+	return value + 1
+}
+"#;
+
+    let replacement = "func compute(value int) int {\n\treturn Counter.Increment()\n}";
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    assert!(
+        result.validation.binding_decisions.iter().any(|decision| {
+            decision.name == "Counter"
+                && decision.status == "resolved"
+                && decision
+                    .selected_symbol_id
+                    .as_deref()
+                    .is_some_and(|id| id.contains("::go::<module>::type_spec::Counter"))
+        }),
+        "{result:#?}"
+    );
+}
