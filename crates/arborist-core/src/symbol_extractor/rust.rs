@@ -1441,8 +1441,15 @@ fn collect_direct_local_calls_from_node(
         return Ok(());
     }
     if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
+        && let Some(mut function) = node.child_by_field_name("function")
     {
+        if function.kind() == "generic_function"
+            && let Some(name) = function.child_by_field_name("function")
+        {
+            // A generic_function such as `api::helper::<u8>` wraps the underlying
+            // path in its `function` field; resolve it like a plain call.
+            function = name;
+        }
         if function.kind() == "identifier" {
             let name = node_text(function, context.hop.source)?.trim();
             if !name.is_empty() && !context.hop.bindings.contains(name) {

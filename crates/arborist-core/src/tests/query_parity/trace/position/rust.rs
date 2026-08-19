@@ -3528,3 +3528,52 @@ fn traces_rust_turbofish_static_calls_in_live_workspace_and_persisted_index() {
     actual.sort_unstable();
     assert_eq!(actual, ["RootCounter::new", "api::Counter::new"]);
 }
+
+#[test]
+fn traces_rust_generic_function_turbofish_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nmod api {\n    pub fn helper() {}\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n    }\n}\nfn local_helper() {}\nfn caller() {\n    api::helper::<u8>();\n    RootCounter::new::<u8>();\n    api::Counter::new::<u8>();\n    local_helper::<u8>();\n    Unknown::<u8>::new();\n    api::Missing::<u8>();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        [
+            "RootCounter::new",
+            "api::Counter::new",
+            "api::helper",
+            "local_helper"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        [
+            "RootCounter::new",
+            "api::Counter::new",
+            "api::helper",
+            "local_helper"
+        ]
+    );
+}
