@@ -292,3 +292,399 @@ fn rejects_invalid_kotlin_replacements_without_writing_the_source_file() {
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), KOTLIN_SOURCE);
 }
+
+#[test]
+fn validates_kotlin_method_patch_bindings_for_locals_fields_and_imports() {
+    let source = r#"package com.example
+
+import com.example.util.Helper
+import com.example.util.other
+
+class Counter(private val initial: Int) {
+    val label = "x"
+    var count: Int = 0
+
+    fun helper(): Int {
+        return 1
+    }
+
+    fun compute(amount: Int): Int {
+        val bonus = amount + 1
+        return initial + bonus
+    }
+}
+"#;
+
+    let replacement = r#"fun compute(amount: Int): Int {
+    val bonus = amount + 1
+    var total = helper() + initial + label.length + bonus + count
+    other(total)
+    Helper.help(total)
+    return total
+}"#;
+    let result = patch_ast_node(
+        Path::new("Counter.kt"),
+        source,
+        "com::example::Counter::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in [
+        "amount", "bonus", "total", "helper", "initial", "label", "count", "other", "Helper",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let helper_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .unwrap();
+    assert!(
+        helper_decision.selected_symbol_id.as_deref().is_some_and(
+            |id| id.contains("::kotlin::com::example::Counter::function_declaration::helper")
+        ),
+        "{helper_decision:#?}"
+    );
+    let initial_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "initial")
+        .unwrap();
+    assert!(
+        initial_decision.selected_symbol_id.as_deref().is_some_and(
+            |id| id.contains("::kotlin::com::example::Counter::class_parameter::initial")
+        ),
+        "{initial_decision:#?}"
+    );
+    let label_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "label")
+        .unwrap();
+    assert!(
+        label_decision.selected_symbol_id.as_deref().is_some_and(
+            |id| id.contains("::kotlin::com::example::Counter::property_declaration::label")
+        ),
+        "{label_decision:#?}"
+    );
+    let import_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "other")
+        .unwrap();
+    assert_eq!(
+        import_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+}
+
+#[test]
+fn rejects_kotlin_method_patch_with_unresolved_identifier() {
+    let source = "package com.example\n\nfun compute(value: Int): Int {\n    return value + 1\n}\n";
+    let replacement = "fun compute(value: Int): Int {\n    return missing(value)\n}";
+    let result = patch_ast_node(
+        Path::new("Compute.kt"),
+        source,
+        "com::example::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["missing"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rejects_kotlin_method_patch_with_unresolved_local_initializer() {
+    let source = "package com.example\n\nfun compute(value: Int): Int {\n    return value + 1\n}\n";
+    let replacement =
+        "fun compute(value: Int): Int {\n    val bonus = unknown + 1\n    return value + bonus\n}";
+    let result = patch_ast_node(
+        Path::new("Compute.kt"),
+        source,
+        "com::example::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["unknown"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "bonus" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn kotlin_patch_binding_validation_resolves_scoped_lambdas_loops_and_catches() {
+    let source = r#"package com.example
+
+fun pair(): Pair<Int, Int> = Pair(1, 2)
+
+fun risky(): Int = 0
+
+fun log(value: String) {
+    println(value)
+}
+
+fun topLevel(value: Int): Int {
+    val list = listOf(1, 2, 3)
+    val mapped = list.map { it * 2 }
+    list.forEach { item ->
+        print(item)
+    }
+    val (a, b) = pair()
+    for (i in 0 until value) {
+        println(i)
+    }
+    try {
+        risky()
+    } catch (e: Exception) {
+        log(e.message)
+    }
+    return mapped.size + a + b
+}
+"#;
+
+    let replacement = r#"fun topLevel(value: Int): Int {
+    val list = listOf(1, 2, 3)
+    val mapped = list.map { it * 2 }
+    list.forEach { item ->
+        print(item)
+    }
+    val (a, b) = pair()
+    for (i in 0 until value) {
+        println(i + a)
+    }
+    try {
+        risky()
+    } catch (e: Exception) {
+        log(e.message)
+    }
+    return mapped.size + b
+}"#;
+    let result = patch_ast_node(
+        Path::new("TopLevel.kt"),
+        source,
+        "com::example::topLevel",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["it", "item", "a", "b", "i", "e", "value", "list", "mapped"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    for name in ["pair", "risky", "log"] {
+        let decision = result
+            .validation
+            .binding_decisions
+            .iter()
+            .find(|decision| decision.name == name)
+            .unwrap();
+        assert!(
+            decision
+                .selected_symbol_id
+                .as_deref()
+                .is_some_and(|id| id.contains("::kotlin::com::example::function_declaration::")),
+            "{decision:#?}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_patch_binding_validation_ignores_type_annotations_and_member_names() {
+    let source = r#"package com.example
+
+import com.example.util.Helper
+
+class Counter(private val initial: Int) {
+    fun compute(amount: Int): String {
+        return Helper.help(initial.toString())
+    }
+}
+"#;
+
+    let replacement = r#"fun compute(amount: Int): String {
+    val text = amount.toString() + initial.toString()
+    val cast = amount as Int
+    val checked = amount is Int
+    val result = Helper.help(text)
+    return result
+}"#;
+    let result = patch_ast_node(
+        Path::new("Counter.kt"),
+        source,
+        "com::example::Counter::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+    for name in ["amount", "initial", "text", "result", "Helper"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_patch_binding_validation_resolves_class_level_field_references() {
+    let source = r#"package com.example
+
+class Counter(private val initial: Int) {
+    val label = "x"
+    var count: Int = 0
+
+    fun compute(amount: Int): Int {
+        return initial + count + label.length + amount
+    }
+}
+"#;
+
+    let replacement = r#"class Counter(private val initial: Int) {
+    val label = "x"
+    var count: Int = 0
+
+    fun compute(amount: Int): Int {
+        val total = initial + count + label.length + amount
+        return total
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("Counter.kt"),
+        source,
+        "com::example::Counter",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+    for name in ["initial", "label", "count", "amount", "total"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn kotlin_patch_binding_validation_resolves_same_file_items_in_bare_calls() {
+    let source = r#"package com.example
+
+object Registry {
+    fun register(value: String): String {
+        return value
+    }
+}
+
+fun topLevel(value: Int): Int {
+    return value * 2
+}
+"#;
+
+    let replacement = r#"fun register(value: String): String {
+    val doubled = topLevel(value.length)
+    return value + doubled.toString()
+}"#;
+    let result = patch_ast_node(
+        Path::new("Registry.kt"),
+        source,
+        "com::example::Registry::register",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+    let top_level_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "topLevel")
+        .unwrap();
+    assert!(
+        top_level_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::kotlin::com::example::function_declaration::topLevel")),
+        "{top_level_decision:#?}"
+    );
+}
+
+#[test]
+fn kotlin_patch_binding_validation_rejects_unknown_type_in_bare_call() {
+    let source = "package com.example\n\nfun compute(value: Int): Int {\n    return value + 1\n}\n";
+    let replacement = "fun compute(value: Int): Int {\n    return MissingFactory(value)\n}";
+    let result = patch_ast_node(
+        Path::new("Compute.kt"),
+        source,
+        "com::example::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["MissingFactory"]
+    );
+}
