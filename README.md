@@ -610,7 +610,7 @@ for response shapes, error behavior, and examples.
   closed. Constructor-call bindings such as `let c = Counter::new(); c.increment();` trace to a unique
   inherent `impl` method with that exact semantic path when the constructor is a same-file two-segment
   `Type::constructor` call with a plain, unimported, non-module struct name, while module-qualified,
-  turbofish, path-typed, imported, unknown, shadowed, or ambiguous constructor bindings fail closed.
+  path-typed, imported, unknown, shadowed, or ambiguous constructor bindings fail closed. Turbofish constructor-call bindings such as `let c = Counter::<u8>::new(); c.increment();` or `let c = api::Counter::<u8>::new(); c.increment();` also trace to a unique inherent `impl` method with that exact semantic path when the surrounding type path resolves to a plain same-file struct or an inline-module-qualified struct, while path-typed, imported, unknown, shadowed, or ambiguous constructor bindings fail closed.
   `self.`-rooted calls inside inherent `impl` methods such as `fn twice(&self) { self.increment(); }`
   trace to a unique inherent `impl` method on the impl's own type, and `Self::`-rooted static calls such
   as `Self::new()` inside inherent `impl` methods trace to a unique inherent/associated function on the
