@@ -165,7 +165,13 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   classes, nested/outer generic bases, and nearer nonmatching declarations fail closed. A generic direct base such as `Base<String>` or `com.base.Base<String>` is normalized to its simple or exact qualified base name without type-argument selection. A same-package or explicitly imported outer-qualified direct base such as `Outer.Base` is supported only when one local outer source file and one indexed nested `class_declaration` remain. Wildcard outer imports and broader nested/outer scope semantics beyond this direct source or explicit-import form remain unsupported. Imported targets require a
   unique static-method arity match. Wildcard imports, static wildcard imports, static field imports, missing or ambiguous
   imports, general interface dispatch with competing defaults or abstract declarations, branching or ambiguous interface-inheritance chains, superclass chains that are unresolved, ambiguous, cyclic, or declare the called method name, and broader member dispatch, instance/member dispatch other than explicit simple `super.method()` calls, inherited bare calls across unique local-source base chains, and overloaded-call selection fail closed.
-  Structural patching targets Java classes, interfaces, enums, records, annotation types, methods, constructors, and nested types by semantic path or source position with syntax-level validation; language-specific patch binding validation remains deferred.
+  Structural patching targets Java classes, interfaces, enums, records, annotation types, methods, constructors, and nested types by semantic path or source position with syntax-level validation; a further slice adds Java patch binding validation: identifier
+  references inside a patched symbol resolve to visible formal parameters, local declarators, `for` and
+  enhanced-`for` variables, catch parameters, try-with-resources variables, lambda parameters, pattern
+  variables, record components, same-file type, method, field, constant, and enum-constant
+  declarations, or explicit single-name imports, while type annotations, field and method names,
+  package-qualified type spellings, cast/instanceof/object-creation types, labels, annotation names,
+  wildcard imports, and predeclared Java names are ignored, and unknown bare identifiers fail closed.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

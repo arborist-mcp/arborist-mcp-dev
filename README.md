@@ -128,7 +128,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous
   classes, nested/outer generic bases, and nearer nonmatching declarations fail closed. A generic direct base such as `Base<String>` or `com.base.Base<String>` is normalized to its simple or exact qualified base name without type-argument selection. A same-package or explicitly imported outer-qualified direct base such as `Outer.Base` is supported only when one local outer source file and one indexed nested `class_declaration` remain. Wildcard outer imports and broader nested/outer scope semantics beyond this direct source or explicit-import form remain unsupported. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
   field imports, missing or ambiguous imports, general interface dispatch with competing defaults or abstract declarations, branching or ambiguous interface-inheritance chains, superclass chains that are unresolved, ambiguous, cyclic, or declare the called method name, and broader member dispatch, instance/member dispatch other than explicit simple `super.method()` calls, inherited bare calls across unique local-source base chains, overloaded-call
-  selection, and patch operations remain capability-gated.
+  selection remain capability-gated. Structural patching targets Java classes, interfaces, enums,
+  records, annotation types, methods, constructors, and nested types with syntax-level validation, and
+  patch binding validation resolves references to local bindings, same-file items, and explicit
+  single-name imports, failing closed on unknown bare identifiers.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -709,9 +712,15 @@ unique explicit local static-method imports only when no same-type method has th
 traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
 non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
 unchanged Java source files. A bare or explicit `this.` call in a class with no explicit `extends` clause, or with one uniquely resolved direct local superclass chain that declares no method of that name, and one or more uniquely resolved direct local interfaces, including lexical outer-scope interface references, also trace only when exactly one interface chain or branch provides a directly declared, uniquely arity-matched nonvarargs `default` method and every other chain or branch proves it has no declaration of that method. Imported trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
-general interface dispatch beyond that limited default-method case, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains remain deliberately capability-gated. Structural patching targets Java classes, interfaces,
-enums, records, annotation types, methods, constructors, and nested types by semantic path or source
-position with syntax-level validation; language-specific patch binding validation remains deferred.
+general interface dispatch beyond that limited default-method case, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains remain deliberately capability-gated. Structural patching targets Java classes, interfaces, enums, records, annotation types, methods,
+constructors, and nested types by semantic path or source position with syntax-level validation; patch
+binding validation resolves identifier references inside a patched symbol to visible formal parameters,
+local declarators, `for` and enhanced-`for` variables, catch parameters, try-with-resources variables,
+lambda parameters, pattern variables, record components, same-file type, method, field, constant, and
+enum-constant declarations, or explicit single-name imports, while type annotations, field and method
+names, package-qualified type spellings, cast/instanceof/object-creation types, labels, annotation
+names, wildcard imports, and predeclared Java names are ignored, and unknown bare identifiers fail
+closed.
 C# now contributes extension routing, raw Tree-sitter query execution, namespace-qualified semantic skeletons and declaration indexing
 for block and file-scoped namespaces, structural patch targeting with syntax-level validation, and conservative trace
 coverage for unqualified, `this.`, `base.`, `: this(...)`, static `Type.Method()`, alias/import, and root-level global-using
@@ -728,8 +737,7 @@ Remaining larger work includes:
 - Extending Go package/import trace resolution beyond direct local function calls, and extending Go
   patch binding validation beyond local, same-file, and import bindings.
 - Extending Java trace resolution beyond unique same-type calls and explicitly imported local static
-  methods, plus language-specific Java patch binding validation, only after dedicated fixtures
-  establish safe behavior.
+  methods, and extending Java patch binding validation beyond local, same-file, and import bindings.
 - Extending C# member dispatch and overload type selection beyond conservative same-type, `base.`, static,
   alias/import, and global-using bindings, plus language-specific C# patch binding validation, only after
   dedicated fixtures establish safe behavior.
