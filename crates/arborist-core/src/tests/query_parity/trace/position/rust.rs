@@ -1820,12 +1820,11 @@ fn keeps_rust_constructor_call_binding_method_calls_fail_closed_in_live_workspac
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn path_constructor_caller() {\n    let c = crate::api::Counter::new();\n    c.increment();\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn turbofish_constructor_caller() {\n    let c = RootCounter::<u8>::new();\n    c.increment();\n}\nfn unknown_type_constructor_caller() {\n    let c = Unknown::new();\n    c.increment();\n}\nfn shadowed_constructor_caller() {\n    let c = RootCounter::new();\n    let c = Other {};\n    c.increment();\n}\nfn missing_method_constructor_caller() {\n    let c = RootCounter::new();\n    c.missing();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
     )
     .unwrap();
 
     let forbidden_targets = [
-        ("path_constructor_caller", "api::Counter::increment"),
         ("turbofish_constructor_caller", "RootCounter::increment"),
         ("unknown_type_constructor_caller", "Unknown::increment"),
         ("shadowed_constructor_caller", "RootCounter::increment"),
@@ -3052,22 +3051,14 @@ fn keeps_rust_module_qualified_receiver_types_fail_closed_in_live_workspace_and_
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nfn unknown_module_parameter_caller(c: &outside::Counter) { c.increment(); }\nfn crate_qualified_parameter_caller(c: &crate::api::Counter) { c.increment(); }\nfn unknown_struct_constructor_caller() {\n    let c = api::Unknown::new();\n    c.increment();\n}\nfn crate_qualified_constructor_caller() {\n    let c = crate::api::Counter::new();\n    c.increment();\n}\nfn shadowed_module_constructor_caller(api: &Other) {\n    let c = api::Counter::new();\n    c.increment();\n}\nfn shadowed_module_tuple_caller() {\n    let api = Other {};\n    api::Counter(1).increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
+        "mod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n        pub fn increment(&self) {}\n    }\n}\nfn unknown_module_parameter_caller(c: &outside::Counter) { c.increment(); }\nfn unknown_struct_constructor_caller() {\n    let c = api::Unknown::new();\n    c.increment();\n}\nfn shadowed_module_constructor_caller(api: &Other) {\n    let c = api::Counter::new();\n    c.increment();\n}\nfn shadowed_module_tuple_caller() {\n    let api = Other {};\n    api::Counter(1).increment();\n}\nstruct Other {}\nimpl Other { fn increment(&self) {} }\n",
     )
     .unwrap();
 
     let forbidden_targets = [
         ("unknown_module_parameter_caller", "api::Counter::increment"),
         (
-            "crate_qualified_parameter_caller",
-            "api::Counter::increment",
-        ),
-        (
             "unknown_struct_constructor_caller",
-            "api::Counter::increment",
-        ),
-        (
-            "crate_qualified_constructor_caller",
             "api::Counter::increment",
         ),
         (
@@ -3280,6 +3271,120 @@ fn keeps_rust_self_rooted_receiver_type_paths_fail_closed_in_live_workspace_and_
         assert!(
             persisted.callees.is_empty(),
             "{caller} must fail closed for a Self-rooted receiver outside an impl from the persisted index"
+        );
+    }
+}
+
+#[test]
+fn traces_rust_crate_rooted_receiver_type_paths_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nstruct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nfn caller() {\n    let c = crate::api::Counter::new();\n    c.increment();\n    crate::api::Counter(1).increment();\n    let c2 = crate::api::Counter(1);\n    c2.increment();\n    crate::api::Unit.run();\n    let u = crate::api::Unit;\n    u.run();\n    crate::api::Plain {}.step();\n    let p = crate::api::Plain {};\n    p.step();\n    let r = crate::RootCounter::new();\n    r.increment();\n}\nmod outer {\n    pub fn caller() {\n        let c = crate::api::Counter::new();\n        c.increment();\n        crate::api::Counter(1).increment();\n        crate::api::Unit.run();\n        let p = crate::api::Plain {};\n        p.step();\n        let r = crate::RootCounter::new();\n        r.increment();\n    }\n}\nfn typed_caller(c: &crate::api::Counter, d: &mut crate::api::Counter, r: &crate::RootCounter) {\n    c.increment();\n    d.increment();\n    r.increment();\n}\n",
+    )
+    .unwrap();
+
+    let expected_caller = [
+        "RootCounter::increment",
+        "RootCounter::new",
+        "api::Counter::increment",
+        "api::Counter::new",
+        "api::Plain::step",
+        "api::Unit::run",
+    ];
+    for caller in ["caller", "outer::caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(live.indexed_files, 1);
+        let mut actual = live
+            .callees
+            .iter()
+            .map(|callee| callee.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(actual, expected_caller, "{caller} live callees");
+    }
+
+    let live = trace_symbol_graph(&dir, "typed_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["RootCounter::increment", "api::Counter::increment"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["caller", "outer::caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut actual = persisted
+            .callees
+            .iter()
+            .map(|callee| callee.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(actual, expected_caller, "{caller} persisted callees");
+    }
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "typed_caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual,
+        ["RootCounter::increment", "api::Counter::increment"]
+    );
+}
+
+#[test]
+fn keeps_rust_self_and_super_rooted_receiver_type_paths_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nmod outer {\n    pub mod api {\n        pub struct Counter(u32);\n        impl Counter {\n            pub fn new() -> Counter { Counter(0) }\n            pub fn increment(&self) {}\n        }\n        pub struct Unit;\n        impl Unit {\n            pub fn run(&self) {}\n        }\n        pub struct Plain {}\n        impl Plain {\n            pub fn step(&self) {}\n        }\n    }\n    pub fn self_rooted_typed_caller(c: &self::api::Counter) {\n        c.increment();\n    }\n    pub fn super_rooted_typed_caller(c: &super::api::Counter) {\n        c.increment();\n    }\n    pub fn self_rooted_tuple_caller() {\n        self::api::Counter(1).increment();\n    }\n    pub fn super_rooted_unit_caller() {\n        super::api::Unit.run();\n    }\n    pub fn self_rooted_struct_literal_caller() {\n        self::api::Plain {}.step();\n    }\n}\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "outer::self_rooted_typed_caller",
+        "outer::super_rooted_typed_caller",
+        "outer::self_rooted_tuple_caller",
+        "outer::super_rooted_unit_caller",
+        "outer::self_rooted_struct_literal_caller",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for a self/super-rooted receiver type path"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "outer::self_rooted_typed_caller",
+        "outer::super_rooted_typed_caller",
+        "outer::self_rooted_tuple_caller",
+        "outer::super_rooted_unit_caller",
+        "outer::self_rooted_struct_literal_caller",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for a self/super-rooted receiver type path from the persisted index"
         );
     }
 }

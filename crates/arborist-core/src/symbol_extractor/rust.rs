@@ -1236,17 +1236,27 @@ fn rust_inline_module_struct_type_path(
     components: &[String],
     scope: &RustCallHopScope<'_>,
 ) -> Option<String> {
-    if components.len() < 2 {
+    if components.is_empty() || components.iter().any(|component| component.is_empty()) {
         return None;
     }
-    let first = &components[0];
-    if first.is_empty()
-        || matches!(first.as_str(), "crate" | "self" | "super" | "Self")
-        || scope.bindings.contains(first)
-        || scope.receiver_types.contains_key(first)
-        || scope.local_functions.contains_key(first)
-        || scope.module_or_import_names.contains(first)
-        || components.iter().any(|component| component.is_empty())
+    if components[0] == "crate" {
+        // `crate::`-rooted paths resolve from the crate root regardless of the caller's module.
+        let rest = &components[1..];
+        if rest.is_empty() {
+            return None;
+        }
+        let full_path = rest.join("::");
+        return scope
+            .struct_type_paths
+            .contains(&full_path)
+            .then_some(full_path);
+    }
+    if components.len() < 2
+        || matches!(components[0].as_str(), "self" | "super" | "Self")
+        || scope.bindings.contains(&components[0])
+        || scope.receiver_types.contains_key(&components[0])
+        || scope.local_functions.contains_key(&components[0])
+        || scope.module_or_import_names.contains(&components[0])
     {
         return None;
     }
