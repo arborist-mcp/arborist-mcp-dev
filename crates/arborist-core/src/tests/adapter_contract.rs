@@ -1224,6 +1224,54 @@ fn indexed_symbols_are_reused_across_rebuilds_for_every_language() {
 }
 
 #[test]
+fn incremental_refresh_reindexes_changed_source_for_every_language() {
+    use crate::{read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file};
+
+    for language_id in registered_languages() {
+        let dir = super::support::temporary_dir();
+        let path = dir.join(sample_path(language_id).file_name().unwrap());
+        let source = sample_source(language_id);
+        let refreshed_source = overlay_source(language_id, source);
+        fs::write(&path, source).unwrap();
+
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} initial index rebuild failed: {error}")
+        });
+        let semantic_target = semantic_target_for_patch_contract(language_id, &path, source);
+
+        fs::write(&path, &refreshed_source).unwrap();
+        let stats = refresh_symbol_index_for_file(&dir, &db_path, &path)
+            .unwrap_or_else(|error| panic!("{language_id:?} incremental refresh failed: {error}"));
+        assert_eq!(
+            stats.indexed_files, 1,
+            "{language_id:?} refresh must retain the single indexed source file"
+        );
+        assert_eq!(
+            stats.rebuilt_files, 1,
+            "{language_id:?} refresh must rebuild the changed source file"
+        );
+        assert_eq!(
+            stats.reused_files, 0,
+            "{language_id:?} refresh must not reuse the changed source file"
+        );
+
+        let refreshed =
+            read_symbol_from_index(&db_path, &semantic_target).unwrap_or_else(|error| {
+                panic!("{language_id:?} refreshed symbol read failed: {error}")
+            });
+        assert_eq!(
+            refreshed.symbol.semantic_path, semantic_target,
+            "{language_id:?} refresh must preserve the semantic target"
+        );
+        assert!(
+            refreshed.source.contains("value + 2"),
+            "{language_id:?} refreshed symbol must expose the updated source: {refreshed:#?}"
+        );
+    }
+}
+
+#[test]
 fn symbol_extraction_respects_expired_deadlines_for_every_language() {
     use std::time::{Duration, Instant};
 
