@@ -191,6 +191,80 @@ fn sample_source(language_id: LanguageId) -> &'static str {
     }
 }
 
+fn patch_symbol_base_name(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::CSharp => "Compute",
+        _ => "compute",
+    }
+}
+
+fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => "def compute(value: int) -> int:\n    return value + 2\n",
+        LanguageId::C | LanguageId::Cpp => "int compute(int value) { return value + 2; }\n",
+        LanguageId::CSharp => "public static int Compute(int value) => value + 2;\n",
+        LanguageId::JavaScript => "export function compute(value) {\n    return value + 2;\n}\n",
+        LanguageId::TypeScript => {
+            "export function compute(value: number): number {\n    return value + 2;\n}\n"
+        }
+        LanguageId::Tsx => {
+            "export function compute(value: number) {\n    return <span>{value + 2}</span>;\n}\n"
+        }
+        LanguageId::Rust => "pub fn compute(value: i32) -> i32 {\n    value + 2\n}\n",
+        LanguageId::Go => "func compute(value int) int {\n\treturn value + 2\n}\n",
+        LanguageId::Java => {
+            "public static int compute(int value) {\n        return value + 2;\n    }\n"
+        }
+        LanguageId::Kotlin => "fun compute(value: Int): Int = value + 2\n",
+    }
+}
+
+fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => "def compute(value: int) -> int:\n    return missing(value)\n",
+        LanguageId::C | LanguageId::Cpp => "int compute(int value) { return missing(value); }\n",
+        LanguageId::CSharp => "public static int Compute(int value) => Missing(value);\n",
+        LanguageId::JavaScript => {
+            "export function compute(value) {\n    return missing(value);\n}\n"
+        }
+        LanguageId::TypeScript => {
+            "export function compute(value: number): number {\n    return missing(value);\n}\n"
+        }
+        LanguageId::Tsx => {
+            "export function compute(value: number) {\n    return <span>{missing(value)}</span>;\n}\n"
+        }
+        LanguageId::Rust => "pub fn compute(value: i32) -> i32 {\n    missing(value)\n}\n",
+        LanguageId::Go => "func compute(value int) int {\n\treturn missing(value)\n}\n",
+        LanguageId::Java => {
+            "public static int compute(int value) {\n        return missing(value);\n    }\n"
+        }
+        LanguageId::Kotlin => "fun compute(value: Int): Int = missing(value)\n",
+    }
+}
+
+fn semantic_target_for_patch_contract(
+    language_id: LanguageId,
+    path: &Path,
+    source: &str,
+) -> String {
+    use crate::symbol_extractor::index_symbols_from_document;
+
+    let document = parse_document(path, source).unwrap_or_else(|error| {
+        panic!("{language_id:?} patch-contract sample must parse: {error}")
+    });
+    index_symbols_from_document(path, source, &document)
+        .unwrap_or_else(|error| panic!("{language_id:?} patch-contract sample must index: {error}"))
+        .into_iter()
+        .find(|symbol| symbol.base_name == patch_symbol_base_name(language_id))
+        .map(|symbol| symbol.semantic_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "{language_id:?} patch-contract sample must expose {}",
+                patch_symbol_base_name(language_id)
+            )
+        })
+}
+
 #[test]
 fn every_language_builds_a_valid_semantic_skeleton() {
     use crate::semantic::get_semantic_skeleton_with_deadline;
@@ -297,6 +371,83 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn patch_previews_succeed_and_reject_unresolved_references_for_patchable_languages() {
+    use crate::{patch_ast_node, preview_patch_ast_node};
+
+    let registry = builtin_language_registry();
+    for language_id in registered_languages() {
+        let descriptor = registry
+            .descriptor(language_id)
+            .expect("every registered language must have a descriptor");
+        if !descriptor
+            .capabilities
+            .contains(LanguageCapabilities::PATCH_TARGETING)
+            || !descriptor
+                .capabilities
+                .contains(LanguageCapabilities::PATCH_VALIDATION)
+        {
+            continue;
+        }
+
+        let path = sample_path(language_id);
+        let source = sample_source(language_id);
+        let semantic_target = semantic_target_for_patch_contract(language_id, &path, source);
+
+        let preview = preview_patch_ast_node(
+            &path,
+            source,
+            &semantic_target,
+            successful_patch_replacement(language_id),
+            None,
+        )
+        .unwrap_or_else(|error| panic!("{language_id:?} patch preview must succeed: {error}"));
+        assert!(
+            preview.changed,
+            "{language_id:?} preview must produce a diff"
+        );
+        assert!(
+            !preview.unified_diff.is_empty(),
+            "{language_id:?} preview must include a unified diff"
+        );
+        assert!(
+            preview.patch.applied,
+            "{language_id:?} preview: {preview:#?}"
+        );
+        assert!(
+            preview.patch.validation.syntax_errors.is_empty(),
+            "{language_id:?} preview: {preview:#?}"
+        );
+        assert!(
+            preview.patch.validation.unresolved_identifiers.is_empty(),
+            "{language_id:?} preview: {preview:#?}"
+        );
+
+        let rejected = patch_ast_node(
+            &path,
+            source,
+            &semantic_target,
+            unresolved_reference_patch_replacement(language_id),
+            None,
+        )
+        .unwrap_or_else(|error| {
+            panic!("{language_id:?} rejected patch must return validation: {error}")
+        });
+        assert!(
+            !rejected.applied,
+            "{language_id:?} unresolved reference must reject the patch: {rejected:#?}"
+        );
+        assert!(
+            !rejected.validation.unresolved_identifiers.is_empty(),
+            "{language_id:?} rejected patch must report an unresolved reference: {rejected:#?}"
+        );
+        assert_eq!(
+            rejected.validation.commit_gate.status, "rejected",
+            "{language_id:?} unresolved reference must close the commit gate"
+        );
     }
 }
 

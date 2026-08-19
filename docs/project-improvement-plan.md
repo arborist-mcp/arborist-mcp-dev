@@ -720,6 +720,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Follow static local named re-export chains for direct calls with cycle
   detection and fail-closed unresolved targets; keep star/default/namespace
   resolution and patch flows capability-gated.
+- [x] Add a reusable patch-preview contract that exercises every adapter advertising
+  patch targeting and validation, covering successful previews and fail-closed
+  unresolved-reference rejection.
 
 ## Suggested Commit Sequence
 
