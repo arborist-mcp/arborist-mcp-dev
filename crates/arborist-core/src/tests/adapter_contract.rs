@@ -342,6 +342,37 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
     }
 }
 
+fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => "def caller(value: int) -> int:\n    return compute(value)\n",
+        LanguageId::C | LanguageId::Cpp => "int caller(int value) { return compute(value); }\n",
+        LanguageId::CSharp => {
+            "namespace Demo { public static class DemoClass { public static int Orchestrate(int value) => Compute(value); } }\n"
+        }
+        LanguageId::JavaScript => "export function caller(value) { return compute(value); }\n",
+        LanguageId::TypeScript => {
+            "export function caller(value: number): number { return compute(value); }\n"
+        }
+        LanguageId::Tsx => {
+            "export function caller(value: number) { return <div>{compute(value)}</div>; }\n"
+        }
+        LanguageId::Rust => "pub fn caller(value: i32) -> i32 { compute(value) }\n",
+        LanguageId::Go => "package demo\n\nfunc caller(value int) int { return compute(value) }\n",
+        LanguageId::Java => {
+            "package demo; public final class Demo { public static int caller(int value) { return compute(value); } }\n"
+        }
+        LanguageId::Kotlin => "package demo\n\nfun caller(value: Int): Int = compute(value)\n",
+    }
+}
+
+fn foreign_python_compute_source() -> &'static str {
+    "def compute(value: int) -> int:\n    return value + 1\n"
+}
+
+fn foreign_c_compute_source() -> &'static str {
+    "int compute(int value) { return value + 1; }\n"
+}
+
 fn trace_contract_symbol_base_name(language_id: LanguageId, caller: bool) -> &'static str {
     match (language_id, caller) {
         (LanguageId::CSharp, true) => "Orchestrate",
@@ -705,6 +736,68 @@ fn direct_and_unresolved_call_traces_match_live_and_persisted_indexes_for_tracea
         assert!(
             persisted_unresolved.callees.is_empty(),
             "{language_id:?} unresolved direct call must not create a persisted edge: {persisted_unresolved:#?}"
+        );
+    }
+}
+
+#[test]
+fn cross_language_references_fail_closed_for_traceable_languages() {
+    use crate::{rebuild_symbol_index, trace_symbol_graph, trace_symbol_graph_from_index};
+
+    for language_id in registered_languages() {
+        let descriptor = builtin_language_registry()
+            .descriptor(language_id)
+            .expect("every registered language must have a descriptor");
+        if !descriptor
+            .capabilities
+            .contains(LanguageCapabilities::REFERENCE_TRACE)
+        {
+            continue;
+        }
+
+        let dir = super::support::temporary_dir();
+        let path = dir.join(sample_path(language_id).file_name().unwrap());
+        let source = cross_language_trace_contract_source(language_id);
+        fs::write(&path, source).unwrap();
+
+        let foreign_path = if language_id == LanguageId::Python {
+            dir.join("foreign.c")
+        } else {
+            dir.join("foreign.py")
+        };
+        let foreign_source = if language_id == LanguageId::Python {
+            foreign_c_compute_source()
+        } else {
+            foreign_python_compute_source()
+        };
+        fs::write(&foreign_path, foreign_source).unwrap();
+
+        let caller_target = semantic_target_for_symbol_base(
+            language_id,
+            &path,
+            source,
+            trace_contract_symbol_base_name(language_id, true),
+        );
+        let live = trace_symbol_graph(&dir, &caller_target, TraceDirection::Both).unwrap_or_else(
+            |error| panic!("{language_id:?} cross-language live trace failed: {error}"),
+        );
+        assert!(
+            live.callees.is_empty(),
+            "{language_id:?} must not resolve a same-named foreign-language target: {live:#?}"
+        );
+
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} cross-language index rebuild failed: {error}")
+        });
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, &caller_target, TraceDirection::Both)
+                .unwrap_or_else(|error| {
+                    panic!("{language_id:?} cross-language persisted trace failed: {error}")
+                });
+        assert!(
+            persisted.callees.is_empty(),
+            "{language_id:?} persisted trace must not resolve a same-named foreign-language target: {persisted:#?}"
         );
     }
 }
