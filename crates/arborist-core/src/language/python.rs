@@ -26,41 +26,47 @@ fn collect_python_import_dependencies(
 ) -> Result<()> {
     match node.kind() {
         "import_statement" => {
-            let statement = node_text(node, source)?;
-            let Some(imports) = statement.trim().strip_prefix("import") else {
-                return Ok(());
-            };
-            for import in imports.split(',') {
-                let module_name = import
-                    .trim()
-                    .split_once(" as ")
-                    .map_or(import.trim(), |(module, _)| module.trim());
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                let module_node = match child.kind() {
+                    "aliased_import" => child.named_child(0),
+                    "dotted_name" | "identifier" => Some(child),
+                    _ => None,
+                };
+                let Some(module_node) = module_node else {
+                    continue;
+                };
+                let module_name = node_text(module_node, source)?.trim();
                 if let Some(candidate) = resolve_python_module_path(path, module_name) {
                     dependencies.insert(candidate);
                 }
             }
         }
         "import_from_statement" => {
-            let statement = node_text(node, source)?.trim();
-            if let Some((module_name, imported_names)) = statement
-                .strip_prefix("from ")
-                .and_then(|rest| rest.split_once(" import "))
-            {
-                let imported_names = imported_names.split(',');
-                for imported_name in imported_names {
-                    let imported_name = imported_name
-                        .trim()
-                        .split_once(" as ")
-                        .map_or(imported_name.trim(), |(name, _)| name.trim());
-                    if imported_name == "*" || imported_name.is_empty() {
-                        continue;
-                    }
-                    let joined_name = join_python_module_name(module_name.trim(), imported_name);
-                    let candidate = resolve_python_module_path(path, &joined_name)
-                        .or_else(|| resolve_python_module_path(path, module_name.trim()));
-                    if let Some(candidate) = candidate {
-                        dependencies.insert(candidate);
-                    }
+            let mut cursor = node.walk();
+            let named_children = node.named_children(&mut cursor).collect::<Vec<_>>();
+            let Some(module_node) = named_children.first().copied() else {
+                return Ok(());
+            };
+            let module_name = node_text(module_node, source)?.trim();
+            for child in named_children.into_iter().skip(1) {
+                let imported_node = match child.kind() {
+                    "aliased_import" => child.named_child(0),
+                    "dotted_name" | "identifier" => Some(child),
+                    _ => None,
+                };
+                let Some(imported_node) = imported_node else {
+                    continue;
+                };
+                let imported_name = node_text(imported_node, source)?.trim();
+                if imported_name == "*" || imported_name.is_empty() {
+                    continue;
+                }
+                let joined_name = join_python_module_name(module_name, imported_name);
+                let candidate = resolve_python_module_path(path, &joined_name)
+                    .or_else(|| resolve_python_module_path(path, module_name));
+                if let Some(candidate) = candidate {
+                    dependencies.insert(candidate);
                 }
             }
         }
@@ -172,7 +178,7 @@ mod tests {
         fs::write(&helper, "def helper(): pass\n").unwrap();
         fs::write(&package, "\n").unwrap();
         fs::write(&nested, "def value(): pass\n").unwrap();
-        let source = "import helper\nfrom . import helper\nfrom .subpkg import nested\n";
+        let source = "import helper as local_helper\nfrom . import helper as imported_helper\nfrom .subpkg import (\n    nested,\n)\n";
         fs::write(&caller, source).unwrap();
         let document = parse_document(&caller, source).unwrap();
 
