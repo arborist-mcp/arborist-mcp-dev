@@ -3410,7 +3410,7 @@ fn traces_rust_turbofish_constructor_binding_method_calls_in_live_workspace_and_
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["RootCounter::increment", "api::Counter::increment"]
+        ["RootCounter::increment", "RootCounter::new", "api::Counter::increment", "api::Counter::new"]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -3424,6 +3424,39 @@ fn traces_rust_turbofish_constructor_binding_method_calls_in_live_workspace_and_
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["RootCounter::increment", "api::Counter::increment"]
+        ["RootCounter::increment", "RootCounter::new", "api::Counter::increment", "api::Counter::new"]
     );
+}
+
+#[test]
+fn traces_rust_turbofish_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct RootCounter {}\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter {} }\n    fn increment(&self) {}\n}\nmod api {\n    pub struct Counter {}\n    impl Counter {\n        pub fn new() -> Counter { Counter {} }\n    }\n}\nfn caller() {\n    RootCounter::<u8>::new();\n    api::Counter::<u8>::new();\n    Unknown::<u8>::new();\n    api::Missing::<u8>::new();\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["RootCounter::new", "api::Counter::new"]);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["RootCounter::new", "api::Counter::new"]);
 }

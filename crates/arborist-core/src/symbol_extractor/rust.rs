@@ -1639,7 +1639,10 @@ fn rust_qualified_call_target_path(
     if spelling.is_empty() {
         return Ok(None);
     }
-    let components = spelling.split("::").collect::<Vec<_>>();
+    let components = spelling
+        .split("::")
+        .filter(|component| !component.starts_with('<'))
+        .collect::<Vec<_>>();
     if components.iter().any(|component| component.is_empty()) {
         return Ok(None);
     }
