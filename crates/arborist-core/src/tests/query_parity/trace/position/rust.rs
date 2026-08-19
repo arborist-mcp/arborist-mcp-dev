@@ -3347,44 +3347,102 @@ fn traces_rust_crate_rooted_receiver_type_paths_in_live_workspace_and_persisted_
 }
 
 #[test]
-fn keeps_rust_self_and_super_rooted_receiver_type_paths_fail_closed_in_live_workspace_and_persisted_index()
- {
+fn traces_rust_self_and_super_rooted_receiver_type_paths_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let root_path = dir.join("lib.rs");
     let db_path = dir.join("symbols.db");
     fs::write(
         &root_path,
-        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nmod outer {\n    pub mod api {\n        pub struct Counter(u32);\n        impl Counter {\n            pub fn new() -> Counter { Counter(0) }\n            pub fn increment(&self) {}\n        }\n        pub struct Unit;\n        impl Unit {\n            pub fn run(&self) {}\n        }\n        pub struct Plain {}\n        impl Plain {\n            pub fn step(&self) {}\n        }\n    }\n    pub fn self_rooted_typed_caller(c: &self::api::Counter) {\n        c.increment();\n    }\n    pub fn super_rooted_typed_caller(c: &super::api::Counter) {\n        c.increment();\n    }\n    pub fn self_rooted_tuple_caller() {\n        self::api::Counter(1).increment();\n    }\n    pub fn super_rooted_unit_caller() {\n        super::api::Unit.run();\n    }\n    pub fn self_rooted_struct_literal_caller() {\n        self::api::Plain {}.step();\n    }\n}\n",
+        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n    }\n}\nmod outer {\n    pub struct Root {}\n    impl Root {\n        pub fn new() -> Root { Root {} }\n        pub fn go(&self) {}\n    }\n    pub fn caller() {\n        let r = self::Root::new();\n        r.go();\n        let c = super::api::Counter::new();\n        c.increment();\n        super::api::Counter(1).increment();\n        super::api::Unit.run();\n        let p = super::api::Plain {};\n        p.step();\n    }\n    pub fn typed_caller(c: &super::api::Counter) {\n        c.increment();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let expected_caller = [
+        "api::Counter::increment",
+        "api::Counter::new",
+        "api::Plain::step",
+        "api::Unit::run",
+        "outer::Root::go",
+        "outer::Root::new",
+    ];
+    let live = trace_symbol_graph(&dir, "outer::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected_caller);
+
+    let live = trace_symbol_graph(&dir, "outer::typed_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "outer::caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected_caller);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "outer::typed_caller", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Counter::increment");
+}
+
+#[test]
+fn keeps_rust_super_beyond_crate_root_and_out_of_line_receiver_type_paths_fail_closed_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let outline_path = dir.join("outline.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod outline;\nfn super_beyond_crate_root_typed_caller(c: &super::api::Counter) {\n    c.increment();\n}\nfn super_beyond_crate_root_tuple_caller() {\n    super::api::Counter(1).increment();\n}\nfn out_of_line_qualified_typed_caller(c: &outline::Counter) {\n    c.increment();\n}\nfn out_of_line_qualified_tuple_caller() {\n    outline::Counter(1).increment();\n}\nfn out_of_line_qualified_unit_caller() {\n    let u = outline::Unit;\n    u.run();\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &outline_path,
+        "pub struct Counter(u32);\nimpl Counter {\n    pub fn increment(&self) {}\n}\npub struct Unit;\nimpl Unit {\n    pub fn run(&self) {}\n}\n",
     )
     .unwrap();
 
     for caller in [
-        "outer::self_rooted_typed_caller",
-        "outer::super_rooted_typed_caller",
-        "outer::self_rooted_tuple_caller",
-        "outer::super_rooted_unit_caller",
-        "outer::self_rooted_struct_literal_caller",
+        "super_beyond_crate_root_typed_caller",
+        "super_beyond_crate_root_tuple_caller",
+        "out_of_line_qualified_typed_caller",
+        "out_of_line_qualified_tuple_caller",
+        "out_of_line_qualified_unit_caller",
     ] {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert!(
             live.callees.is_empty(),
-            "{caller} must fail closed for a self/super-rooted receiver type path"
+            "{caller} must fail closed for an unsupported self/super/out-of-line receiver type path"
         );
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     for caller in [
-        "outer::self_rooted_typed_caller",
-        "outer::super_rooted_typed_caller",
-        "outer::self_rooted_tuple_caller",
-        "outer::super_rooted_unit_caller",
-        "outer::self_rooted_struct_literal_caller",
+        "super_beyond_crate_root_typed_caller",
+        "super_beyond_crate_root_tuple_caller",
+        "out_of_line_qualified_typed_caller",
+        "out_of_line_qualified_tuple_caller",
+        "out_of_line_qualified_unit_caller",
     ] {
         let persisted =
             trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
         assert!(
             persisted.callees.is_empty(),
-            "{caller} must fail closed for a self/super-rooted receiver type path from the persisted index"
+            "{caller} must fail closed for an unsupported self/super/out-of-line receiver type path from the persisted index"
         );
     }
 }
@@ -3410,7 +3468,12 @@ fn traces_rust_turbofish_constructor_binding_method_calls_in_live_workspace_and_
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["RootCounter::increment", "RootCounter::new", "api::Counter::increment", "api::Counter::new"]
+        [
+            "RootCounter::increment",
+            "RootCounter::new",
+            "api::Counter::increment",
+            "api::Counter::new"
+        ]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -3424,7 +3487,12 @@ fn traces_rust_turbofish_constructor_binding_method_calls_in_live_workspace_and_
     actual.sort_unstable();
     assert_eq!(
         actual,
-        ["RootCounter::increment", "RootCounter::new", "api::Counter::increment", "api::Counter::new"]
+        [
+            "RootCounter::increment",
+            "RootCounter::new",
+            "api::Counter::increment",
+            "api::Counter::new"
+        ]
     );
 }
 

@@ -1243,29 +1243,45 @@ fn rust_inline_module_struct_type_path(
     if components.is_empty() || components.iter().any(|component| component.is_empty()) {
         return None;
     }
-    if components[0] == "crate" {
-        // `crate::`-rooted paths resolve from the crate root regardless of the caller's module.
-        let rest = &components[1..];
-        if rest.is_empty() {
-            return None;
+    let mut path = scope.module_components.clone().unwrap_or_default();
+    let plain = !matches!(components[0].as_str(), "crate" | "self" | "super");
+    let rest = if plain {
+        components
+    } else {
+        match components[0].as_str() {
+            "crate" => {
+                // `crate::`-rooted paths resolve from the crate root regardless of the caller's module.
+                path.clear();
+                &components[1..]
+            }
+            "self" => &components[1..],
+            _ => {
+                // `super::`-rooted paths resolve from the caller's parent module chain.
+                let mut parent_count = 1;
+                while components.get(parent_count).map(String::as_str) == Some("super") {
+                    parent_count += 1;
+                }
+                if parent_count > path.len() {
+                    return None;
+                }
+                path.truncate(path.len() - parent_count);
+                &components[parent_count..]
+            }
         }
-        let full_path = rest.join("::");
-        return scope
-            .struct_type_paths
-            .contains(&full_path)
-            .then_some(full_path);
+    };
+    if rest.is_empty() {
+        return None;
     }
-    if components.len() < 2
-        || matches!(components[0].as_str(), "self" | "super" | "Self")
-        || scope.bindings.contains(&components[0])
-        || scope.receiver_types.contains_key(&components[0])
-        || scope.local_functions.contains_key(&components[0])
-        || scope.module_or_import_names.contains(&components[0])
+    if plain
+        && (rest.len() < 2
+            || scope.bindings.contains(&rest[0])
+            || scope.receiver_types.contains_key(&rest[0])
+            || scope.local_functions.contains_key(&rest[0])
+            || scope.module_or_import_names.contains(&rest[0]))
     {
         return None;
     }
-    let mut path = scope.module_components.clone().unwrap_or_default();
-    path.extend(components.iter().cloned());
+    path.extend(rest.iter().cloned());
     let full_path = path.join("::");
     scope
         .struct_type_paths
