@@ -72,7 +72,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   children use the same conservative parent/module chain. Malformed source, `#[path]` semantics,
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not
   indexed, and inline-module, Cargo, and import resolution beyond those exact bindings remains unavailable.
-  Patching remains explicitly unavailable.
+  Structural patching targets functions, methods, and declaration items with syntax-level validation, and
+  patch binding validation resolves references to local bindings, same-file items, and `use`-introduced
+  names, failing closed on unknown bare identifiers.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local
   receiver types, selected by semantic path or source position. Static imports strictly below the
@@ -624,8 +626,11 @@ for response shapes, error behavior, and examples.
   duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
   those exact bindings remains unavailable. Structural patching targets Rust functions, methods, and
-  declaration items by semantic path or source position with syntax-level validation; language-specific
-  patch binding validation remains deferred.
+  declaration items by semantic path or source position with syntax-level validation; patch binding
+  validation resolves identifier references inside a patched symbol to visible local parameters and
+  `let`, `for`, `match`, closure, or `if let` pattern bindings, same-file item declarations, or
+  `use`-introduced names, while type annotations, field and method names, path-qualified names, macro
+  invocations, and standard prelude names are ignored, and unknown bare identifiers fail closed.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
@@ -712,7 +717,7 @@ these capabilities.
 Remaining larger work includes:
 
 - Adding carefully-scoped Rust inline-module, Cargo, and import trace resolution beyond current
-  bindings, plus language-specific Rust patch binding validation.
+  bindings, and extending Rust patch binding validation beyond local, same-file, and `use` bindings.
 - Extending Go package/import trace resolution beyond direct local function calls, plus
   language-specific Go patch binding validation, only after dedicated fixtures establish safe
   behavior.

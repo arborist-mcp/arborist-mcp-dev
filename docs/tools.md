@@ -99,7 +99,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not indexed, and inline-module, Cargo,
   and import resolution beyond those exact bindings remains unavailable. Structural patching targets Rust
   functions, methods, and declaration items by semantic path or source position with syntax-level
-  validation; language-specific patch binding validation remains deferred.
+  validation; identifier references inside a patched symbol resolve to visible local parameters and `let`,
+  `for`, `match`, closure, or `if let` pattern bindings, same-file item declarations, or `use`-introduced names,
+  while type annotations, field and method names, path-qualified names, macro invocations, and standard prelude
+  names are ignored, and unknown bare identifiers fail closed.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
