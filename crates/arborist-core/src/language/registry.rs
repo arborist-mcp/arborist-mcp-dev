@@ -1712,14 +1712,19 @@ impl LanguageAdapter for CSharpAdapter {
 
     fn collect_patch_reference_validation(
         &self,
-        _path: &Path,
-        _document: &ParsedDocument,
-        _source: &str,
-        _symbol_node: Node<'_>,
-        _deadline: Option<&dyn DeadlineCheck>,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        // C# patch binding validation is deferred; the first slice validates syntax only.
-        Ok(crate::patching::ReferenceValidation::default())
+        crate::patching::csharp_references::collect_csharp_reference_validation_with_deadline(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
+        )
     }
 
     fn query_capture_owner(

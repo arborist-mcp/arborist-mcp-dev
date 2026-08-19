@@ -143,9 +143,16 @@ fn patches_csharp_classes_constructors_nested_types_and_attributes() {
     [Serializable]
     public class Outer {
         public class Inner {
-            public Inner(int value) {}
+            private int value;
+
+            public Inner(int value) {
+                this.value = value;
+            }
+
             public int Value() => value;
         }
+
+        public void Initialize() {}
 
         public Outer() {}
     }
@@ -155,7 +162,7 @@ fn patches_csharp_classes_constructors_nested_types_and_attributes() {
         Path::new("Nested.cs"),
         source,
         "Demo::Core::Outer::Inner",
-        "public class Inner {\n            public Inner(int value) {}\n            public int Value() => value;\n            public int Double() => value * 2;\n        }",
+        "public class Inner {\n            private int value;\n\n            public Inner(int value) {\n                this.value = value;\n            }\n\n            public int Value() => value;\n            public int Double() => value * 2;\n        }",
         None,
     )
     .unwrap();
@@ -192,7 +199,7 @@ fn patches_csharp_classes_constructors_nested_types_and_attributes() {
         Path::new("Nested.cs"),
         source,
         "Demo::Core::Outer",
-        "[Serializable]\n    public class Outer {\n        public class Inner {\n            public Inner(int value) {}\n            public int Value() => value;\n        }\n\n        public Outer() {}\n    }",
+        "[Serializable]\n    public class Outer {\n        public class Inner {\n            private int value;\n\n            public Inner(int value) {\n                this.value = value;\n            }\n\n            public int Value() => value;\n        }\n\n        public void Initialize() {}\n\n        public Outer() {}\n    }",
         None,
     )
     .unwrap();
@@ -307,4 +314,471 @@ fn rejects_invalid_csharp_replacements_without_writing_the_source_file() {
     assert!(!result.applied);
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), CSHARP_SOURCE);
+}
+
+#[test]
+fn validates_csharp_method_patch_bindings_for_locals_fields_and_imports() {
+    let source = r#"using System;
+using Alias = Demo.Tools.Toolbox;
+
+namespace Demo.Core {
+    public class Counter {
+        private const int LIMIT = 10;
+
+        public static int Helper() {
+            return 1;
+        }
+
+        public int Compute(int value) {
+            return value + 1;
+        }
+    }
+}
+
+namespace Demo.Tools {
+    public class Toolbox {
+    }
+}
+"#;
+
+    let replacement = r#"public int Compute(int value) {
+    int bonus = value + 1;
+    int total = Helper() + LIMIT + bonus;
+    Helper().ToString();
+    Alias.Go();
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in ["value", "bonus", "total", "Helper", "LIMIT"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let helper_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Helper")
+        .unwrap();
+    assert!(
+        helper_decision.selected_symbol_id.as_deref().is_some_and(
+            |id| id.contains("::csharp::Demo::Core::Counter::method_declaration::Helper")
+        ),
+        "{helper_decision:#?}"
+    );
+    let limit_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "LIMIT")
+        .unwrap();
+    assert!(
+        limit_decision.selected_symbol_id.as_deref().is_some_and(
+            |id| id.contains("::csharp::Demo::Core::Counter::field_declaration::LIMIT")
+        ),
+        "{limit_decision:#?}"
+    );
+    let alias_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Alias")
+        .unwrap();
+    assert_eq!(alias_decision.status, "resolved");
+    assert_eq!(
+        alias_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+}
+
+#[test]
+fn rejects_csharp_method_patch_with_unresolved_identifier() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value + 1;
+        }
+    }
+}
+"#;
+    let replacement = r#"public int Compute(int value) {
+    return missing(value);
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["missing"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rejects_csharp_method_patch_with_unresolved_receiver() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value + 1;
+        }
+    }
+}
+"#;
+    let replacement = r#"public int Compute(int value) {
+    int missing = value + 1;
+    return missing + other.count;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["other"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn csharp_patch_binding_validation_resolves_scoped_patterns_and_closures() {
+    let source = r#"using System;
+using System.Collections.Generic;
+
+namespace Demo.Core {
+    public class Counter {
+        public int Compute(List<int> values) {
+            return values.Count;
+        }
+
+        private System.IO.Stream Open() {
+            return null;
+        }
+    }
+}
+"#;
+
+    let replacement = r#"public int Compute(List<int> values) {
+    int total = 0;
+    for (int i = 0; i < values.Count; i++) {
+        total += values[i];
+    }
+    foreach (int value in values) {
+        total += value;
+    }
+    if (values is List<int> list) {
+        total += list.Count;
+    }
+    using (var resource = Open()) {
+        total += resource.Length;
+    }
+    try {
+        total += values[0];
+    } catch (InvalidOperationException ex) {
+        total += ex.Message.Length;
+    }
+    Func<int, int> apply = (extra) => extra + total;
+    switch (total) {
+        case int n when n > 0:
+            total += n;
+            break;
+        default:
+            total += 1;
+            break;
+    }
+    int parsed = int.Parse("1");
+    int.TryParse("2", out int parsed2);
+    total += parsed + parsed2;
+    int Doubled(int amount) => amount * 2;
+    total += Doubled(total);
+    total += apply(1);
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in [
+        "values", "total", "i", "value", "list", "resource", "Open", "ex", "apply", "extra", "n",
+        "parsed", "parsed2", "Doubled", "amount",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn csharp_patch_binding_validation_ignores_types_members_and_constructors() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+    }
+
+    public class Widget {
+        public Widget(int value) {}
+
+        public static int Total() {
+            return 1;
+        }
+    }
+}
+"#;
+
+    let replacement = r#"public int Compute(int value) {
+    Widget item = new Widget(value);
+    Counter.Total();
+    Widget.Total();
+    MissingType.Go();
+    int total = (int)value;
+    object box = value as object;
+    if (box is Point p) {
+        total += p.X;
+    }
+    string name = nameof(Widget);
+    System.Type type = typeof(Widget);
+    int size = sizeof(int);
+    return total + name.Length;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["MissingType"]
+    );
+    // Member names, labels, type spellings, and `nameof`/`typeof`/`sizeof`
+    // arguments are never reported as value references.
+    for skipped in ["Total", "Length", "X", "int", "object", "Point"] {
+        assert!(
+            !result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == skipped),
+            "expected no decision for `{skipped}`: {result:#?}"
+        );
+    }
+    // Receiver types and local values still resolve normally.
+    for name in ["value", "box", "name", "p", "Widget", "Counter"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn csharp_patch_binding_validation_resolves_class_level_field_references() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        private const int LIMIT = 10;
+        private int total = LIMIT + 1;
+
+        public int Compute(int value) {
+            return value + total;
+        }
+    }
+}
+"#;
+
+    let replacement = r#"public class Counter {
+    private const int LIMIT = 10;
+    private int total = LIMIT + 2;
+    private int doubled = total * 2;
+
+    public int Compute(int value) {
+        return value + doubled;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["LIMIT", "total", "doubled"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn csharp_patch_binding_validation_resolves_same_file_type_items_in_static_calls() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public static int Next(int value) {
+            return value + 1;
+        }
+
+        public int Compute(int value) {
+            return value;
+        }
+    }
+}
+"#;
+
+    let replacement = r#"public int Compute(int value) {
+    Counter.Next(value);
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let counter_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Counter")
+        .expect("expected a decision for Counter: {result:#?}");
+    assert_eq!(counter_decision.status, "resolved");
+    assert!(
+        counter_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::csharp::Demo::Core::class_declaration::Counter")),
+        "{counter_decision:#?}"
+    );
+}
+
+#[test]
+fn csharp_patch_binding_validation_rejects_unknown_type_in_static_call() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+    }
+}
+"#;
+    let replacement = r#"public int Compute(int value) {
+    MissingType.Run();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["MissingType"]
+    );
+}
+
+#[test]
+fn csharp_patch_binding_validation_resolves_record_components() {
+    let source = r#"namespace Demo.Core {
+    public record Entry(string Name) {
+        public int Sum(int other) {
+            return other + Name.Length;
+        }
+    }
+}
+"#;
+
+    let replacement = r#"public int Sum(int other) {
+    return Name.Length + other;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Entry.cs"),
+        source,
+        "Demo::Core::Entry::Sum",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["Name", "other"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
 }
