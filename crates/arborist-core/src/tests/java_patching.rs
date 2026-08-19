@@ -276,3 +276,391 @@ fn rejects_invalid_java_replacements_without_writing_the_source_file() {
     assert!(!result.validation.syntax_errors.is_empty());
     assert_eq!(fs::read_to_string(&path).unwrap(), JAVA_SOURCE);
 }
+
+#[test]
+fn validates_java_method_patch_bindings_for_locals_fields_and_imports() {
+    let source = r#"package com.example;
+
+import java.util.Formatter;
+import static java.util.Objects.requireNonNull;
+
+public class Main {
+    private static final int LIMIT = 10;
+
+    public static int helper() {
+        return 1;
+    }
+
+    public int compute(int value) {
+        return value + 1;
+    }
+}
+"#;
+
+    let replacement = r#"public int compute(int value) {
+    int bonus = value + 1;
+    int total = helper() + LIMIT + bonus;
+    requireNonNull(total);
+    Formatter fmt = new Formatter();
+    fmt.format("%d", total);
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    for name in [
+        "value",
+        "bonus",
+        "total",
+        "helper",
+        "LIMIT",
+        "fmt",
+        "requireNonNull",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+    let helper_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .unwrap();
+    assert!(
+        helper_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::java::com::example::Main::method_declaration::helper")),
+        "{helper_decision:#?}"
+    );
+    let limit_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "LIMIT")
+        .unwrap();
+    assert!(
+        limit_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::java::com::example::Main::field_declaration::LIMIT")),
+        "{limit_decision:#?}"
+    );
+    let import_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "requireNonNull")
+        .unwrap();
+    assert_eq!(
+        import_decision.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+}
+
+#[test]
+fn rejects_java_method_patch_with_unresolved_identifier() {
+    let source = "package com.example;\n\npublic class Main {\n    public int compute(int value) {\n        return value + 1;\n    }\n}\n";
+    let replacement = "public int compute(int value) {\n        return missing(value);\n    }";
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["missing"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "value" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn rejects_java_method_patch_with_unresolved_receiver_and_local_initializer() {
+    let source = "package com.example;\n\npublic class Main {\n    public int compute(int value) {\n        return value + 1;\n    }\n}\n";
+    let replacement = r#"public int compute(int value) {
+    int missing = value + 1;
+    return missing + other.count;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["other"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing" && decision.status == "resolved")
+    );
+}
+
+#[test]
+fn java_patch_binding_validation_resolves_scoped_patterns_and_closures() {
+    let source = r#"package com.example;
+
+import java.util.List;
+
+public class Main {
+    private java.io.InputStream open() {
+        return null;
+    }
+
+    public int compute(List<Integer> values) {
+        return values.size();
+    }
+}
+"#;
+
+    let replacement = r#"public int compute(List<Integer> values) {
+    int total = 0;
+    for (int i = 0; i < values.size(); i++) {
+        total += values.get(i);
+    }
+    for (Integer value : values) {
+        total += value;
+    }
+    if (values instanceof java.util.ArrayList list) {
+        total += list.size();
+    }
+    try (var resource = open()) {
+        total += resource.hashCode();
+    } catch (java.io.IOException ex) {
+        total += ex.getMessage().length();
+    }
+    java.util.function.Function<Integer, Integer> apply = (extra) -> extra + total;
+    switch (total) {
+        case 0 -> total = values.size();
+        default -> total = total + 1;
+    }
+    total += apply.apply(1);
+    return total;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in [
+        "values", "total", "i", "value", "list", "resource", "ex", "apply", "extra", "open",
+    ] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn java_patch_binding_validation_ignores_type_annotations_and_member_names() {
+    let source = "package com.example;\n\npublic class Main {\n    public int add(int left, int right) {\n        return left + right;\n    }\n}\n";
+    let replacement = r#"public MissingReturn compute(MissingType value, Helper obj) {
+    obj.missingMethod();
+    return (MissingReturn) value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::add",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(result.validation.binding_decisions.iter().all(|decision| {
+        !["MissingType", "MissingReturn", "Helper", "missingMethod"]
+            .contains(&decision.name.as_str())
+    }));
+}
+
+#[test]
+fn java_patch_binding_validation_resolves_class_level_field_references() {
+    let source = r#"package com.example;
+
+public class Main {
+    private static final int BASE = 10;
+    private int total = BASE + 1;
+
+    public int compute(int value) {
+        return value + total;
+    }
+}
+"#;
+
+    let replacement = r#"public class Main {
+    private static final int BASE = 10;
+    private int total = BASE + 2;
+    private int doubled = total * 2;
+
+    public int compute(int value) {
+        return value + doubled;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["BASE", "total", "doubled"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
+fn java_patch_binding_validation_resolves_same_file_type_items_in_static_calls() {
+    let source = r#"package com.example;
+
+class Counter {
+    public static int increment() {
+        return 1;
+    }
+}
+
+public class Main {
+    public int compute(int value) {
+        return value;
+    }
+}
+"#;
+
+    let replacement = r#"public int compute(int value) {
+    Counter.increment();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let counter_decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Counter")
+        .expect("expected a decision for Counter: {result:#?}");
+    assert_eq!(counter_decision.status, "resolved");
+    assert!(
+        counter_decision
+            .selected_symbol_id
+            .as_deref()
+            .is_some_and(|id| id.contains("::java::com::example::class_declaration::Counter")),
+        "{counter_decision:#?}"
+    );
+}
+
+#[test]
+fn java_patch_binding_validation_rejects_unknown_type_in_static_call() {
+    let source = "package com.example;\n\npublic class Main {\n    public int compute(int value) {\n        return value;\n    }\n}\n";
+    let replacement = r#"public int compute(int value) {
+    MissingType.staticMethod();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["MissingType"]
+    );
+}
+
+#[test]
+fn java_patch_binding_validation_resolves_record_components() {
+    let source = r#"package com.example;
+
+public record Point(int x, int y) {
+    public int sum() {
+        return x + y;
+    }
+}
+"#;
+
+    let replacement = r#"public int sum() {
+    return x + y + x;
+}"#;
+    let result = patch_ast_node(
+        Path::new("Point.java"),
+        source,
+        "com::example::Point::sum",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+    for name in ["x", "y"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}

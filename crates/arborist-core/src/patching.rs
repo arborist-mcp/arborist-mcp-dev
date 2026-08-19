@@ -2,6 +2,7 @@ mod api;
 pub(crate) mod c_validation;
 mod commit_gate;
 pub(crate) mod go_references;
+pub(crate) mod java_references;
 mod python_bindings;
 mod python_imports;
 mod python_patterns;
