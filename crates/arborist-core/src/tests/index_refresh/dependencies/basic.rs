@@ -26,8 +26,8 @@ fn refreshes_single_file_symbol_index() {
         .unwrap();
 
     let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
-    assert_eq!(stats.rebuilt_files, 1);
-    assert_eq!(stats.reused_files, 1);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 0);
 
     let trace = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).unwrap();
     assert!(

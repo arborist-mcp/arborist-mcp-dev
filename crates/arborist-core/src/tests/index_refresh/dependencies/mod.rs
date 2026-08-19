@@ -8,4 +8,5 @@ mod includes;
 mod java;
 mod javascript;
 mod kotlin;
+mod python;
 mod rust;

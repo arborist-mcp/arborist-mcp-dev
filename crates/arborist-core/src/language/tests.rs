@@ -145,7 +145,7 @@ fn builtin_registry_preserves_current_language_contracts() {
             LanguageId::Python,
             "Python",
             &["py", "pyi"][..],
-            "python-v1",
+            "python-file-dependencies-v2",
         ),
         (LanguageId::C, "C", &["c", "h"][..], "c-v1"),
         (

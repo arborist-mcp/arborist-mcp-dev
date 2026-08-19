@@ -404,7 +404,7 @@ static PYTHON_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Python",
     extensions: PYTHON_EXTENSIONS,
     capabilities: LanguageCapabilities::FULL_CURRENT_SUPPORT,
-    analysis_revision: "python-v1",
+    analysis_revision: "python-file-dependencies-v2",
     grammar: python_grammar,
 };
 static C_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -2108,16 +2108,17 @@ impl LanguageAdapter for PythonAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        false
+        true
     }
 
     fn collect_local_file_dependencies(
         &self,
-        _path: &Path,
-        _root: Node<'_>,
-        _source: &str,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
     ) -> Result<Vec<PathBuf>> {
-        Ok(Vec::new())
+        crate::language::python_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(
