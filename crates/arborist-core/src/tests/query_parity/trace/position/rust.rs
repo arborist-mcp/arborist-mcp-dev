@@ -3187,3 +3187,99 @@ fn keeps_rust_inline_module_static_calls_fail_closed_in_live_workspace_and_persi
         );
     }
 }
+
+#[test]
+fn traces_rust_self_rooted_receiver_type_paths_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api {\n    pub struct Counter(u32);\n    impl Counter {\n        pub fn new() -> Counter { Counter(0) }\n        pub fn increment(&self) {}\n        pub fn caller() {\n            let c = Self::new();\n            c.increment();\n            let c2 = Self(0);\n            c2.increment();\n            Self(0).increment();\n        }\n    }\n    pub struct Unit;\n    impl Unit {\n        pub fn run(&self) {}\n        pub fn caller() {\n            let c = Self;\n            c.run();\n            Self.run();\n        }\n    }\n    pub struct Plain {}\n    impl Plain {\n        pub fn step(&self) {}\n        pub fn caller() {\n            let c = Self {};\n            c.step();\n            Self {}.step();\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::Counter::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::increment", "api::Counter::new"]);
+
+    let live = trace_symbol_graph(&dir, "api::Unit::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Unit::run");
+
+    let live = trace_symbol_graph(&dir, "api::Plain::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "api::Plain::step");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Callees)
+            .unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Counter::increment", "api::Counter::new"]);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::Unit::caller", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Unit::run");
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::Plain::caller", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "api::Plain::step");
+}
+
+#[test]
+fn keeps_rust_self_rooted_receiver_type_paths_fail_closed_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct Counter {}\nimpl Counter { fn increment(&self) {} }\nfn outside_impl_constructor_caller() {\n    let c = Self::new();\n    c.increment();\n}\nfn outside_impl_tuple_caller() { Self(0).increment(); }\nfn outside_impl_struct_literal_caller() {\n    let c = Self {};\n    c.increment();\n}\nfn outside_impl_unit_value_caller() {\n    let c = Self;\n    c.increment();\n}\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "outside_impl_constructor_caller",
+        "outside_impl_tuple_caller",
+        "outside_impl_struct_literal_caller",
+        "outside_impl_unit_value_caller",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            live.callees.is_empty(),
+            "{caller} must fail closed for a Self-rooted receiver outside an impl"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "outside_impl_constructor_caller",
+        "outside_impl_tuple_caller",
+        "outside_impl_struct_literal_caller",
+        "outside_impl_unit_value_caller",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed for a Self-rooted receiver outside an impl from the persisted index"
+        );
+    }
+}

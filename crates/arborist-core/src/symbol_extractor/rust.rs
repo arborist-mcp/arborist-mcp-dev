@@ -707,7 +707,10 @@ fn rust_tuple_or_unit_struct_value_type_path(
     match value.kind() {
         "identifier" => {
             let name = node_text(value, hop.source)?.trim();
-            Ok(rust_declared_struct_type_path(name, hop))
+            Ok(
+                rust_self_type_path(name, hop)
+                    .or_else(|| rust_declared_struct_type_path(name, hop)),
+            )
         }
         "scoped_identifier" => {
             let spelling = node_text(value, hop.source)?.trim();
@@ -738,6 +741,9 @@ fn rust_struct_expression_type_path(
         return Ok(None);
     };
     if components.len() == 1 {
+        if let Some(type_path) = rust_self_type_path(&components[0], hop) {
+            return Ok(Some(type_path));
+        }
         let mut path = hop.module_components.clone().unwrap_or_default();
         path.push(components[0].clone());
         Ok(Some(path.join("::")))
@@ -765,11 +771,13 @@ fn rust_constructor_call_type_path(
     let components = spelling.split("::").collect::<Vec<_>>();
     match components.as_slice() {
         [type_name, constructor_name] => {
-            if type_name.is_empty()
-                || constructor_name.is_empty()
-                || module_or_import_names.contains(*type_name)
-                || !rust_type_name_like(type_name)
-            {
+            if type_name.is_empty() || constructor_name.is_empty() {
+                return Ok(None);
+            }
+            if let Some(type_path) = rust_self_type_path(type_name, hop) {
+                return Ok(Some(type_path));
+            }
+            if module_or_import_names.contains(*type_name) || !rust_type_name_like(type_name) {
                 return Ok(None);
             }
             let mut path = hop.module_components.clone().unwrap_or_default();
@@ -1251,6 +1259,12 @@ fn rust_inline_module_struct_type_path(
         .then_some(full_path)
 }
 
+fn rust_self_type_path(name: &str, scope: &RustCallHopScope<'_>) -> Option<String> {
+    (name == "Self")
+        .then(|| scope.self_type_path.clone())
+        .flatten()
+}
+
 fn rust_declared_struct_type_path(name: &str, scope: &RustCallHopScope<'_>) -> Option<String> {
     if name.is_empty()
         || scope.bindings.contains(name)
@@ -1279,7 +1293,8 @@ fn rust_tuple_struct_construction_type_path(
     match function.kind() {
         "identifier" => {
             let name = node_text(function, scope.source)?.trim();
-            Ok(rust_declared_struct_type_path(name, scope))
+            Ok(rust_self_type_path(name, scope)
+                .or_else(|| rust_declared_struct_type_path(name, scope)))
         }
         "scoped_identifier" => {
             let spelling = node_text(function, scope.source)?.trim();
@@ -1299,10 +1314,8 @@ fn rust_receiver_type_path(
         if name.is_empty() {
             return Ok(None);
         }
-        Ok(scope
-            .receiver_types
-            .get(name)
-            .cloned()
+        Ok(rust_self_type_path(name, scope)
+            .or_else(|| scope.receiver_types.get(name).cloned())
             .or_else(|| rust_declared_struct_type_path(name, scope)))
     } else if receiver.kind() == "scoped_identifier" {
         let spelling = node_text(receiver, scope.source)?.trim();
