@@ -85,7 +85,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   package's declared name, and calls through a named composite literal such as `Counter{}.Value()`, `(&Counter{}).Value()`, or `Box[int]{}.Value()` to one matching
   production method in the same local package; a direct named type-conversion receiver such as `Scalar(value).Value()`, `(*Scalar)(value).Value()`, `(Scalar)(value).Value()`, or `Box[int](value).Value()` when its base type is one unique same-package production `type` specification; a direct named type-assertion receiver such as `value.(Scalar).Value()` when `Scalar` is one unique same-package production `type` specification; a simple local alias receiver such as `type Alias = Counter; Alias{}.Value()`, `Alias(value).Value()`, or `value.(Alias).Value()` when its alias chain reaches one unique same-package production named `type` declaration without a cycle; or an unshadowed named local receiver, local-type parameter, or directly declared function-body local variable. If the conversion-shaped receiver name has no matching local type specification, it retains a direct factory-function dependency rather than guessing a method target. Same-package production sources refresh conservatively as a group. Module-root imports, external modules,
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, qualified imported conversions, interface dispatch, other method dispatch,
-  and patching remain unavailable or capability-gated.
+  Structural patching targets Go functions, methods, and type specifications and aliases with
+  syntax-level validation, and patch binding validation resolves references to local bindings,
+  same-file items, and import names, failing closed on unknown bare identifiers.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
@@ -641,8 +643,13 @@ for response shapes, error behavior, and examples.
   named composite literal such as `Counter{}.Value()`, `(&Counter{}).Value()`, or `Box[int]{}.Value()` to one matching production method in the same local package; a direct named type-conversion receiver such as `Scalar(value).Value()`, `(*Scalar)(value).Value()`, `(Scalar)(value).Value()`, or `Box[int](value).Value()` when its base type is one unique same-package production `type` specification; a direct named type-assertion receiver such as `value.(Scalar).Value()` when `Scalar` is one unique same-package production `type` specification; a simple local alias receiver such as `type Alias = Counter; Alias{}.Value()`, `Alias(value).Value()`, or `value.(Alias).Value()` when its alias chain reaches one unique same-package production named `type` declaration without a cycle; or an unshadowed named local receiver, local-type parameter, or directly declared function-body local variable. If the conversion-shaped receiver name has no matching local type specification, it retains a direct factory-function dependency rather than guessing a method target. Same-package production sources refresh conservatively as a group. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags,
   general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable.
   Structural patching targets Go functions, methods, and type specifications and aliases by semantic
-  path or source position with syntax-level validation; language-specific patch binding validation
-  remains deferred.
+  path or source position with syntax-level validation; patch binding validation resolves identifier
+  references inside a patched symbol to visible receiver, parameter, named-result, `:=`, `var`/`const`
+  spec, range-variable, `if`/`for`/`switch` initializer, type-switch alias, and closure-parameter
+  bindings plus same-file function, type, `var`, and `const` declarations and explicit or default import
+  names, while type annotations, field and method names, type-assertion and conversion types,
+  package-qualified type spellings, labels, blank identifiers, and predeclared Go names are ignored,
+  and unknown bare identifiers fail closed.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
@@ -718,9 +725,8 @@ Remaining larger work includes:
 
 - Adding carefully-scoped Rust inline-module, Cargo, and import trace resolution beyond current
   bindings, and extending Rust patch binding validation beyond local, same-file, and `use` bindings.
-- Extending Go package/import trace resolution beyond direct local function calls, plus
-  language-specific Go patch binding validation, only after dedicated fixtures establish safe
-  behavior.
+- Extending Go package/import trace resolution beyond direct local function calls, and extending Go
+  patch binding validation beyond local, same-file, and import bindings.
 - Extending Java trace resolution beyond unique same-type calls and explicitly imported local static
   methods, plus language-specific Java patch binding validation, only after dedicated fixtures
   establish safe behavior.

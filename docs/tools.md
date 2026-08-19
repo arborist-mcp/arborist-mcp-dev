@@ -116,8 +116,13 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   modules, `replace`, `go.work`, vendoring, build tags,
   general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable.
   Structural patching targets Go functions, methods, and type specifications and aliases by semantic
-  path or source position with syntax-level validation; language-specific patch binding validation
-  remains deferred.
+  path or source position with syntax-level validation; identifier references inside a patched symbol
+  resolve to visible receiver, parameter, named-result, `:=`, `var`/`const` spec, range-variable,
+  `if`/`for`/`switch` initializer, type-switch alias, and closure-parameter bindings plus same-file
+  function, type, `var`, and `const` declarations and explicit or default import names, while type
+  annotations, field and method names, type-assertion and conversion types, package-qualified type
+  spellings, labels, blank identifiers, and predeclared Go names are ignored, and unknown bare
+  identifiers fail closed.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
