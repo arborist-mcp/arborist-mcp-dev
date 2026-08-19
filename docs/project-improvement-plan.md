@@ -725,6 +725,8 @@ completed item can land in its own commit unless two changes are inseparable.
   unresolved-reference rejection.
 - [x] Add a reusable VFS overlay parity contract that compares virtual reads with
   persisted-index source overlays for every registered language without mutating disk.
+- [x] Add a reusable persisted-index contract that reloads every registered language
+  and rejects a stale language analysis revision before reading symbols.
 
 ## Suggested Commit Sequence
 

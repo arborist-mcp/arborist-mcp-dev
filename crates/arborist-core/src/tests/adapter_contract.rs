@@ -382,6 +382,63 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
 }
 
 #[test]
+fn persisted_indexes_reload_and_reject_stale_language_revisions_for_every_language() {
+    use rusqlite::Connection;
+
+    use crate::{read_symbol_from_index, rebuild_symbol_index};
+
+    for language_id in registered_languages() {
+        let dir = super::support::temporary_dir();
+        let relative_path = sample_path(language_id);
+        let path = dir.join(
+            relative_path
+                .file_name()
+                .expect("sample path must have a file name"),
+        );
+        let source = sample_source(language_id);
+        fs::write(&path, source).unwrap();
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path)
+            .unwrap_or_else(|error| panic!("{language_id:?} index rebuild failed: {error}"));
+
+        let semantic_target = semantic_target_for_patch_contract(language_id, &path, source);
+        let reloaded = read_symbol_from_index(&db_path, &semantic_target)
+            .unwrap_or_else(|error| panic!("{language_id:?} persisted reload failed: {error}"));
+        assert_eq!(
+            reloaded.symbol.semantic_path, semantic_target,
+            "{language_id:?} persisted reload must preserve the semantic target"
+        );
+
+        let language_key: String = serde_json::from_value(
+            serde_json::to_value(language_id).expect("language ID must serialize"),
+        )
+        .expect("language ID must serialize as a string");
+        let expected = crate::index_schema::current_analysis_provenance_json().unwrap();
+        let mut stale: serde_json::Value = serde_json::from_str(&expected).unwrap();
+        stale["language_analysis_revisions"][&language_key] =
+            serde_json::Value::String(format!("{language_key}-stale-contract-revision"));
+
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE metadata SET value = ?1 WHERE key = 'analysis_provenance'",
+                [serde_json::to_string(&stale).unwrap()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let error = read_symbol_from_index(&db_path, &semantic_target)
+            .expect_err("stale language provenance must reject persisted reads");
+        assert!(
+            error
+                .to_string()
+                .contains("does not match current analysis behavior"),
+            "{language_id:?} stale provenance error must explain the rebuild requirement: {error}"
+        );
+    }
+}
+
+#[test]
 fn vfs_overlay_reads_match_persisted_index_source_overlays_for_every_language() {
     use crate::{VirtualFileSystem, read_symbol_from_index_with_source, rebuild_symbol_index};
 
