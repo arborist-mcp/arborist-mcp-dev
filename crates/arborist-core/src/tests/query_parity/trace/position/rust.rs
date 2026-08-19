@@ -3649,3 +3649,96 @@ fn traces_rust_turbofish_member_chain_call_hops_in_live_workspace_and_persisted_
     actual.sort_unstable();
     assert_eq!(actual, expected);
 }
+#[test]
+fn traces_rust_turbofish_self_rooted_static_calls_and_construction_receivers_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "struct RootCounter(u32);\nimpl RootCounter {\n    fn new() -> RootCounter { RootCounter(0) }\n    fn increment(&self) {}\n    fn caller(&self) {\n        Self::<u8>::new();\n        Self::new::<u8>();\n        let c = Self::<u8>::new();\n        c.increment();\n        Self::<u8>(0).increment();\n        let d = Self::<u8>(0);\n        d.increment();\n    }\n}\nstruct Unit;\nimpl Unit {\n    fn run(&self) {}\n    fn caller(&self) {\n        let u = Self::<u8>;\n        u.run();\n    }\n}\nstruct Plain {}\nimpl Plain {\n    fn step(&self) {}\n    fn caller(&self) {\n        Self::<u8> {}.step();\n        let p = Self::<u8> {};\n        p.step();\n    }\n}\nmod api {\n    pub struct Wrapped(u32);\n    impl Wrapped {\n        pub fn increment(&self) {}\n        pub fn caller(&self) {\n            Self::<u8>(0).increment();\n            let w = Self::<u8>(0);\n            w.increment();\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let expected_root = ["RootCounter::increment", "RootCounter::new"];
+    let live = trace_symbol_graph(&dir, "RootCounter::caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected_root);
+
+    let live = trace_symbol_graph(&dir, "Unit::caller", TraceDirection::Callees).unwrap();
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["Unit::run"]);
+
+    let live = trace_symbol_graph(&dir, "Plain::caller", TraceDirection::Callees).unwrap();
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["Plain::step"]);
+
+    let live = trace_symbol_graph(&dir, "api::Wrapped::caller", TraceDirection::Callees).unwrap();
+    let mut actual = live
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Wrapped::increment"]);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "RootCounter::caller", TraceDirection::Callees)
+            .unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected_root);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Unit::caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["Unit::run"]);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Plain::caller", TraceDirection::Callees).unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["Plain::step"]);
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::Wrapped::caller", TraceDirection::Callees)
+            .unwrap();
+    let mut actual = persisted
+        .callees
+        .iter()
+        .map(|callee| callee.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, ["api::Wrapped::increment"]);
+}
