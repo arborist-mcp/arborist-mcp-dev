@@ -114,6 +114,7 @@ fn collect_direct_local_calls(
         .collect::<BTreeSet<_>>();
     let self_type_path = rust_impl_self_type_path(symbol_node, source)?;
     let struct_field_types = source_file_struct_field_types(symbol_node, source)?;
+    let struct_type_paths = source_file_struct_type_paths(symbol_node, source)?;
     let callable_return_types = source_file_callable_return_types(symbol_node, source)?;
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
@@ -125,6 +126,8 @@ fn collect_direct_local_calls(
         callable_return_types: &callable_return_types,
         local_functions: &local_functions,
         bindings: &bindings,
+        module_or_import_names: &module_or_import_names,
+        struct_type_paths: &struct_type_paths,
         module_components: module_components.clone(),
     };
     let local_variable_types =
@@ -136,6 +139,7 @@ fn collect_direct_local_calls(
         && local_variable_types.is_empty()
         && self_type_path.is_none()
         && struct_field_types.is_empty()
+        && struct_type_paths.is_empty()
         && callable_return_types.is_empty()
     {
         return Ok(RustDirectCallReferences::default());
@@ -149,6 +153,8 @@ fn collect_direct_local_calls(
         callable_return_types: &callable_return_types,
         local_functions: &local_functions,
         bindings: &bindings,
+        module_or_import_names: &module_or_import_names,
+        struct_type_paths: &struct_type_paths,
         module_components,
     };
     let context = RustDirectCallContext {
@@ -181,6 +187,8 @@ struct RustCallHopScope<'a> {
     callable_return_types: &'a BTreeMap<String, String>,
     local_functions: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
+    module_or_import_names: &'a BTreeSet<String>,
+    struct_type_paths: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
 }
 
@@ -191,6 +199,8 @@ struct RustHopInputs<'a> {
     callable_return_types: &'a BTreeMap<String, String>,
     local_functions: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
+    module_or_import_names: &'a BTreeSet<String>,
+    struct_type_paths: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
 }
 
@@ -643,6 +653,8 @@ fn collect_rust_let_binding_types(
                 callable_return_types: inputs.callable_return_types,
                 local_functions: inputs.local_functions,
                 bindings: inputs.bindings,
+                module_or_import_names: inputs.module_or_import_names,
+                struct_type_paths: inputs.struct_type_paths,
                 module_components: inputs.module_components.clone(),
             };
             rust_let_binding_type_path(value, source, module_or_import_names, &hop)?
@@ -676,7 +688,24 @@ fn rust_let_binding_type_path(
     if let Some(type_path) = rust_field_access_type_path(value, hop)? {
         return Ok(Some(type_path));
     }
+    if let Some(type_path) = rust_tuple_or_unit_struct_value_type_path(value, hop)? {
+        return Ok(Some(type_path));
+    }
     rust_call_hop_return_type_path(value, hop)
+}
+
+fn rust_tuple_or_unit_struct_value_type_path(
+    value: Node<'_>,
+    hop: &RustCallHopScope<'_>,
+) -> Result<Option<String>> {
+    if value.kind() == "identifier" {
+        let name = node_text(value, hop.source)?.trim();
+        return Ok(rust_declared_struct_type_path(name, hop));
+    }
+    if value.kind() == "call_expression" {
+        return rust_tuple_struct_construction_type_path(value, hop);
+    }
+    Ok(None)
 }
 
 fn rust_field_access_type_path(
@@ -756,6 +785,43 @@ fn rust_impl_self_type_path(symbol_node: Node<'_>, source: &str) -> Result<Optio
         current = parent.parent();
     }
     Ok(None)
+}
+
+fn source_file_struct_type_paths(symbol_node: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut paths = BTreeSet::new();
+    collect_rust_struct_type_paths(root, source, &mut paths)?;
+    Ok(paths)
+}
+
+fn collect_rust_struct_type_paths(
+    node: Node<'_>,
+    source: &str,
+    paths: &mut BTreeSet<String>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_item" | "function_signature_item" | "closure_expression"
+    ) {
+        return Ok(());
+    }
+    if node.kind() == "struct_item"
+        && let Some(name) = rust_symbol_name(node, source)?
+        && let Some(module_components) = rust_inline_module_path_components(node, source)?
+    {
+        let mut struct_path_components = module_components;
+        struct_path_components.push(name);
+        paths.insert(struct_path_components.join("::"));
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_rust_struct_type_paths(child, source, paths)?;
+    }
+    Ok(())
 }
 
 fn source_file_struct_field_types(
@@ -1052,6 +1118,38 @@ fn rust_method_call_target_path(
     Ok(Some(format!("{type_path}::{method_name}")))
 }
 
+fn rust_declared_struct_type_path(name: &str, scope: &RustCallHopScope<'_>) -> Option<String> {
+    if name.is_empty()
+        || scope.bindings.contains(name)
+        || scope.receiver_types.contains_key(name)
+        || scope.local_functions.contains_key(name)
+        || scope.module_or_import_names.contains(name)
+    {
+        return None;
+    }
+    let mut path = scope.module_components.clone().unwrap_or_default();
+    path.push(name.to_string());
+    let full_path = path.join("::");
+    scope
+        .struct_type_paths
+        .contains(&full_path)
+        .then_some(full_path)
+}
+
+fn rust_tuple_struct_construction_type_path(
+    receiver: Node<'_>,
+    scope: &RustCallHopScope<'_>,
+) -> Result<Option<String>> {
+    let Some(function) = receiver.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    if function.kind() != "identifier" {
+        return Ok(None);
+    }
+    let name = node_text(function, scope.source)?.trim();
+    Ok(rust_declared_struct_type_path(name, scope))
+}
+
 fn rust_receiver_type_path(
     receiver: Node<'_>,
     scope: &RustCallHopScope<'_>,
@@ -1061,7 +1159,11 @@ fn rust_receiver_type_path(
         if name.is_empty() {
             return Ok(None);
         }
-        Ok(scope.receiver_types.get(name).cloned())
+        Ok(scope
+            .receiver_types
+            .get(name)
+            .cloned()
+            .or_else(|| rust_declared_struct_type_path(name, scope)))
     } else if receiver.kind() == "struct_expression" {
         let Some(type_name) = rust_struct_expression_type_name(receiver, scope.source)? else {
             return Ok(None);
@@ -1091,7 +1193,8 @@ fn rust_receiver_type_path(
             .and_then(|fields| fields.get(field_name))
             .cloned())
     } else if receiver.kind() == "call_expression" {
-        Ok(rust_call_hop_return_type_path(receiver, scope)?)
+        Ok(rust_tuple_struct_construction_type_path(receiver, scope)?
+            .or(rust_call_hop_return_type_path(receiver, scope)?))
     } else {
         Ok(None)
     }
