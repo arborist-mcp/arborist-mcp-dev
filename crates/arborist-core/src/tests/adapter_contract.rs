@@ -167,6 +167,26 @@ fn oversized_sources_are_rejected_before_parsing() {
     }
 }
 
+#[test]
+fn parse_deadlines_are_enforced_for_every_language() {
+    use crate::language::parse_document_with_timeout;
+
+    let source = "(".repeat(128 * 1024);
+    for language_id in registered_languages() {
+        let path = sample_path(language_id);
+        let error = match parse_document_with_timeout(&path, &source, 1) {
+            Ok(_) => panic!(
+                "{language_id:?} large source must not outlive a one-microsecond parse budget"
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("timed out"),
+            "{language_id:?} parse timeout must be reported explicitly: {error}"
+        );
+    }
+}
+
 fn sample_source(language_id: LanguageId) -> &'static str {
     match language_id {
         LanguageId::Python => "def compute(value: int) -> int:\n    return value + 1\n",

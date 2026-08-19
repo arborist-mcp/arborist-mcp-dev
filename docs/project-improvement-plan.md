@@ -736,6 +736,8 @@ completed item can land in its own commit unless two changes are inseparable.
   sources for every registered adapter, and consume them from common trace contracts.
 - [x] Add a reusable UTF-8 position contract for every registered adapter,
   proving byte-column lookup parity between live and persisted symbol reads.
+- [x] Add a reusable parser-deadline contract for every registered adapter,
+  proving complex malformed input fails explicitly once its parse budget expires.
 - [x] Add a reusable incremental-refresh contract for every registered
   adapter, proving changed source is reindexed without losing its semantic target.
 
