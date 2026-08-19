@@ -1383,7 +1383,9 @@ mod tests {
 
     use super::index_rust_symbols_with_deadline;
     use crate::language::parse_document;
-    use crate::symbol_index_model::{ReferenceLanguageDetails, RustImportRoot};
+    use crate::symbol_index_model::{
+        ReferenceFact, ReferenceLanguageDetails, RustImportRoot, RustReferenceDetails,
+    };
 
     #[test]
     fn indexes_unshadowed_direct_calls_to_local_module_functions() {
@@ -1764,8 +1766,20 @@ mod api {
             .iter()
             .find(|symbol| symbol.semantic_path == "api::caller")
             .unwrap();
-        assert!(caller.references_by_name.is_empty());
-        assert!(caller.reference_facts.is_empty());
+        assert_eq!(caller.references_by_name, ["outside".to_string()].into(),);
+        assert_eq!(caller.reference_facts.len(), 1);
+        assert!(matches!(
+            &caller.reference_facts[0],
+            ReferenceFact {
+                spelling,
+                language_details:
+                    ReferenceLanguageDetails::Rust(RustReferenceDetails {
+                        import_root: Some(RustImportRoot::Crate),
+                        ..
+                    }),
+                ..
+            } if spelling == "outside"
+        ));
     }
 
     #[test]
