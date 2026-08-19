@@ -674,3 +674,24 @@ fn parse_document_rejects_oversized_source_overlays() {
         .expect("oversized source overlays should be rejected");
     assert!(error.to_string().contains("source text too large"));
 }
+
+#[test]
+fn file_dependency_capabilities_match_adapter_support() {
+    let registry = builtin_language_registry();
+
+    for language_id in registry.language_ids() {
+        let descriptor = registry
+            .descriptor(language_id)
+            .expect("each registered language must have a descriptor");
+        let adapter = registry
+            .adapter(language_id)
+            .expect("each registered language must have an adapter");
+        assert_eq!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::FILE_DEPENDENCIES),
+            adapter.supports_incremental_file_dependencies(),
+            "{language_id:?} file-dependency capability must match the adapter implementation",
+        );
+    }
+}
