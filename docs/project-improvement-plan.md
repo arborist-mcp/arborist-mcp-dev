@@ -730,6 +730,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add a reusable resolver-safety contract for every traceable language, proving
   direct-call live/persisted parity, unresolved-call rejection, and disabled
   cross-language matching.
+- [x] Add JavaScript/TypeScript/TSX ambiguity fixtures and a shared
+  live/persisted contract for ambiguous named star re-exports.
 - [x] Establish dedicated language fixture directories with direct-call and unresolved-call
   sources for every registered adapter, and consume them from common trace contracts.
 - [x] Add a reusable UTF-8 position contract for every registered adapter,

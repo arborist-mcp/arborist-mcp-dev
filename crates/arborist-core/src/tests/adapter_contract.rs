@@ -373,6 +373,104 @@ fn foreign_c_compute_source() -> &'static str {
     "int compute(int value) { return value + 1; }\n"
 }
 
+fn ambiguous_trace_contract_files(
+    language_id: LanguageId,
+) -> Option<Vec<(&'static str, &'static str)>> {
+    match language_id {
+        LanguageId::JavaScript => Some(vec![
+            (
+                "ambiguity_left.js",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/javascript/ambiguity_left.js"
+                )),
+            ),
+            (
+                "ambiguity_right.js",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/javascript/ambiguity_right.js"
+                )),
+            ),
+            (
+                "ambiguity_reexport.js",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/javascript/ambiguity_reexport.js"
+                )),
+            ),
+            (
+                "resolver_ambiguous_calls.js",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/javascript/resolver_ambiguous_calls.js"
+                )),
+            ),
+        ]),
+        LanguageId::TypeScript => Some(vec![
+            (
+                "ambiguity_left.ts",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/typescript/ambiguity_left.ts"
+                )),
+            ),
+            (
+                "ambiguity_right.ts",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/typescript/ambiguity_right.ts"
+                )),
+            ),
+            (
+                "ambiguity_reexport.ts",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/typescript/ambiguity_reexport.ts"
+                )),
+            ),
+            (
+                "resolver_ambiguous_calls.ts",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/typescript/resolver_ambiguous_calls.ts"
+                )),
+            ),
+        ]),
+        LanguageId::Tsx => Some(vec![
+            (
+                "ambiguity_left.tsx",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/tsx/ambiguity_left.tsx"
+                )),
+            ),
+            (
+                "ambiguity_right.tsx",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/tsx/ambiguity_right.tsx"
+                )),
+            ),
+            (
+                "ambiguity_reexport.tsx",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/tsx/ambiguity_reexport.tsx"
+                )),
+            ),
+            (
+                "resolver_ambiguous_calls.tsx",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/languages/tsx/resolver_ambiguous_calls.tsx"
+                )),
+            ),
+        ]),
+        _ => None,
+    }
+}
+
 fn trace_contract_symbol_base_name(language_id: LanguageId, caller: bool) -> &'static str {
     match (language_id, caller) {
         (LanguageId::CSharp, true) => "Orchestrate",
@@ -798,6 +896,56 @@ fn cross_language_references_fail_closed_for_traceable_languages() {
         assert!(
             persisted.callees.is_empty(),
             "{language_id:?} persisted trace must not resolve a same-named foreign-language target: {persisted:#?}"
+        );
+    }
+}
+
+#[test]
+fn ambiguous_named_reexports_fail_closed_for_javascript_family_adapters() {
+    use crate::{rebuild_symbol_index, trace_symbol_graph, trace_symbol_graph_from_index};
+
+    for language_id in [
+        LanguageId::JavaScript,
+        LanguageId::TypeScript,
+        LanguageId::Tsx,
+    ] {
+        let files = ambiguous_trace_contract_files(language_id)
+            .expect("every JavaScript family language must have ambiguity fixtures");
+        let dir = super::support::temporary_dir();
+        for (file_name, source) in files {
+            fs::write(dir.join(file_name), source).unwrap();
+        }
+
+        let caller_path = dir.join(sample_path(language_id).file_name().unwrap());
+        let caller_source = fs::read_to_string(dir.join(match language_id {
+            LanguageId::JavaScript => "resolver_ambiguous_calls.js",
+            LanguageId::TypeScript => "resolver_ambiguous_calls.ts",
+            LanguageId::Tsx => "resolver_ambiguous_calls.tsx",
+            _ => unreachable!(),
+        }))
+        .unwrap();
+        let caller_target =
+            semantic_target_for_symbol_base(language_id, &caller_path, &caller_source, "caller");
+
+        let live = trace_symbol_graph(&dir, &caller_target, TraceDirection::Both)
+            .unwrap_or_else(|error| panic!("{language_id:?} ambiguous live trace failed: {error}"));
+        assert!(
+            live.callees.is_empty(),
+            "{language_id:?} ambiguous named re-export must not produce a live edge: {live:#?}"
+        );
+
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} ambiguous index rebuild failed: {error}")
+        });
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, &caller_target, TraceDirection::Both)
+                .unwrap_or_else(|error| {
+                    panic!("{language_id:?} ambiguous persisted trace failed: {error}")
+                });
+        assert!(
+            persisted.callees.is_empty(),
+            "{language_id:?} ambiguous named re-export must not produce a persisted edge: {persisted:#?}"
         );
     }
 }
