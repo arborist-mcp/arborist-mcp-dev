@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::language::{
     LanguageCapabilities, MAX_SOURCE_FILE_BYTES, builtin_language_registry, parse_document,
 };
-use crate::model::LanguageId;
+use crate::model::{LanguageId, TraceDirection};
 
 /// Common adapter contract invariants (design doc §17.1).
 ///
@@ -242,6 +242,70 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
     }
 }
 
+fn trace_contract_source(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => {
+            "def compute(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return compute(value)\n"
+        }
+        LanguageId::C => {
+            "int compute(int value) { return value + 1; }\nint caller(int value) { return compute(value); }\n"
+        }
+        LanguageId::Cpp => {
+            "int compute(int value) { return value + 1; }\nint caller(int value) { return compute(value); }\n"
+        }
+        LanguageId::CSharp => {
+            "namespace Demo { public static class DemoClass { public static int Compute(int value) => value + 1; public static int Caller(int value) => Compute(value); } }\n"
+        }
+        LanguageId::JavaScript => {
+            "export function compute(value) { return value + 1; }\nexport function caller(value) { return compute(value); }\n"
+        }
+        LanguageId::TypeScript => {
+            "export function compute(value: number): number { return value + 1; }\nexport function caller(value: number): number { return compute(value); }\n"
+        }
+        LanguageId::Tsx => {
+            "export function compute(value: number): number { return value + 1; }\nexport function caller(value: number) { return <div>{compute(value)}</div>; }\n"
+        }
+        LanguageId::Rust => {
+            "pub fn compute(value: i32) -> i32 { value + 1 }\npub fn caller(value: i32) -> i32 { compute(value) }\n"
+        }
+        LanguageId::Go => {
+            "package demo\n\nfunc compute(value int) int { return value + 1 }\nfunc caller(value int) int { return compute(value) }\n"
+        }
+        LanguageId::Java => {
+            "package demo; public final class Demo { public static int compute(int value) { return value + 1; } public static int caller(int value) { return compute(value); } }\n"
+        }
+        LanguageId::Kotlin => {
+            "package demo\n\nfun compute(value: Int): Int = value + 1\nfun caller(value: Int): Int = compute(value)\n"
+        }
+    }
+}
+
+fn unresolved_trace_contract_source(language_id: LanguageId) -> String {
+    let source = trace_contract_source(language_id);
+    match language_id {
+        LanguageId::Python => source.replace("return compute(value)", "return missing(value)"),
+        LanguageId::C | LanguageId::Cpp | LanguageId::JavaScript | LanguageId::TypeScript => {
+            source.replace("return compute(value)", "return missing(value)")
+        }
+        LanguageId::CSharp => source.replace("=> Compute(value)", "=> Missing(value)"),
+        LanguageId::Tsx => source.replace("{compute(value)}", "{missing(value)}"),
+        LanguageId::Rust => source.replace("{ compute(value) }", "{ missing(value) }"),
+        LanguageId::Go | LanguageId::Java => {
+            source.replace("return compute(value)", "return missing(value)")
+        }
+        LanguageId::Kotlin => source.replace("= compute(value)", "= missing(value)"),
+    }
+}
+
+fn trace_contract_symbol_base_name(language_id: LanguageId, caller: bool) -> &'static str {
+    match (language_id, caller) {
+        (LanguageId::CSharp, true) => "Caller",
+        (LanguageId::CSharp, false) => "Compute",
+        (_, true) => "caller",
+        (_, false) => "compute",
+    }
+}
+
 fn overlay_source(language_id: LanguageId, source: &str) -> String {
     match language_id {
         LanguageId::Tsx => source.replace("{value}", "{value + 2}"),
@@ -249,27 +313,35 @@ fn overlay_source(language_id: LanguageId, source: &str) -> String {
     }
 }
 
+fn semantic_target_for_symbol_base(
+    language_id: LanguageId,
+    path: &Path,
+    source: &str,
+    base_name: &str,
+) -> String {
+    use crate::symbol_extractor::index_symbols_from_document;
+
+    let document = parse_document(path, source)
+        .unwrap_or_else(|error| panic!("{language_id:?} contract sample must parse: {error}"));
+    index_symbols_from_document(path, source, &document)
+        .unwrap_or_else(|error| panic!("{language_id:?} contract sample must index: {error}"))
+        .into_iter()
+        .find(|symbol| symbol.base_name == base_name)
+        .map(|symbol| symbol.semantic_path)
+        .unwrap_or_else(|| panic!("{language_id:?} contract sample must expose {base_name}"))
+}
+
 fn semantic_target_for_patch_contract(
     language_id: LanguageId,
     path: &Path,
     source: &str,
 ) -> String {
-    use crate::symbol_extractor::index_symbols_from_document;
-
-    let document = parse_document(path, source).unwrap_or_else(|error| {
-        panic!("{language_id:?} patch-contract sample must parse: {error}")
-    });
-    index_symbols_from_document(path, source, &document)
-        .unwrap_or_else(|error| panic!("{language_id:?} patch-contract sample must index: {error}"))
-        .into_iter()
-        .find(|symbol| symbol.base_name == patch_symbol_base_name(language_id))
-        .map(|symbol| symbol.semantic_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "{language_id:?} patch-contract sample must expose {}",
-                patch_symbol_base_name(language_id)
-            )
-        })
+    semantic_target_for_symbol_base(
+        language_id,
+        path,
+        source,
+        patch_symbol_base_name(language_id),
+    )
 }
 
 #[test]
@@ -378,6 +450,109 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn direct_and_unresolved_call_traces_match_live_and_persisted_indexes_for_traceable_languages() {
+    use crate::{rebuild_symbol_index, trace_symbol_graph, trace_symbol_graph_from_index};
+
+    let registry = builtin_language_registry();
+    for language_id in registered_languages() {
+        let descriptor = registry
+            .descriptor(language_id)
+            .expect("every registered language must have a descriptor");
+        if !descriptor
+            .capabilities
+            .contains(LanguageCapabilities::REFERENCE_TRACE)
+        {
+            continue;
+        }
+
+        let dir = super::support::temporary_dir();
+        let relative_path = sample_path(language_id);
+        let path = dir.join(
+            relative_path
+                .file_name()
+                .expect("sample path must have a file name"),
+        );
+        let source = trace_contract_source(language_id);
+        fs::write(&path, source).unwrap();
+        let caller_target = semantic_target_for_symbol_base(
+            language_id,
+            &path,
+            source,
+            trace_contract_symbol_base_name(language_id, true),
+        );
+        let callee_target = semantic_target_for_symbol_base(
+            language_id,
+            &path,
+            source,
+            trace_contract_symbol_base_name(language_id, false),
+        );
+
+        let live = trace_symbol_graph(&dir, &caller_target, TraceDirection::Both)
+            .unwrap_or_else(|error| panic!("{language_id:?} live trace failed: {error}"));
+        assert!(
+            live.callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == callee_target),
+            "{language_id:?} live trace must resolve the direct call: {live:#?}"
+        );
+
+        let db_path = dir.join("symbols.db");
+        rebuild_symbol_index(&dir, &db_path)
+            .unwrap_or_else(|error| panic!("{language_id:?} index rebuild failed: {error}"));
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, &caller_target, TraceDirection::Both)
+                .unwrap_or_else(|error| panic!("{language_id:?} persisted trace failed: {error}"));
+        assert_eq!(
+            persisted.symbol.symbol_id, live.symbol.symbol_id,
+            "{language_id:?} live and persisted traces must resolve the same root"
+        );
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| &symbol.symbol_id)
+                .collect::<Vec<_>>(),
+            live.callees
+                .iter()
+                .map(|symbol| &symbol.symbol_id)
+                .collect::<Vec<_>>(),
+            "{language_id:?} live and persisted direct-call traces must agree"
+        );
+        assert!(
+            persisted
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == callee_target),
+            "{language_id:?} persisted trace must resolve the direct call: {persisted:#?}"
+        );
+
+        let unresolved_source = unresolved_trace_contract_source(language_id);
+        fs::write(&path, &unresolved_source).unwrap();
+        let live_unresolved = trace_symbol_graph(&dir, &caller_target, TraceDirection::Both)
+            .unwrap_or_else(|error| {
+                panic!("{language_id:?} unresolved live trace failed: {error}")
+            });
+        assert!(
+            live_unresolved.callees.is_empty(),
+            "{language_id:?} unresolved direct call must not create a live edge: {live_unresolved:#?}"
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap_or_else(|error| {
+            panic!("{language_id:?} unresolved index rebuild failed: {error}")
+        });
+        let persisted_unresolved =
+            trace_symbol_graph_from_index(&db_path, &caller_target, TraceDirection::Both)
+                .unwrap_or_else(|error| {
+                    panic!("{language_id:?} unresolved persisted trace failed: {error}")
+                });
+        assert!(
+            persisted_unresolved.callees.is_empty(),
+            "{language_id:?} unresolved direct call must not create a persisted edge: {persisted_unresolved:#?}"
+        );
     }
 }
 
