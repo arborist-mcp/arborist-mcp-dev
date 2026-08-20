@@ -87,7 +87,7 @@ fn go_production_source_files_in_directory(directory: &Path) -> BTreeSet<PathBuf
         .collect()
 }
 
-fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
+pub(crate) fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut cursor = root.walk();
     let Some(package_clause) = root
         .named_children(&mut cursor)

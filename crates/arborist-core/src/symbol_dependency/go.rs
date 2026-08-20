@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, go_local_package_imports, node_text, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    detect_language, go_local_package_imports, go_source_package_name, normalize_path,
+    parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -56,7 +56,7 @@ fn go_import_context_for_file_with_overrides_and_deadline(
         return Ok(GoImportContext::default());
     }
 
-    let package_name = go_package_name(root, &source)?;
+    let package_name = go_source_package_name(root, &source)?;
     let mut bindings = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
     for import in go_local_package_imports(path, root, &source)? {
@@ -189,32 +189,13 @@ fn go_package_name_for_paths(
         if root.has_error() {
             return Ok(None);
         }
-        let Some(name) = go_package_name(root, &source)? else {
+        let Some(name) = go_source_package_name(root, &source)? else {
             return Ok(None);
         };
         names.insert(name);
     }
 
     Ok((names.len() == 1).then(|| names.pop_first().unwrap()))
-}
-
-fn go_package_name(root: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
-    let mut cursor = root.walk();
-    let Some(package_clause) = root
-        .named_children(&mut cursor)
-        .find(|node| node.kind() == "package_clause")
-    else {
-        return Ok(None);
-    };
-    let Some(name) = package_clause.named_child(0) else {
-        return Ok(None);
-    };
-    if name.kind() != "package_identifier" {
-        return Ok(None);
-    }
-
-    let name = node_text(name, source)?.trim();
-    Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
 fn is_production_go_source(path: &Path) -> bool {
