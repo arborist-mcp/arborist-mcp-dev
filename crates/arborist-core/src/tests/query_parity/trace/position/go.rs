@@ -713,6 +713,42 @@ fn traces_go_local_package_imported_function_calls_in_live_and_persisted_indexes
 }
 
 #[test]
+fn does_not_trace_go_dot_or_blank_imports_as_package_qualified_calls() {
+    for (suffix, import) in [
+        ("dot", ". \"example.com/project/internal/service\""),
+        ("blank", "_ \"example.com/project/internal/service\""),
+    ] {
+        let dir = temporary_dir();
+        let caller_path = dir.join("cmd").join("main.go");
+        let service_path = dir.join("internal").join("service").join("service.go");
+        let db_path = dir.join("symbols.db");
+        fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+        fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+        fs::write(
+            &caller_path,
+            format!(
+                "package main\n\nimport {import}\n\nfunc caller() int {{ return service.Value() }}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &service_path,
+            "package service\n\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+
+        let live = trace_symbol_graph(&dir, "Value", TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{suffix}: {live:#?}");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, "Value", TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty(), "{suffix}: {persisted:#?}");
+    }
+}
+
+#[test]
 fn traces_go_same_package_direct_calls_across_source_files() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");

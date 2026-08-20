@@ -294,9 +294,10 @@ fn collect_go_import_specs(
     if node.kind() == "import_spec"
         && let Some(path) = node.child_by_field_name("path")
         && let Some(path) = go_import_path_literal(path, source)?
+        && let Some(explicit_local_name) = go_explicit_import_local_name(node, source)?
     {
         imports.push(GoImportSpec {
-            explicit_local_name: go_explicit_import_local_name(node, source)?,
+            explicit_local_name,
             path,
         });
     }
@@ -308,16 +309,18 @@ fn collect_go_import_specs(
     Ok(())
 }
 
-fn go_explicit_import_local_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+/// Returns `None` for blank and dot imports because neither form introduces
+/// a package-qualified identifier into the importing file's scope.
+fn go_explicit_import_local_name(node: Node<'_>, source: &str) -> Result<Option<Option<String>>> {
     let Some(name) = node.child_by_field_name("name") else {
-        return Ok(None);
+        return Ok(Some(None));
     };
     if name.kind() != "package_identifier" {
         return Ok(None);
     }
 
     let name = node_text(name, source)?.trim();
-    Ok((!name.is_empty()).then(|| name.to_string()))
+    Ok((!name.is_empty()).then(|| Some(name.to_string())))
 }
 
 fn go_import_path_literal(node: Node<'_>, source: &str) -> Result<Option<String>> {

@@ -331,6 +331,41 @@ func compute() int {
 }
 
 #[test]
+fn rejects_go_patches_that_treat_dot_or_blank_imports_as_package_bindings() {
+    let root = temporary_dir();
+    let caller_path = root.join("cmd").join("main.go");
+    let service_path = root.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+
+    for (name, import) in [
+        ("dot", ". \"example.com/project/internal/service\""),
+        ("blank", "_ \"example.com/project/internal/service\""),
+    ] {
+        let source =
+            format!("package main\n\nimport {import}\n\nfunc compute() int {{\n\treturn 1\n}}\n");
+        fs::write(&caller_path, &source).unwrap();
+        let result = patch_ast_node(
+            &caller_path,
+            &source,
+            "compute",
+            "func compute() int {\n\treturn service.Value()\n}",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied, "{name}: {result:#?}");
+        assert_eq!(result.validation.unresolved_identifiers, vec!["service"]);
+    }
+}
+
+#[test]
 fn resolves_go_imported_package_names_when_path_basenames_collide() {
     let root = temporary_dir();
     let caller_path = root.join("cmd").join("main.go");
