@@ -18,8 +18,8 @@ pub(in crate::symbol_dependency) struct GoImportBinding {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct GoImportContext {
-    package_name: Option<String>,
-    bindings: BTreeMap<String, GoImportBinding>,
+    pub(in crate::symbol_dependency) package_name: Option<String>,
+    pub(in crate::symbol_dependency) bindings: BTreeMap<String, GoImportBinding>,
 }
 
 fn go_import_context_for_file_with_overrides_and_deadline(

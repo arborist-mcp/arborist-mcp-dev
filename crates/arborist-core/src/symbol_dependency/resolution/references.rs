@@ -13924,6 +13924,9 @@ fn resolve_go_same_package_reference(
 
     let mut candidates = Vec::new();
     for index in target.candidate_indexes {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go same-package reference candidates")?;
+        }
         let candidate = &raw_symbols[*index];
         if candidate.node_kind != target.node_kind
             || candidate.semantic_path != target.reference_name
@@ -24273,6 +24276,82 @@ mod tests {
             error
                 .to_string()
                 .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn go_same_package_candidate_scan_checks_deadline() {
+        use super::{
+            GoImportContext, GoSamePackageReferenceTarget, resolve_go_same_package_reference,
+        };
+
+        let source_symbol = IndexedSymbol {
+            extension_receiver: None,
+            symbol_id: "caller".to_string(),
+            semantic_path: "caller".to_string(),
+            base_name: "caller".to_string(),
+            scope_path: None,
+            file_path: "workspace/caller.go".to_string(),
+            node_kind: "function_declaration".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            reference_facts: Vec::new(),
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        };
+        let candidate = IndexedSymbol {
+            extension_receiver: None,
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            base_name: "helper".to_string(),
+            scope_path: None,
+            file_path: "workspace/helper.go".to_string(),
+            node_kind: "function_declaration".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            reference_facts: Vec::new(),
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        };
+        let mut contexts = BTreeMap::from([(
+            "workspace/caller.go".to_string(),
+            GoImportContext {
+                package_name: Some("main".to_string()),
+                bindings: BTreeMap::new(),
+            },
+        )]);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = resolve_go_same_package_reference(
+            &source_symbol,
+            GoSamePackageReferenceTarget {
+                reference_name: "helper",
+                node_kind: "function_declaration",
+                candidate_indexes: &[0],
+            },
+            &[candidate],
+            None,
+            &mut contexts,
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop Go candidate scanning");
+
+        assert!(
+            error
+                .to_string()
+                .contains("resolving Go same-package reference candidates"),
+            "{error:#}"
         );
     }
 
