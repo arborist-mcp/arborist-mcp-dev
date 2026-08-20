@@ -5,8 +5,9 @@ use anyhow::Result;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    detect_language, go_local_package_imports_with_deadline, go_source_package_name,
-    normalize_path, parse_document, parse_document_with_timeout, read_source,
+    ParsedDocument, detect_language, go_local_package_imports_with_deadline,
+    go_source_package_name, normalize_path, parse_document, parse_document_with_timeout,
+    read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -43,15 +44,8 @@ fn go_import_context_for_file_with_overrides_and_deadline(
     if let Some(deadline) = deadline {
         deadline.check("parsing Go import context")?;
     }
-    let document = if let Some(deadline) = deadline {
-        parse_document_with_timeout(
-            path,
-            &source,
-            deadline.remaining_timeout_micros("parsing Go import context")?,
-        )?
-    } else {
-        parse_document(path, &source)?
-    };
+    let document =
+        parse_go_source_with_deadline(path, &source, deadline, "parsing Go import context")?;
     let root = document.tree.root_node();
     if root.has_error() {
         return Ok(GoImportContext::default());
@@ -182,15 +176,12 @@ fn go_package_name_for_paths(
         if let Some(deadline) = deadline {
             deadline.check("parsing imported Go package names")?;
         }
-        let document = if let Some(deadline) = deadline {
-            parse_document_with_timeout(
-                path,
-                &source,
-                deadline.remaining_timeout_micros("parsing imported Go package names")?,
-            )?
-        } else {
-            parse_document(path, &source)?
-        };
+        let document = parse_go_source_with_deadline(
+            path,
+            &source,
+            deadline,
+            "parsing imported Go package names",
+        )?;
         let root = document.tree.root_node();
         if root.has_error() {
             return Ok(None);
@@ -202,6 +193,20 @@ fn go_package_name_for_paths(
     }
 
     Ok((names.len() == 1).then(|| names.pop_first().unwrap()))
+}
+
+fn parse_go_source_with_deadline(
+    path: &Path,
+    source: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+    phase: &str,
+) -> Result<ParsedDocument> {
+    match deadline {
+        Some(deadline) => {
+            parse_document_with_timeout(path, source, deadline.remaining_timeout_micros(phase)?)
+        }
+        None => parse_document(path, source),
+    }
 }
 
 fn is_production_go_source(path: &Path) -> bool {
