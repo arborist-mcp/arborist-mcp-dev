@@ -109,7 +109,7 @@ pub(crate) fn go_local_import_binding_statuses(
     let mut resolved_ranges = BTreeMap::new();
     let mut seen_binding_names = BTreeSet::new();
     let mut ambiguous_names = BTreeSet::new();
-    for import in go_import_specs(root, source)? {
+    for import in go_import_specs(root, source, deadline)? {
         if let Some(deadline) = deadline {
             deadline.check("validating Go local import bindings")?;
         }
@@ -254,7 +254,7 @@ pub(crate) fn go_local_package_imports(
     };
 
     let mut imports = Vec::new();
-    for import in go_import_specs(root, source)? {
+    for import in go_import_specs(root, source, None)? {
         let Some(package_dir) =
             resolve_local_go_package_directory(&module_root, &module_path, &import.path)
         else {
@@ -328,7 +328,11 @@ struct GoImportSpec {
     end_byte: usize,
 }
 
-fn go_import_specs(root: Node<'_>, source: &str) -> Result<Vec<GoImportSpec>> {
+fn go_import_specs(
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<GoImportSpec>> {
     if root.kind() != "source_file" {
         return Ok(Vec::new());
     }
@@ -337,33 +341,44 @@ fn go_import_specs(root: Node<'_>, source: &str) -> Result<Vec<GoImportSpec>> {
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         if child.kind() == "import_declaration" {
-            collect_go_import_specs(child, source, &mut imports)?;
+            collect_go_import_specs(child, source, &mut imports, deadline)?;
         }
     }
     Ok(imports)
+}
+
+fn check_go_import_specs_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning Go import specs")?;
+    }
+    Ok(())
 }
 
 fn collect_go_import_specs(
     node: Node<'_>,
     source: &str,
     imports: &mut Vec<GoImportSpec>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    if node.kind() == "import_spec"
-        && let Some(path) = node.child_by_field_name("path")
-        && let Some(path) = go_import_path_literal(path, source)?
-        && let Some(explicit_local_name) = go_explicit_import_local_name(node, source)?
-    {
-        imports.push(GoImportSpec {
-            explicit_local_name,
-            path,
-            start_byte: node.start_byte(),
-            end_byte: node.end_byte(),
-        });
+    check_go_import_specs_deadline(deadline)?;
+    if node.kind() == "import_spec" {
+        if let Some(path) = node.child_by_field_name("path")
+            && let Some(path) = go_import_path_literal(path, source)?
+            && let Some(explicit_local_name) = go_explicit_import_local_name(node, source)?
+        {
+            imports.push(GoImportSpec {
+                explicit_local_name,
+                path,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
+            });
+        }
+        return Ok(());
     }
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_import_specs(child, source, imports)?;
+        collect_go_import_specs(child, source, imports, deadline)?;
     }
     Ok(())
 }
@@ -587,7 +602,7 @@ mod tests {
         .unwrap();
 
         let document = parse_document(&command, source).unwrap();
-        let deadline = RejectAfterChecks::new(2);
+        let deadline = RejectAfterChecks::new(3);
         let error = go_local_import_binding_statuses(
             &command,
             document.tree.root_node(),
@@ -600,6 +615,39 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn local_import_binding_validation_checks_deadline_while_scanning_import_specs() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = r#"package main
+
+import (
+    "example.com/project/internal/first"
+    "example.com/project/internal/second"
+)
+"#;
+        fs::write(&command, source).unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let deadline = RejectAfterChecks::new(1);
+        let error = go_local_import_binding_statuses(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("deadline should interrupt import-spec scanning");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go import specs"),
             "{error:#}"
         );
     }
