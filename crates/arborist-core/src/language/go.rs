@@ -187,7 +187,7 @@ fn go_unique_local_package_name(
     directory: &Path,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<String>> {
-    let source_paths = go_production_source_files_in_directory(directory)
+    let source_paths = go_production_source_files_in_directory_with_deadline(directory, deadline)?
         .into_iter()
         .filter(|path| path_is_inside_workspace(module_root, path).unwrap_or(false))
         .collect::<BTreeSet<_>>();
@@ -224,6 +224,41 @@ fn go_unique_local_package_name(
         package_name = Some(candidate_name);
     }
     Ok(package_name)
+}
+
+fn go_production_source_files_in_directory_with_deadline(
+    directory: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(BTreeSet::new()),
+    };
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        if let Some(deadline) = deadline {
+            deadline.check("scanning Go local import package files")?;
+        }
+        let Ok(path) = entry.map(|entry| entry.path()) else {
+            continue;
+        };
+        if !path.is_file()
+            || !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
+            || path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem.ends_with("_test"))
+        {
+            continue;
+        }
+        if let Ok(path) = normalize_absolute_path(&path) {
+            paths.insert(path);
+        }
+    }
+    Ok(paths)
 }
 
 pub(crate) fn go_local_package_imports(
@@ -479,15 +514,44 @@ fn go_source_files_in_directory(module_root: &Path, directory: &Path) -> BTreeSe
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::go_local_package_dependency_paths;
+    use anyhow::Result;
+
+    use super::{go_local_import_binding_statuses, go_local_package_dependency_paths};
+    use crate::deadline::DeadlineCheck;
     use crate::language::{normalize_absolute_path, parse_document};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct RejectAfterChecks {
+        allowed_checks: usize,
+        checks: Cell<usize>,
+    }
+
+    impl RejectAfterChecks {
+        fn new(allowed_checks: usize) -> Self {
+            Self {
+                allowed_checks,
+                checks: Cell::new(0),
+            }
+        }
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.allowed_checks {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
 
     #[test]
     fn resolves_unambiguous_local_module_imports_to_all_package_source_files() {
@@ -515,6 +579,45 @@ mod tests {
                 normalize_absolute_path(&second).unwrap(),
             ]
             .into()
+        );
+    }
+
+    #[test]
+    fn local_import_binding_validation_checks_deadline_while_scanning_package_files() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            package_dir.join("service.go"),
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            package_dir.join("other.go"),
+            "package service\nfunc Other() int { return 2 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let deadline = RejectAfterChecks::new(2);
+        let error = go_local_import_binding_statuses(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("deadline should interrupt package-directory scanning");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
         );
     }
 
