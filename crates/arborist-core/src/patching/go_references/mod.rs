@@ -31,7 +31,7 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
     let mut file_items = BTreeMap::new();
     collect_go_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
     let (local_import_names, resolved_local_import_names) =
-        go_local_import_binding_statuses(path, document.tree.root_node(), source)?;
+        go_local_import_binding_statuses(path, document.tree.root_node(), source, deadline)?;
     let scope_path = go_symbol_scope_path(symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();

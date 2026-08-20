@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+
+use crate::deadline::DeadlineCheck;
 use tree_sitter::Node;
 
 use super::{
@@ -107,6 +109,7 @@ pub(crate) fn go_local_import_binding_statuses(
     path: &Path,
     root: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
     let Some((module_root, module_path)) = find_go_module(path) else {
         return Ok((BTreeSet::new(), BTreeSet::new()));
@@ -115,6 +118,9 @@ pub(crate) fn go_local_import_binding_statuses(
     let mut local_names = BTreeSet::new();
     let mut resolved_names = BTreeSet::new();
     for import in go_import_specs(root, source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Go local import bindings")?;
+        }
         let Some(package_dir) =
             resolve_local_go_package_directory(&module_root, &module_path, &import.path)
         else {
@@ -133,6 +139,9 @@ pub(crate) fn go_local_import_binding_statuses(
         }
         let mut package_names = BTreeSet::new();
         for source_path in source_paths {
+            if let Some(deadline) = deadline {
+                deadline.check("validating Go local import packages")?;
+            }
             let candidate_source = match read_source(&source_path) {
                 Ok(candidate_source) => candidate_source,
                 Err(_) => continue,
