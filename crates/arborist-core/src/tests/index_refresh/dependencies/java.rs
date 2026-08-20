@@ -67,6 +67,81 @@ fn refreshes_java_explicit_static_import_dependents() {
 }
 
 #[test]
+fn refreshes_java_wildcard_package_import_dependents() {
+    let dir = temporary_dir();
+    let package_dir = dir.join("src").join("com").join("example");
+    let importer = dir.join("src").join("com").join("app").join("Main.java");
+    let helper = package_dir.join("Helper.java");
+    let other = package_dir.join("Other.java");
+    let unrelated = dir
+        .join("src")
+        .join("com")
+        .join("other")
+        .join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&package_dir).unwrap();
+    fs::create_dir_all(importer.parent().unwrap()).unwrap();
+    fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+    fs::write(
+        &importer,
+        "package com.app;\nimport com.example.*;\nclass Main {}\n",
+    )
+    .unwrap();
+    fs::write(&helper, "package com.example; class Helper {}\n").unwrap();
+    fs::write(&other, "package com.example; class Other {}\n").unwrap();
+    fs::write(&unrelated, "package com.other; class Unrelated {}\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &helper,
+        "package com.example; class Helper { int value; }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.indexed_files, 4);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 2);
+}
+
+#[test]
+fn refreshes_java_static_wildcard_import_dependents() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let importer = dir.join("src").join("com").join("app").join("Main.java");
+    let helper = source_dir.join("Helper.java");
+    let unrelated = source_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(importer.parent().unwrap()).unwrap();
+    fs::write(
+        &importer,
+        "package com.app;\nimport static com.example.Helper.*;\nclass Main {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper,
+        "package com.example; class Helper { static int value() { return 1; } }\n",
+    )
+    .unwrap();
+    fs::write(&unrelated, "package com.example; class Unrelated {}\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &helper,
+        "package com.example; class Helper { static int value() { return 2; } }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
+}
+
+#[test]
 fn refreshes_java_same_package_static_interface_callers() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");

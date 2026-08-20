@@ -484,7 +484,7 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "java-patch-targeting-v41",
+    analysis_revision: "java-patch-targeting-v42",
     grammar: java_grammar,
 };
 static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

@@ -47,6 +47,9 @@ pub(crate) fn java_local_file_dependency_paths(
     dependencies.extend(java_local_direct_interface_dependency_paths(
         path, root, source,
     )?);
+    dependencies.extend(java_local_wildcard_import_dependency_paths(
+        path, root, source,
+    )?);
     Ok(dependencies)
 }
 
@@ -308,6 +311,59 @@ pub(crate) fn java_local_explicit_static_member_imports(
     Ok(imports)
 }
 
+fn java_local_wildcard_import_dependency_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    let normalized_path = normalize_absolute_path(path)?;
+    let mut dependencies = BTreeSet::new();
+    let mut cursor = root.walk();
+    for node in root.named_children(&mut cursor) {
+        if node.kind() != "import_declaration" {
+            continue;
+        }
+        let Some((is_static, import_path)) = java_wildcard_import_path(node, source)? else {
+            continue;
+        };
+        if is_static {
+            if let Some(source_path) = resolve_unique_java_source_path(path, &import_path)
+                && source_path != normalized_path
+            {
+                dependencies.insert(source_path);
+            }
+            continue;
+        }
+        dependencies.extend(
+            resolve_unique_java_package_source_paths(path, &import_path)
+                .into_iter()
+                .filter(|source_path| source_path != &normalized_path),
+        );
+    }
+    Ok(dependencies)
+}
+
+fn java_wildcard_import_path(node: Node<'_>, source: &str) -> Result<Option<(bool, String)>> {
+    let text = node_text(node, source)?.trim();
+    let is_static = text.split_whitespace().nth(1) == Some("static");
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if !children.iter().any(|child| child.kind() == "asterisk") {
+        return Ok(None);
+    }
+    let Some(name) = children
+        .into_iter()
+        .find(|child| matches!(child.kind(), "identifier" | "scoped_identifier"))
+    else {
+        return Ok(None);
+    };
+    let import_path = node_text(name, source)?.trim().to_string();
+    if import_path.is_empty() || !is_safe_java_qualified_name(&import_path) {
+        return Ok(None);
+    }
+    Ok(Some((is_static, import_path)))
+}
+
 fn java_explicit_type_import_path(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let Some((is_static, import_path)) = java_explicit_import_path(node, source)? else {
         return Ok(None);
@@ -388,6 +444,60 @@ fn resolve_unique_java_qualified_superclass_source_path(
         .flatten()
 }
 
+fn resolve_unique_java_package_source_paths(path: &Path, package_name: &str) -> BTreeSet<PathBuf> {
+    let segments = package_name.split('.').collect::<Vec<_>>();
+    let mut package_directories = BTreeSet::new();
+    let mut source_root = match path.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => return BTreeSet::new(),
+    };
+
+    loop {
+        let mut candidate = source_root.clone();
+        for segment in &segments {
+            candidate.push(segment);
+        }
+        if candidate.is_dir()
+            && java_source_files_in_package_directory(&candidate, package_name)
+                .next()
+                .is_some()
+            && let Ok(candidate) = normalize_absolute_path(&candidate)
+        {
+            package_directories.insert(candidate);
+        }
+        if !source_root.pop() {
+            break;
+        }
+    }
+
+    if package_directories.len() != 1 {
+        return BTreeSet::new();
+    }
+    let directory = package_directories.into_iter().next().unwrap();
+    java_source_files_in_package_directory(&directory, package_name)
+        .filter_map(|candidate| normalize_absolute_path(&candidate).ok())
+        .collect()
+}
+
+fn java_source_files_in_package_directory<'a>(
+    directory: &'a Path,
+    package_name: &'a str,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    fs::read_dir(directory)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|candidate| {
+            candidate.is_file()
+                && candidate
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("java"))
+        })
+        .filter(move |candidate| candidate_declares_package(candidate, package_name))
+}
+
 fn resolve_unique_java_default_package_source_path(
     path: &Path,
     type_name: &str,
@@ -460,6 +570,10 @@ fn candidate_declares_import_package(candidate: &Path, import_path: &str) -> boo
     let Some((expected_package, _)) = import_path.rsplit_once('.') else {
         return false;
     };
+    candidate_declares_package(candidate, expected_package)
+}
+
+fn candidate_declares_package(candidate: &Path, expected_package: &str) -> bool {
     let Ok(source) = fs::read_to_string(candidate) else {
         return false;
     };
@@ -762,7 +876,67 @@ import static com.example.Outer.Inner.utility;
     }
 
     #[test]
-    fn ignores_wildcard_and_ambiguous_java_imports() {
+    fn resolves_unique_java_wildcard_package_imports_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/app/Main.java");
+        let helper_path = root.join("src/com/example/Helper.java");
+        let other_path = root.join("src/com/example/Other.java");
+        let unrelated_path = root.join("src/com/other/Unrelated.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(unrelated_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.app;\nimport com.example.*;\nclass Main {}\n",
+        )
+        .unwrap();
+        fs::write(&helper_path, "package com.example; class Helper {}\n").unwrap();
+        fs::write(&other_path, "package com.example; class Other {}\n").unwrap();
+        fs::write(&unrelated_path, "package com.other; class Unrelated {}\n").unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(
+            dependencies,
+            [helper_path, other_path].into_iter().collect()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_java_static_wildcard_imports_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/app/Main.java");
+        let helper_path = root.join("src/com/example/Helper.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.app;\nimport static com.example.Helper.*;\nclass Main {}\n",
+        )
+        .unwrap();
+        fs::write(
+            &helper_path,
+            "package com.example; class Helper { static int value() { return 1; } }\n",
+        )
+        .unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [helper_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_ambiguous_java_wildcard_package_imports() {
         let root = temporary_dir();
         let source_path = root.join("src/com/example/Main.java");
         let first_helper = root.join("src/com/example/Helper.java");
@@ -771,7 +945,7 @@ import static com.example.Outer.Inner.utility;
         fs::create_dir_all(second_helper.parent().unwrap()).unwrap();
         fs::write(&first_helper, "package com.example; class Helper {}\n").unwrap();
         fs::write(&second_helper, "package com.example; class Helper {}\n").unwrap();
-        let source = "package com.example;\nimport com.example.*;\nimport com.example.Helper;\n";
+        let source = "package com.example;\nimport com.example.*;\n";
         fs::write(&source_path, source).unwrap();
         let document = parse_document(&source_path, source).unwrap();
 
