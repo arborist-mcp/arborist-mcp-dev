@@ -117,6 +117,7 @@ pub(crate) fn go_local_import_binding_statuses(
 
     let mut local_names = BTreeSet::new();
     let mut resolved_names = BTreeSet::new();
+    let mut ambiguous_names = BTreeSet::new();
     for import in go_import_specs(root, source)? {
         if let Some(deadline) = deadline {
             deadline.check("validating Go local import bindings")?;
@@ -131,7 +132,14 @@ pub(crate) fn go_local_import_binding_statuses(
         let Some(binding_name) = binding_name.filter(|name| is_valid_go_identifier(name)) else {
             continue;
         };
-        local_names.insert(binding_name.clone());
+        if ambiguous_names.contains(&binding_name) {
+            continue;
+        }
+        if !local_names.insert(binding_name.clone()) {
+            resolved_names.remove(&binding_name);
+            ambiguous_names.insert(binding_name);
+            continue;
+        }
 
         let source_paths = go_source_files_in_directory(&module_root, &package_dir);
         if source_paths.is_empty() {
