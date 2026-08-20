@@ -117,6 +117,7 @@ pub(crate) fn go_local_import_binding_statuses(
 
     let mut local_names = BTreeSet::new();
     let mut resolved_names = BTreeSet::new();
+    let mut seen_binding_names = BTreeSet::new();
     let mut ambiguous_names = BTreeSet::new();
     for import in go_import_specs(root, source)? {
         if let Some(deadline) = deadline {
@@ -128,16 +129,21 @@ pub(crate) fn go_local_import_binding_statuses(
             continue;
         };
         let default_name = import.path.rsplit('/').next().map(str::to_string);
-        let binding_name = import.explicit_local_name.clone().or(default_name);
-        let Some(binding_name) = binding_name.filter(|name| is_valid_go_identifier(name)) else {
+        let explicit_name = import.explicit_local_name.clone();
+        let candidate_name = explicit_name.clone().or(default_name);
+        let Some(candidate_name) = candidate_name.filter(|name| is_valid_go_identifier(name))
+        else {
             continue;
         };
-        if ambiguous_names.contains(&binding_name) {
-            continue;
-        }
-        if !local_names.insert(binding_name.clone()) {
-            resolved_names.remove(&binding_name);
-            ambiguous_names.insert(binding_name);
+        local_names.insert(candidate_name.clone());
+
+        // Explicit aliases are the actual binding name even when the imported
+        // package cannot be inspected, so register them before scanning files.
+        if let Some(explicit_name) = explicit_name.as_deref()
+            && !seen_binding_names.insert(explicit_name.to_string())
+        {
+            resolved_names.remove(explicit_name);
+            ambiguous_names.insert(explicit_name.to_string());
             continue;
         }
 
@@ -165,11 +171,18 @@ pub(crate) fn go_local_import_binding_statuses(
             }
         }
         if package_names.len() == 1 {
-            let resolved_name = if import.explicit_local_name.is_some() {
-                binding_name
-            } else {
-                package_names.into_iter().next().unwrap()
-            };
+            let resolved_name = explicit_name
+                .or_else(|| package_names.into_iter().next())
+                .expect("Go import package name is present");
+            local_names.insert(resolved_name.clone());
+            if ambiguous_names.contains(&resolved_name) {
+                continue;
+            }
+            if !seen_binding_names.insert(resolved_name.clone()) {
+                resolved_names.remove(&resolved_name);
+                ambiguous_names.insert(resolved_name);
+                continue;
+            }
             resolved_names.insert(resolved_name);
         }
     }

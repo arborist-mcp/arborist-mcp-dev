@@ -331,6 +331,71 @@ func compute() int {
 }
 
 #[test]
+fn resolves_go_imported_package_names_when_path_basenames_collide() {
+    let root = temporary_dir();
+    let caller_path = root.join("cmd").join("main.go");
+    let first_path = root
+        .join("internal")
+        .join("first")
+        .join("foo")
+        .join("source.go");
+    let second_path = root
+        .join("internal")
+        .join("second")
+        .join("foo")
+        .join("source.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(first_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(second_path.parent().unwrap()).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &first_path,
+        "package first\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_path,
+        "package second\n\nfunc Value() int { return 2 }\n",
+    )
+    .unwrap();
+
+    let source = r#"package main
+
+import (
+	"example.com/project/internal/first/foo"
+	"example.com/project/internal/second/foo"
+)
+
+func compute() int {
+	return 1
+}
+"#;
+    fs::write(&caller_path, source).unwrap();
+
+    let result = patch_ast_node(
+        &caller_path,
+        source,
+        "compute",
+        "func compute() int {\n\treturn first.Value() + second.Value()\n}",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    for name in ["first", "second"] {
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == name && decision.status == "resolved"),
+            "expected resolved decision for {name}: {result:#?}"
+        );
+    }
+}
+
+#[test]
 fn rejects_go_patches_with_ambiguous_local_package_import_bindings() {
     let root = temporary_dir();
     let caller_path = root.join("cmd").join("main.go");

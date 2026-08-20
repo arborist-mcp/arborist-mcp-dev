@@ -66,23 +66,29 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
             validation.unresolved_identifiers.push(name.clone());
             continue;
         }
-        match file_items.get(name) {
-            Some(item) => {
-                let summary = go_item_symbol_summary(&normalized_path, source, item);
-                validation
-                    .binding_decisions
-                    .push(resolved_binding_decision(name, &summary));
-                validation.resolved_identifiers.push(ValidationBinding {
-                    name: name.clone(),
-                    symbol: summary,
-                });
-            }
-            None => {
-                validation
-                    .binding_decisions
-                    .push(unresolved_binding_decision(name));
-                validation.unresolved_identifiers.push(name.clone());
-            }
+        if let Some(item) = file_items.get(name) {
+            let summary = go_item_symbol_summary(&normalized_path, source, item);
+            validation
+                .binding_decisions
+                .push(resolved_binding_decision(name, &summary));
+            validation.resolved_identifiers.push(ValidationBinding {
+                name: name.clone(),
+                symbol: summary,
+            });
+        } else if resolved_local_import_names.contains(name) {
+            let summary = go_resolved_local_import_symbol_summary(&normalized_path, name);
+            validation
+                .binding_decisions
+                .push(resolved_binding_decision(name, &summary));
+            validation.resolved_identifiers.push(ValidationBinding {
+                name: name.clone(),
+                symbol: summary,
+            });
+        } else {
+            validation
+                .binding_decisions
+                .push(unresolved_binding_decision(name));
+            validation.unresolved_identifiers.push(name.clone());
         }
     }
     Ok(validation)
@@ -93,6 +99,22 @@ fn go_symbol_scope_path(symbol_node: Node<'_>, source: &str) -> Result<Option<St
         Some(name) => go_semantic_path(symbol_node, source, &name),
         None => Ok(None),
     }
+}
+
+fn go_resolved_local_import_symbol_summary(normalized_path: &str, name: &str) -> SymbolSummary {
+    SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: format!("{normalized_path}::go::<module>::import_spec::{name}"),
+        semantic_path: name.to_string(),
+        scope_path: None,
+        file_path: normalized_path.to_string(),
+        node_kind: "import_spec".to_string(),
+        origin_type: "imported_module".to_string(),
+        byte_range: (0, 0),
+        signature: None,
+        parameters: Vec::new(),
+        return_type: None,
+        docstring: None,
+    })
 }
 
 fn go_local_symbol_summary(
