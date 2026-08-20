@@ -331,6 +331,48 @@ func compute() int {
 }
 
 #[test]
+fn rejects_go_patches_with_invalid_local_import_package_sources() {
+    let root = temporary_dir();
+    let caller_path = root.join("cmd").join("main.go");
+    let service_dir = root.join("internal").join("service");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(&service_dir).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        service_dir.join("service.go"),
+        "package service\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(
+        service_dir.join("broken.go"),
+        "package service\nfunc Broken(\n",
+    )
+    .unwrap();
+
+    let source = r#"package main
+
+import "example.com/project/internal/service"
+
+func compute() int {
+	return 1
+}
+"#;
+    fs::write(&caller_path, source).unwrap();
+
+    let result = patch_ast_node(
+        &caller_path,
+        source,
+        "compute",
+        "func compute() int {\n\treturn service.Value()\n}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["service"]);
+}
+
+#[test]
 fn rejects_go_patches_with_conflicting_module_and_import_bindings() {
     let source = r#"package sample
 

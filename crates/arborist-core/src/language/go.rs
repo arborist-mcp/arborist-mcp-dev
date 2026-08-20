@@ -156,52 +156,74 @@ pub(crate) fn go_local_import_binding_statuses(
             continue;
         }
 
-        let source_paths = go_source_files_in_directory(&module_root, &package_dir);
-        if source_paths.is_empty() {
+        let Some(package_name) =
+            go_unique_local_package_name(&module_root, &package_dir, deadline)?
+        else {
+            continue;
+        };
+        let resolved_name = explicit_name.unwrap_or(package_name);
+        local_names.insert(resolved_name.clone());
+        if ambiguous_names.contains(&resolved_name) {
             continue;
         }
-        let mut package_names = BTreeSet::new();
-        for source_path in source_paths {
-            if let Some(deadline) = deadline {
-                deadline.check("validating Go local import packages")?;
-            }
-            let candidate_source = match read_source(&source_path) {
-                Ok(candidate_source) => candidate_source,
-                Err(_) => continue,
-            };
-            let document = match parse_document(&source_path, &candidate_source) {
-                Ok(document) => document,
-                Err(_) => continue,
-            };
-            if let Ok(Some(package_name)) =
-                go_source_package_name(document.tree.root_node(), &candidate_source)
-            {
-                package_names.insert(package_name);
-            }
+        if !seen_binding_names.insert(resolved_name.clone()) {
+            resolved_names.remove(&resolved_name);
+            resolved_ranges.remove(&resolved_name);
+            ambiguous_names.insert(resolved_name);
+            continue;
         }
-        if package_names.len() == 1 {
-            let resolved_name = explicit_name
-                .or_else(|| package_names.into_iter().next())
-                .expect("Go import package name is present");
-            local_names.insert(resolved_name.clone());
-            if ambiguous_names.contains(&resolved_name) {
-                continue;
-            }
-            if !seen_binding_names.insert(resolved_name.clone()) {
-                resolved_names.remove(&resolved_name);
-                resolved_ranges.remove(&resolved_name);
-                ambiguous_names.insert(resolved_name);
-                continue;
-            }
-            resolved_ranges.insert(resolved_name.clone(), (import.start_byte, import.end_byte));
-            resolved_names.insert(resolved_name);
-        }
+        resolved_ranges.insert(resolved_name.clone(), (import.start_byte, import.end_byte));
+        resolved_names.insert(resolved_name);
     }
     Ok(GoLocalImportBindingStatuses {
         local_names,
         resolved_names,
         resolved_ranges,
     })
+}
+
+fn go_unique_local_package_name(
+    module_root: &Path,
+    directory: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<String>> {
+    let source_paths = go_production_source_files_in_directory(directory)
+        .into_iter()
+        .filter(|path| path_is_inside_workspace(module_root, path).unwrap_or(false))
+        .collect::<BTreeSet<_>>();
+    if source_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let mut package_name = None;
+    for source_path in source_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Go local import packages")?;
+        }
+        let candidate_source = match read_source(&source_path) {
+            Ok(candidate_source) => candidate_source,
+            Err(_) => return Ok(None),
+        };
+        let document = match parse_document(&source_path, &candidate_source) {
+            Ok(document) => document,
+            Err(_) => return Ok(None),
+        };
+        let root = document.tree.root_node();
+        if root.has_error() {
+            return Ok(None);
+        }
+        let Some(candidate_name) = go_source_package_name(root, &candidate_source)? else {
+            return Ok(None);
+        };
+        if package_name
+            .as_ref()
+            .is_some_and(|package_name| package_name != &candidate_name)
+        {
+            return Ok(None);
+        }
+        package_name = Some(candidate_name);
+    }
+    Ok(package_name)
 }
 
 pub(crate) fn go_local_package_imports(
