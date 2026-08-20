@@ -12,6 +12,9 @@ use super::{
     path_is_inside_workspace, read_source,
 };
 
+const MAX_GO_PACKAGE_DIRECTORY_ENTRIES: usize = 4_096;
+const MAX_GO_IMPORT_SPECS: usize = 4_096;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GoLocalPackageImport {
     pub(crate) explicit_local_name: Option<String>,
@@ -274,14 +277,31 @@ fn go_production_source_files_in_directory_with_deadline(
     directory: &Path,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<PathBuf>> {
+    go_production_source_files_in_directory_with_limit_and_deadline(
+        directory,
+        MAX_GO_PACKAGE_DIRECTORY_ENTRIES,
+        deadline,
+    )
+}
+
+fn go_production_source_files_in_directory_with_limit_and_deadline(
+    directory: &Path,
+    max_entries: usize,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(_) => return Ok(BTreeSet::new()),
     };
     let mut paths = BTreeSet::new();
+    let mut entry_count = 0;
     for entry in entries {
         if let Some(deadline) = deadline {
             deadline.check("scanning Go local import package files")?;
+        }
+        entry_count += 1;
+        if entry_count > max_entries {
+            return Ok(BTreeSet::new());
         }
         let Ok(path) = entry.map(|entry| entry.path()) else {
             continue;
@@ -301,6 +321,9 @@ fn go_production_source_files_in_directory_with_deadline(
         if let Ok(path) = normalize_absolute_path(&path) {
             paths.insert(path);
         }
+    }
+    if paths.len() > max_entries {
+        return Ok(BTreeSet::new());
     }
     Ok(paths)
 }
@@ -421,15 +444,37 @@ fn go_import_specs(
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<GoImportSpec>> {
+    go_import_specs_with_limit(root, source, MAX_GO_IMPORT_SPECS, deadline)
+}
+
+fn go_import_specs_with_limit(
+    root: Node<'_>,
+    source: &str,
+    max_imports: usize,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<GoImportSpec>> {
     if root.kind() != "source_file" {
         return Ok(Vec::new());
     }
 
     let mut imports = Vec::new();
+    let mut import_spec_count = 0;
+    let mut overflowed = false;
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         if child.kind() == "import_declaration" {
-            collect_go_import_specs(child, source, &mut imports, deadline)?;
+            collect_go_import_specs(
+                child,
+                source,
+                &mut imports,
+                max_imports,
+                &mut import_spec_count,
+                &mut overflowed,
+                deadline,
+            )?;
+            if overflowed {
+                return Ok(Vec::new());
+            }
         }
     }
     Ok(imports)
@@ -446,10 +491,18 @@ fn collect_go_import_specs(
     node: Node<'_>,
     source: &str,
     imports: &mut Vec<GoImportSpec>,
+    max_imports: usize,
+    import_spec_count: &mut usize,
+    overflowed: &mut bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     check_go_import_specs_deadline(deadline)?;
     if node.kind() == "import_spec" {
+        *import_spec_count += 1;
+        if *import_spec_count > max_imports {
+            *overflowed = true;
+            return Ok(());
+        }
         if let Some(path) = node.child_by_field_name("path")
             && let Some(path) = go_import_path_literal(path, source)?
             && let Some(explicit_local_name) = go_explicit_import_local_name(node, source)?
@@ -466,7 +519,18 @@ fn collect_go_import_specs(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_import_specs(child, source, imports, deadline)?;
+        collect_go_import_specs(
+            child,
+            source,
+            imports,
+            max_imports,
+            import_spec_count,
+            overflowed,
+            deadline,
+        )?;
+        if *overflowed {
+            return Ok(());
+        }
     }
     Ok(())
 }
@@ -628,9 +692,10 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        go_local_import_binding_statuses, go_local_package_dependency_paths,
-        go_local_package_dependency_paths_with_deadline, go_local_package_imports,
-        go_local_package_imports_with_deadline,
+        go_import_specs_with_limit, go_local_import_binding_statuses,
+        go_local_package_dependency_paths, go_local_package_dependency_paths_with_deadline,
+        go_local_package_imports, go_local_package_imports_with_deadline,
+        go_production_source_files_in_directory_with_limit_and_deadline,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::{MAX_SOURCE_FILE_BYTES, normalize_absolute_path, parse_document};
@@ -683,6 +748,40 @@ mod tests {
         fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
             anyhow::bail!("deadline budget requested during {phase}");
         }
+    }
+
+    #[test]
+    fn rejects_go_package_directories_that_exceed_the_entry_limit() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(package_dir.join("first.go"), "package service\n").unwrap();
+        fs::write(package_dir.join("second.go"), "package service\n").unwrap();
+
+        let paths =
+            go_production_source_files_in_directory_with_limit_and_deadline(&package_dir, 1, None)
+                .unwrap();
+
+        assert!(
+            paths.is_empty(),
+            "overflow must fail closed rather than truncate"
+        );
+    }
+
+    #[test]
+    fn rejects_go_import_specs_that_exceed_the_ast_limit() {
+        let source =
+            "package main\n\nimport (\n    \"example.com/one\"\n    \"example.com/two\"\n)\n";
+        let path = temporary_dir().join("main.go");
+        let document = parse_document(&path, source).unwrap();
+
+        let imports =
+            go_import_specs_with_limit(document.tree.root_node(), source, 1, None).unwrap();
+
+        assert!(
+            imports.is_empty(),
+            "overflow must fail closed rather than truncate"
+        );
     }
 
     #[test]
