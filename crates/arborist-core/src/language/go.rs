@@ -215,20 +215,9 @@ fn go_unique_local_package_name(
             Ok(candidate_source) => candidate_source,
             Err(_) => return Ok(None),
         };
-        let Some(document) = parse_go_source_with_deadline(
-            &source_path,
-            &candidate_source,
-            deadline,
-            "parsing Go local import packages",
-        )?
+        let Some(candidate_name) =
+            go_source_package_name_with_deadline(&source_path, &candidate_source, deadline)?
         else {
-            return Ok(None);
-        };
-        let root = document.tree.root_node();
-        if root.has_error() {
-            return Ok(None);
-        }
-        let Some(candidate_name) = go_source_package_name(root, &candidate_source)? else {
             return Ok(None);
         };
         if package_name
@@ -240,6 +229,23 @@ fn go_unique_local_package_name(
         package_name = Some(candidate_name);
     }
     Ok(package_name)
+}
+
+fn go_source_package_name_with_deadline(
+    path: &Path,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<String>> {
+    let Some(document) =
+        parse_go_source_with_deadline(path, source, deadline, "parsing Go local import packages")?
+    else {
+        return Ok(None);
+    };
+    let root = document.tree.root_node();
+    if root.has_error() {
+        return Ok(None);
+    }
+    go_source_package_name(root, source)
 }
 
 fn parse_go_source_with_deadline(
