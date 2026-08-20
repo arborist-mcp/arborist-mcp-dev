@@ -679,7 +679,7 @@ Introduce `ReferenceFact`, adapt Python/C/C++ extraction, and update the resolve
 
 **Exit criterion:** Python/C/C++ dependency graph fixtures remain compatible; control-character reference encodings are removed from shared models.
 
-Python file dependencies now use a bounded source-level adapter for static `import` and `from ... import ...` statements. It resolves only local `.py`/`.pyi` modules and package `__init__` files; dynamic imports, external packages, import hooks, and unresolved names fail closed.
+Python file dependencies now use a bounded source-level adapter for static `import` and `from ... import ...` statements. It resolves only local `.py`/`.pyi` modules and package `__init__` files; dynamic imports, external packages, import hooks, and unresolved names fail closed. Wildcard imports also retain a dependency on the imported package module itself so changes to `__init__.py` invalidate importers.
 
 ### Phase 4: JavaScript and TypeScript
 
