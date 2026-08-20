@@ -428,6 +428,17 @@ func compute() int {
             "expected resolved decision for {name}: {result:#?}"
         );
     }
+    let first_import = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "first")
+        .expect("declared package import should be resolved");
+    assert!(first_import.symbol.byte_range.0 < first_import.symbol.byte_range.1);
+    assert_eq!(
+        &source[first_import.symbol.byte_range.0..first_import.symbol.byte_range.1],
+        "\"example.com/project/internal/first/foo\""
+    );
 }
 
 #[test]

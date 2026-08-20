@@ -30,7 +30,7 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
     let scope_scan = scan_go_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
     collect_go_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
-    let (local_import_names, resolved_local_import_names) =
+    let (local_import_names, resolved_local_import_names, resolved_local_import_ranges) =
         go_local_import_binding_statuses(path, document.tree.root_node(), source, deadline)?;
     let scope_path = go_symbol_scope_path(symbol_node, source)?;
 
@@ -76,7 +76,14 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
                 symbol: summary,
             });
         } else if resolved_local_import_names.contains(name) {
-            let summary = go_resolved_local_import_symbol_summary(&normalized_path, name);
+            let summary = go_resolved_local_import_symbol_summary(
+                &normalized_path,
+                name,
+                resolved_local_import_ranges
+                    .get(name)
+                    .copied()
+                    .unwrap_or((0, 0)),
+            );
             validation
                 .binding_decisions
                 .push(resolved_binding_decision(name, &summary));
@@ -101,7 +108,11 @@ fn go_symbol_scope_path(symbol_node: Node<'_>, source: &str) -> Result<Option<St
     }
 }
 
-fn go_resolved_local_import_symbol_summary(normalized_path: &str, name: &str) -> SymbolSummary {
+fn go_resolved_local_import_symbol_summary(
+    normalized_path: &str,
+    name: &str,
+    byte_range: (usize, usize),
+) -> SymbolSummary {
     SymbolSummary::new(SymbolSummaryInit {
         symbol_id: format!("{normalized_path}::go::<module>::import_spec::{name}"),
         semantic_path: name.to_string(),
@@ -109,7 +120,7 @@ fn go_resolved_local_import_symbol_summary(normalized_path: &str, name: &str) ->
         file_path: normalized_path.to_string(),
         node_kind: "import_spec".to_string(),
         origin_type: "imported_module".to_string(),
-        byte_range: (0, 0),
+        byte_range,
         signature: None,
         parameters: Vec::new(),
         return_type: None,

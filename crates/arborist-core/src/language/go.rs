@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -110,13 +110,18 @@ pub(crate) fn go_local_import_binding_statuses(
     root: Node<'_>,
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
-) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+) -> Result<(
+    BTreeSet<String>,
+    BTreeSet<String>,
+    BTreeMap<String, (usize, usize)>,
+)> {
     let Some((module_root, module_path)) = find_go_module(path) else {
-        return Ok((BTreeSet::new(), BTreeSet::new()));
+        return Ok((BTreeSet::new(), BTreeSet::new(), BTreeMap::new()));
     };
 
     let mut local_names = BTreeSet::new();
     let mut resolved_names = BTreeSet::new();
+    let mut resolved_ranges = BTreeMap::new();
     let mut seen_binding_names = BTreeSet::new();
     let mut ambiguous_names = BTreeSet::new();
     for import in go_import_specs(root, source)? {
@@ -143,6 +148,7 @@ pub(crate) fn go_local_import_binding_statuses(
             && !seen_binding_names.insert(explicit_name.to_string())
         {
             resolved_names.remove(explicit_name);
+            resolved_ranges.remove(explicit_name);
             ambiguous_names.insert(explicit_name.to_string());
             continue;
         }
@@ -180,13 +186,15 @@ pub(crate) fn go_local_import_binding_statuses(
             }
             if !seen_binding_names.insert(resolved_name.clone()) {
                 resolved_names.remove(&resolved_name);
+                resolved_ranges.remove(&resolved_name);
                 ambiguous_names.insert(resolved_name);
                 continue;
             }
+            resolved_ranges.insert(resolved_name.clone(), (import.start_byte, import.end_byte));
             resolved_names.insert(resolved_name);
         }
     }
-    Ok((local_names, resolved_names))
+    Ok((local_names, resolved_names, resolved_ranges))
 }
 
 pub(crate) fn go_local_package_imports(
@@ -269,6 +277,8 @@ fn is_valid_go_module_path(module_path: &str) -> bool {
 struct GoImportSpec {
     explicit_local_name: Option<String>,
     path: String,
+    start_byte: usize,
+    end_byte: usize,
 }
 
 fn go_import_specs(root: Node<'_>, source: &str) -> Result<Vec<GoImportSpec>> {
@@ -299,6 +309,8 @@ fn collect_go_import_specs(
         imports.push(GoImportSpec {
             explicit_local_name,
             path,
+            start_byte: node.start_byte(),
+            end_byte: node.end_byte(),
         });
     }
 
