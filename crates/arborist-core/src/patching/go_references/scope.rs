@@ -602,6 +602,9 @@ fn bind_go_expression_list_identifiers(
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("scanning Go patch declaration bindings")?;
+        }
         if child.kind() == "identifier" {
             bind_go_name(child, source, node_kind, scopes, scan)?;
         } else {
@@ -824,6 +827,43 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    struct RejectPhase(&'static str);
+
+    impl DeadlineCheck for RejectPhase {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == self.0 {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn declaration_binding_scans_respect_deadlines() {
+        let source = "package sample\n\nfunc compute() int {\n\tfirst, second, third := 1, 2, 3\n\treturn first + second + third\n}\n";
+        let document = parse_document(Path::new("sample.go"), source).unwrap();
+        let mut cursor = document.tree.root_node().walk();
+        let function = document
+            .tree
+            .root_node()
+            .named_children(&mut cursor)
+            .find(|node| node.kind() == "function_declaration")
+            .expect("function declaration");
+        let deadline = RejectPhase("scanning Go patch declaration bindings");
+
+        let error = match scan_go_symbol_scope(function, source, Some(&deadline)) {
+            Ok(_) => panic!("deadline should interrupt declaration binding scans"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go patch declaration bindings"),
+            "{error:#}"
+        );
     }
 
     #[test]
