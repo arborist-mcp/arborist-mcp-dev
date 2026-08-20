@@ -748,6 +748,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Keep Kotlin `.kt`/`.kts` routing and bounded local import dependency resolution aligned, including script files in explicit and wildcard package candidates.
 - [x] Extend Java's bounded file-dependency capability to resolve unique local package wildcard imports and static type-member wildcard imports, retaining fail-closed behavior for ambiguous package roots.
 - [x] Harden Go's bounded module-import dependency capability to parse candidate production sources, reject syntax-invalid or package-mismatched files, and fail closed on mixed production package directories.
+- [x] Harden Go patch binding validation for local module imports: resolve only
+  uniquely parsed production packages, fail closed on invalid or mismatched
+  package directories, and consume the caller's deadline while scanning them.
 
 ## Suggested Commit Sequence
 
