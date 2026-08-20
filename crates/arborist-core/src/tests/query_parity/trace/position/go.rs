@@ -733,7 +733,7 @@ fn traces_go_local_package_imported_type_method_receivers() {
     fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
     fs::write(
         &caller_path,
-        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc composite() int { return svc.Counter{}.Value() }\nfunc pointer() int { return (&svc.Counter{}).Value() }\nfunc generic() int { return svc.Box[int]{}.Value() }\nfunc conversion(value int) int { return svc.Scalar(value).Value() }\nfunc assertion(value any) int { return value.(svc.Counter).Value() }\nfunc factory(value int) int { return svc.New(value).Value() }\n",
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc composite() int { return svc.Counter{}.Value() }\nfunc pointer() int { return (&svc.Counter{}).Value() }\nfunc generic() int { return svc.Box[int]{}.Value() }\nfunc conversion(value int) int { return svc.Scalar(value).Value() }\nfunc assertion(value any) int { return value.(svc.Counter).Value() }\nfunc parameter(value svc.Counter) int { return value.Value() }\nfunc factory(value int) int { return svc.New(value).Value() }\n",
     )
     .unwrap();
     fs::write(
@@ -744,8 +744,8 @@ fn traces_go_local_package_imported_type_method_receivers() {
 
     let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(live.indexed_files, 2);
-    assert_eq!(live.callers.len(), 3);
-    for caller in ["composite", "pointer", "assertion"] {
+    assert_eq!(live.callers.len(), 4);
+    for caller in ["composite", "pointer", "assertion", "parameter"] {
         assert!(
             live.callers
                 .iter()
@@ -765,8 +765,8 @@ fn traces_go_local_package_imported_type_method_receivers() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 3);
-    for caller in ["composite", "pointer", "assertion"] {
+    assert_eq!(persisted.callers.len(), 4);
+    for caller in ["composite", "pointer", "assertion", "parameter"] {
         assert!(
             persisted
                 .callers
