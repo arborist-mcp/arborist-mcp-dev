@@ -218,9 +218,7 @@ fn collect_go_file_items<'tree>(
 ) -> Result<()> {
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
-        if let Some(deadline) = deadline {
-            deadline.check("scanning Go file items")?;
-        }
+        check_go_file_items_deadline(deadline)?;
         match child.kind() {
             "function_declaration" => insert_go_declaration_item(
                 child,
@@ -229,13 +227,24 @@ fn collect_go_file_items<'tree>(
                 items,
                 ambiguous_names,
             )?,
-            "type_declaration" => collect_go_type_names(child, source, items, ambiguous_names)?,
-            "import_declaration" => collect_go_import_names(child, source, items, ambiguous_names)?,
+            "type_declaration" => {
+                collect_go_type_names(child, source, items, ambiguous_names, deadline)?
+            }
+            "import_declaration" => {
+                collect_go_import_names(child, source, items, ambiguous_names, deadline)?
+            }
             "var_declaration" | "const_declaration" => {
-                collect_go_spec_names(child, source, items, ambiguous_names)?
+                collect_go_spec_names(child, source, items, ambiguous_names, deadline)?
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+fn check_go_file_items_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning Go file items")?;
     }
     Ok(())
 }
@@ -272,10 +281,12 @@ fn collect_go_spec_names<'tree>(
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
     ambiguous_names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if matches!(node.kind(), "var_spec" | "const_spec") {
         let mut cursor = node.walk();
         for name in node.children_by_field_name("name", &mut cursor) {
+            check_go_file_items_deadline(deadline)?;
             let name = node_text(name, source)?.trim().to_string();
             if !name.is_empty() {
                 insert_go_file_item(
@@ -294,7 +305,8 @@ fn collect_go_spec_names<'tree>(
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_spec_names(child, source, items, ambiguous_names)?;
+        check_go_file_items_deadline(deadline)?;
+        collect_go_spec_names(child, source, items, ambiguous_names, deadline)?;
     }
     Ok(())
 }
@@ -304,13 +316,15 @@ fn collect_go_type_names<'tree>(
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
     ambiguous_names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if matches!(node.kind(), "type_spec" | "type_alias") {
         return insert_go_declaration_item(node, source, node.kind(), items, ambiguous_names);
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_type_names(child, source, items, ambiguous_names)?;
+        check_go_file_items_deadline(deadline)?;
+        collect_go_type_names(child, source, items, ambiguous_names, deadline)?;
     }
     Ok(())
 }
@@ -320,6 +334,7 @@ fn collect_go_import_names<'tree>(
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
     ambiguous_names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if node.kind() == "import_spec" {
         insert_go_import_name(node, source, items, ambiguous_names);
@@ -327,7 +342,8 @@ fn collect_go_import_names<'tree>(
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_import_names(child, source, items, ambiguous_names)?;
+        check_go_file_items_deadline(deadline)?;
+        collect_go_import_names(child, source, items, ambiguous_names, deadline)?;
     }
     Ok(())
 }
@@ -465,3 +481,70 @@ const GO_PREDECLARED_NAMES: &[&str] = &[
     "real",
     "recover",
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use anyhow::Result;
+
+    use super::collect_go_file_items;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        allowed_checks: usize,
+        checks: Cell<usize>,
+    }
+
+    impl RejectAfterChecks {
+        fn new(allowed_checks: usize) -> Self {
+            Self {
+                allowed_checks,
+                checks: Cell::new(0),
+            }
+        }
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.allowed_checks {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn file_item_scans_respect_deadlines_inside_import_groups() {
+        let source = r#"package sample
+
+import (
+    "example.com/one"
+    "example.com/two"
+)
+"#;
+        let document = parse_document(std::path::Path::new("sample.go"), source).unwrap();
+        let deadline = RejectAfterChecks::new(2);
+
+        let error = match collect_go_file_items(
+            document.tree.root_node(),
+            source,
+            &mut Default::default(),
+            &mut Default::default(),
+            Some(&deadline),
+        ) {
+            Ok(()) => panic!("deadline should interrupt import-group item scans"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go file items"),
+            "{error:#}"
+        );
+    }
+}
