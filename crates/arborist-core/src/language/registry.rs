@@ -500,7 +500,7 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "kotlin-patch-targeting-v32",
+    analysis_revision: "kotlin-patch-targeting-v33",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

@@ -745,6 +745,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Align C#'s declared file-dependency capability with bounded source-level extraction for explicit aliases/static imports, direct base/interface references, and same-directory namespace imports.
 - [x] Align Python's declared file-dependency capability with bounded local `import`/`from ... import ...` resolution for `.py`/`.pyi` modules and packages. This includes package/module initialization edges, wildcard imports, and incremental invalidation of package `__init__.py`.
 - [x] Extend Kotlin's bounded file-dependency capability to resolve unique local wildcard package imports, retaining fail-closed behavior when multiple source roots expose the same package.
+- [x] Keep Kotlin `.kt`/`.kts` routing and bounded local import dependency resolution aligned, including script files in explicit and wildcard package candidates.
 - [x] Extend Java's bounded file-dependency capability to resolve unique local package wildcard imports and static type-member wildcard imports, retaining fail-closed behavior for ambiguous package roots.
 
 ## Suggested Commit Sequence

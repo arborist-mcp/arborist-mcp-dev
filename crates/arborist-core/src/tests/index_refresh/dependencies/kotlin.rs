@@ -42,6 +42,37 @@ fn refreshes_kotlin_declarations_without_rebuilding_unrelated_sources() {
 }
 
 #[test]
+fn refreshes_kotlin_script_import_dependents() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let importer = source_dir.join("Main.kt");
+    let helper = source_dir.join("Helper.kts");
+    let unrelated = source_dir.join("Unrelated.kt");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &importer,
+        "package com.example\n\nimport com.example.Helper\n\nclass Main\n",
+    )
+    .unwrap();
+    fs::write(&helper, "package com.example\n\nclass Helper\n").unwrap();
+    fs::write(&unrelated, "package com.example\n\nclass Unrelated\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &helper,
+        "package com.example\n\nclass Helper {\n    val value = 1\n}\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
+}
+
+#[test]
 fn refreshes_kotlin_unique_explicit_import_dependents() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");
@@ -77,7 +108,7 @@ fn refreshes_kotlin_wildcard_package_dependents() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");
     let importer = dir.join("src").join("com").join("app").join("Main.kt");
-    let helper = source_dir.join("Helper.kt");
+    let helper = source_dir.join("Helper.kts");
     let other = source_dir.join("Other.kt");
     let unrelated = dir
         .join("src")

@@ -89,9 +89,12 @@ fn resolve_unique_kotlin_source_path(path: &Path, import_path: &str) -> Option<P
         for segment in &segments {
             candidate.push(segment);
         }
-        candidate.set_extension("kt");
-        if candidate.is_file() && candidate_declares_import_package(&candidate, import_path) {
-            candidates.insert(normalize_absolute_path(&candidate).ok()?);
+        for extension in ["kt", "kts"] {
+            candidate.set_extension(extension);
+            if candidate.is_file() && candidate_declares_import_package(&candidate, import_path) {
+                candidates.insert(normalize_absolute_path(&candidate).ok()?);
+            }
+            candidate.set_extension("");
         }
 
         if !source_root.pop() {
@@ -156,7 +159,10 @@ fn kotlin_source_files_in_package_directory<'a>(
                 && candidate
                     .extension()
                     .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("kt"))
+                    .is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("kt")
+                            || extension.eq_ignore_ascii_case("kts")
+                    })
         })
         .filter(move |candidate| candidate_declares_package(candidate, package_name))
 }
@@ -234,6 +240,54 @@ mod tests {
                 .unwrap();
 
         assert_eq!(dependencies, [helper_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_kotlin_script_imports_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Main.kt");
+        let helper_path = root.join("src/com/example/Helper.kts");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.example\n\nimport com.example.Helper\n\nclass Main\n",
+        )
+        .unwrap();
+        fs::write(&helper_path, "package com.example\n\nclass Helper\n").unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            kotlin_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [helper_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_ambiguous_kotlin_script_and_source_imports() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Main.kt");
+        let source_helper_path = root.join("src/com/example/Helper.kt");
+        let script_helper_path = root.join("src/com/example/Helper.kts");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.example\n\nimport com.example.Helper\n\nclass Main\n",
+        )
+        .unwrap();
+        fs::write(&source_helper_path, "package com.example\n\nclass Helper\n").unwrap();
+        fs::write(&script_helper_path, "package com.example\n\nclass Helper\n").unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            kotlin_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert!(dependencies.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -317,7 +371,7 @@ mod tests {
         let root = temporary_dir();
         let source_path = root.join("src/com/app/Main.kt");
         let helper_path = root.join("src/com/example/Helper.kt");
-        let other_path = root.join("src/com/example/Other.kt");
+        let other_path = root.join("src/com/example/Other.kts");
         let unrelated_path = root.join("src/com/other/Unrelated.kt");
         fs::create_dir_all(source_path.parent().unwrap()).unwrap();
         fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
