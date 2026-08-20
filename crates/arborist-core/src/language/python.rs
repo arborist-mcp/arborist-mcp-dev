@@ -49,6 +49,9 @@ fn collect_python_import_dependencies(
                 return Ok(());
             };
             let module_name = node_text(module_node, source)?.trim();
+            if let Some(candidate) = resolve_python_module_path(path, module_name) {
+                dependencies.insert(candidate);
+            }
             for child in named_children.into_iter().skip(1) {
                 if child.kind() == "wildcard_import" {
                     if let Some(candidate) = resolve_python_module_path(path, module_name) {
@@ -184,7 +187,7 @@ mod tests {
         fs::write(&helper, "def helper(): pass\n").unwrap();
         fs::write(&package, "\n").unwrap();
         fs::write(&nested, "def value(): pass\n").unwrap();
-        let source = "import helper as local_helper\nfrom . import helper as imported_helper\nfrom .subpkg import (\n    nested,\n)\nfrom .subpkg import *\n";
+        let source = "import helper as local_helper\nfrom . import helper as imported_helper\nfrom .subpkg import (\n    nested,\n)\n";
         fs::write(&caller, source).unwrap();
         let document = parse_document(&caller, source).unwrap();
 
