@@ -30,18 +30,36 @@ pub(crate) fn go_local_package_dependency_paths(
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
-    let mut dependencies = go_local_package_imports(path, root, source)?
-        .into_iter()
-        .flat_map(|import| import.source_paths)
-        .collect::<BTreeSet<_>>();
-    dependencies.extend(go_same_package_source_paths(path, root, source)?);
-    Ok(dependencies)
+    go_local_package_dependency_paths_with_deadline(path, root, source, None)
 }
 
-fn go_same_package_source_paths(
+pub(crate) fn go_local_package_dependency_paths_with_deadline(
     path: &Path,
     root: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    let imports = match deadline {
+        Some(deadline) => {
+            go_local_package_imports_with_deadline(path, root, source, Some(deadline))?
+        }
+        None => go_local_package_imports(path, root, source)?,
+    };
+    let mut dependencies = imports
+        .into_iter()
+        .flat_map(|import| import.source_paths)
+        .collect::<BTreeSet<_>>();
+    dependencies.extend(go_same_package_source_paths_with_deadline(
+        path, root, source, deadline,
+    )?);
+    Ok(dependencies)
+}
+
+fn go_same_package_source_paths_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<PathBuf>> {
     if root.has_error() {
         return Ok(BTreeSet::new());
@@ -55,12 +73,25 @@ fn go_same_package_source_paths(
 
     let current_path = normalize_absolute_path(path)?;
     let mut dependencies = BTreeSet::new();
-    for candidate_path in go_production_source_files_in_directory(directory) {
+    for candidate_path in
+        go_production_source_files_in_directory_with_deadline(directory, deadline)?
+    {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Go same-package sources")?;
+        }
         if candidate_path == current_path {
             continue;
         }
         let candidate_source = read_source(&candidate_path)?;
-        let document = parse_document(&candidate_path, &candidate_source)?;
+        let Some(document) = parse_go_source_with_deadline(
+            &candidate_path,
+            &candidate_source,
+            deadline,
+            "parsing Go same-package sources",
+        )?
+        else {
+            continue;
+        };
         let candidate_root = document.tree.root_node();
         if candidate_root.has_error()
             || go_source_package_name(candidate_root, &candidate_source)?.as_deref()
@@ -71,10 +102,6 @@ fn go_same_package_source_paths(
         dependencies.insert(candidate_path);
     }
     Ok(dependencies)
-}
-
-fn go_production_source_files_in_directory(directory: &Path) -> BTreeSet<PathBuf> {
-    go_production_source_files_in_directory_with_deadline(directory, None).unwrap_or_default()
 }
 
 pub(crate) fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -596,7 +623,7 @@ mod tests {
 
     use super::{
         go_local_import_binding_statuses, go_local_package_dependency_paths,
-        go_local_package_imports_with_deadline,
+        go_local_package_dependency_paths_with_deadline, go_local_package_imports_with_deadline,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::{normalize_absolute_path, parse_document};
@@ -879,6 +906,34 @@ import (
             error
                 .to_string()
                 .contains("deadline check reached scanning Go import specs"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn local_file_dependency_scan_checks_deadline_for_same_package_sources() {
+        let root = temporary_dir();
+        let source_path = root.join("cmd").join("main.go");
+        let sibling_path = root.join("cmd").join("helper.go");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        let source = "package main\n\nfunc Main() { Helper() }\n";
+        fs::write(&source_path, source).unwrap();
+        fs::write(&sibling_path, "package main\nfunc Helper() {}\n").unwrap();
+
+        let document = parse_document(&source_path, source).unwrap();
+        let deadline = RejectPhase("validating Go same-package sources");
+        let error = go_local_package_dependency_paths_with_deadline(
+            &source_path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("deadline should interrupt same-package source validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached validating Go same-package sources"),
             "{error:#}"
         );
     }

@@ -37,9 +37,12 @@ pub(super) fn reverse_local_file_dependency_index(
             deadline.remaining_timeout_micros("parsing local file dependency candidates")?,
         )?;
         deadline.check("extracting local file dependencies")?;
-        for include_path in
-            adapter.collect_local_file_dependencies(&path, document.tree.root_node(), &source)?
-        {
+        for include_path in adapter.collect_local_file_dependencies_with_deadline(
+            &path,
+            document.tree.root_node(),
+            &source,
+            Some(deadline),
+        )? {
             if !path_is_inside_workspace(workspace_root, &include_path)? {
                 continue;
             }

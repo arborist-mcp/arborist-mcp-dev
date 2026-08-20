@@ -29,7 +29,8 @@ pub(crate) use csharp::{
 };
 pub(crate) use go::{
     go_local_import_binding_statuses, go_local_package_dependency_paths,
-    go_local_package_imports_with_deadline, go_source_package_name,
+    go_local_package_dependency_paths_with_deadline, go_local_package_imports_with_deadline,
+    go_source_package_name,
 };
 pub(crate) use java::{
     JavaDirectSuperclassReference, java_direct_interface_references_for_declaration,

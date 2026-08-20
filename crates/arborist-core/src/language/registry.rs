@@ -202,6 +202,16 @@ pub(crate) trait LanguageAdapter: Sync {
         source: &str,
     ) -> Result<Vec<PathBuf>>;
 
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        self.collect_local_file_dependencies(path, root, source)
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -1171,6 +1181,19 @@ impl LanguageAdapter for GoAdapter {
     ) -> Result<Vec<PathBuf>> {
         crate::language::go_local_package_dependency_paths(path, root, source)
             .map(|paths| paths.into_iter().collect())
+    }
+
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        crate::language::go_local_package_dependency_paths_with_deadline(
+            path, root, source, deadline,
+        )
+        .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(
