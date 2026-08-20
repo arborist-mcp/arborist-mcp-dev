@@ -365,8 +365,9 @@ fn insert_go_import_name<'tree>(
         return;
     };
     if is_valid_go_identifier(&name) {
-        items.insert(
-            name.clone(),
+        insert_go_file_item(
+            items,
+            ambiguous_names,
             GoFileItem {
                 name,
                 node_kind: "import_spec",

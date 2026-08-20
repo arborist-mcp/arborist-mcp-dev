@@ -600,6 +600,28 @@ func compute() int {
 }
 
 #[test]
+fn rejects_go_patches_with_conflicting_default_import_names() {
+    let source = r#"package sample
+
+import (
+    "example.com/one/foo"
+    "example.com/two/foo"
+)
+
+func compute() int {
+    return 1
+}
+"#;
+    let replacement = "func compute() int {\n\treturn foo.Value()\n}";
+
+    let result =
+        patch_ast_node(Path::new("sample.go"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["foo"]);
+}
+
+#[test]
 fn rejects_go_function_patch_with_unresolved_identifier() {
     let source = "package sample\n\nfunc compute(value int) int {\n\treturn value + 1\n}\n";
     let replacement = "func compute(value int) int {\n\treturn missing(value)\n}";
