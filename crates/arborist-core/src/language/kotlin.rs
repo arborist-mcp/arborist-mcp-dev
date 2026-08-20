@@ -19,16 +19,24 @@ pub(crate) fn kotlin_local_file_dependency_paths(
         if node.kind() != "import" {
             continue;
         }
-        let Some(import_path) = kotlin_explicit_import_path(node, source)? else {
-            continue;
-        };
-        let Some(source_path) = resolve_unique_kotlin_source_path(path, &import_path) else {
-            continue;
-        };
-        if source_path == normalized_path {
+        if let Some(import_path) = kotlin_explicit_import_path(node, source)? {
+            let Some(source_path) = resolve_unique_kotlin_source_path(path, &import_path) else {
+                continue;
+            };
+            if source_path != normalized_path {
+                dependencies.insert(source_path);
+            }
             continue;
         }
-        dependencies.insert(source_path);
+
+        let Some(package_name) = kotlin_wildcard_import_package(node, source)? else {
+            continue;
+        };
+        dependencies.extend(
+            resolve_unique_kotlin_package_source_paths(path, &package_name)
+                .into_iter()
+                .filter(|source_path| source_path != &normalized_path),
+        );
     }
     Ok(dependencies)
 }
@@ -51,6 +59,25 @@ fn kotlin_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<St
         return Ok(None);
     }
     Ok(Some(import_path))
+}
+
+fn kotlin_wildcard_import_package(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if !node_text(node, source)?.contains('*') {
+        return Ok(None);
+    }
+
+    let mut cursor = node.walk();
+    let Some(identifier) = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "qualified_identifier")
+    else {
+        return Ok(None);
+    };
+    let package_name = node_text(identifier, source)?.trim().to_string();
+    if package_name.is_empty() || !is_safe_kotlin_qualified_name(&package_name) {
+        return Ok(None);
+    }
+    Ok(Some(package_name))
 }
 
 fn resolve_unique_kotlin_source_path(path: &Path, import_path: &str) -> Option<PathBuf> {
@@ -76,10 +103,72 @@ fn resolve_unique_kotlin_source_path(path: &Path, import_path: &str) -> Option<P
         .flatten()
 }
 
+fn resolve_unique_kotlin_package_source_paths(
+    path: &Path,
+    package_name: &str,
+) -> BTreeSet<PathBuf> {
+    let segments = package_name.split('.').collect::<Vec<_>>();
+    let mut package_directories = BTreeSet::new();
+    let mut source_root = match path.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => return BTreeSet::new(),
+    };
+
+    loop {
+        let mut candidate = source_root.clone();
+        for segment in &segments {
+            candidate.push(segment);
+        }
+        if candidate.is_dir()
+            && kotlin_source_files_in_package_directory(&candidate, package_name)
+                .next()
+                .is_some()
+            && let Ok(candidate) = normalize_absolute_path(&candidate)
+        {
+            package_directories.insert(candidate);
+        }
+
+        if !source_root.pop() {
+            break;
+        }
+    }
+
+    if package_directories.len() != 1 {
+        return BTreeSet::new();
+    }
+    let directory = package_directories.into_iter().next().unwrap();
+    kotlin_source_files_in_package_directory(&directory, package_name)
+        .filter_map(|candidate| normalize_absolute_path(&candidate).ok())
+        .collect()
+}
+
+fn kotlin_source_files_in_package_directory<'a>(
+    directory: &'a Path,
+    package_name: &'a str,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    fs::read_dir(directory)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|candidate| {
+            candidate.is_file()
+                && candidate
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("kt"))
+        })
+        .filter(move |candidate| candidate_declares_package(candidate, package_name))
+}
+
 fn candidate_declares_import_package(candidate: &Path, import_path: &str) -> bool {
     let Some((expected_package, _)) = import_path.rsplit_once('.') else {
         return false;
     };
+    candidate_declares_package(candidate, expected_package)
+}
+
+fn candidate_declares_package(candidate: &Path, expected_package: &str) -> bool {
     let Ok(source) = fs::read_to_string(candidate) else {
         return false;
     };
@@ -224,7 +313,39 @@ mod tests {
     }
 
     #[test]
-    fn ignores_wildcard_and_ambiguous_kotlin_imports() {
+    fn resolves_unique_wildcard_import_packages_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/app/Main.kt");
+        let helper_path = root.join("src/com/example/Helper.kt");
+        let other_path = root.join("src/com/example/Other.kt");
+        let unrelated_path = root.join("src/com/other/Unrelated.kt");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(helper_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(unrelated_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.app\n\nimport com.example.*\n\nclass Main\n",
+        )
+        .unwrap();
+        fs::write(&helper_path, "package com.example\n\nclass Helper\n").unwrap();
+        fs::write(&other_path, "package com.example\n\nclass Other\n").unwrap();
+        fs::write(&unrelated_path, "package com.other\n\nclass Unrelated\n").unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            kotlin_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(
+            dependencies,
+            [helper_path, other_path].into_iter().collect()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_ambiguous_wildcard_import_packages() {
         let root = temporary_dir();
         let source_path = root.join("src/com/example/Main.kt");
         let first_helper = root.join("src/com/example/Helper.kt");
@@ -233,7 +354,7 @@ mod tests {
         fs::create_dir_all(second_helper.parent().unwrap()).unwrap();
         fs::write(&first_helper, "package com.example\n\nclass Helper\n").unwrap();
         fs::write(&second_helper, "package com.example\n\nclass Helper\n").unwrap();
-        let source = "package com.example\n\nimport com.example.*\nimport com.example.Helper\n";
+        let source = "package com.example\n\nimport com.example.*\n";
         fs::write(&source_path, source).unwrap();
         let document = parse_document(&source_path, source).unwrap();
 

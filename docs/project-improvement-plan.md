@@ -744,6 +744,7 @@ completed item can land in its own commit unless two changes are inseparable.
   adapter, proving unchanged rebuilds preserve public IDs and symbol source.
 - [x] Align C#'s declared file-dependency capability with bounded source-level extraction for explicit aliases/static imports, direct base/interface references, and same-directory namespace imports.
 - [x] Align Python's declared file-dependency capability with bounded local `import`/`from ... import ...` resolution for `.py`/`.pyi` modules and packages. This includes package/module initialization edges, wildcard imports, and incremental invalidation of package `__init__.py`.
+- [x] Extend Kotlin's bounded file-dependency capability to resolve unique local wildcard package imports, retaining fail-closed behavior when multiple source roots expose the same package.
 
 ## Suggested Commit Sequence
 

@@ -73,6 +73,45 @@ fn refreshes_kotlin_unique_explicit_import_dependents() {
 }
 
 #[test]
+fn refreshes_kotlin_wildcard_package_dependents() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let importer = dir.join("src").join("com").join("app").join("Main.kt");
+    let helper = source_dir.join("Helper.kt");
+    let other = source_dir.join("Other.kt");
+    let unrelated = dir
+        .join("src")
+        .join("com")
+        .join("other")
+        .join("Unrelated.kt");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(importer.parent().unwrap()).unwrap();
+    fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+    fs::write(
+        &importer,
+        "package com.app\n\nimport com.example.*\n\nclass Main\n",
+    )
+    .unwrap();
+    fs::write(&helper, "package com.example\n\nclass Helper\n").unwrap();
+    fs::write(&other, "package com.example\n\nclass Other\n").unwrap();
+    fs::write(&unrelated, "package com.other\n\nclass Unrelated\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &helper,
+        "package com.example\n\nclass Helper {\n    val value = 1\n}\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.indexed_files, 4);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 2);
+}
+
+#[test]
 fn refreshes_kotlin_cross_package_import_dependents() {
     let dir = temporary_dir();
     let child_dir = dir.join("src").join("com").join("child");
