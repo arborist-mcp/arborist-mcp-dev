@@ -307,20 +307,32 @@ fn resolve_local_go_package_directory(
 }
 
 fn go_source_files_in_directory(module_root: &Path, directory: &Path) -> BTreeSet<PathBuf> {
-    fs::read_dir(directory)
-        .ok()
+    let candidates = go_production_source_files_in_directory(directory)
         .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            path.is_file().then_some(path).filter(|path| {
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
-            })
-        })
-        .filter_map(|path| normalize_absolute_path(&path).ok())
         .filter(|path| path_is_inside_workspace(module_root, path).unwrap_or(false))
+        .filter_map(|path| {
+            let source = read_source(&path).ok()?;
+            let document = parse_document(&path, &source).ok()?;
+            let root = document.tree.root_node();
+            if root.has_error() {
+                return None;
+            }
+            let package = go_source_package_name(root, &source).ok()??;
+            Some((path, package))
+        })
+        .collect::<Vec<_>>();
+    let package_names = candidates
+        .iter()
+        .map(|(_, package)| package.as_str())
+        .collect::<BTreeSet<_>>();
+    if package_names.len() != 1 {
+        return BTreeSet::new();
+    }
+    let expected_package = package_names.into_iter().next().unwrap().to_string();
+    candidates
+        .into_iter()
+        .filter(|(_, package)| package == &expected_package)
+        .map(|(path, _)| path)
         .collect()
 }
 
@@ -363,6 +375,71 @@ mod tests {
             ]
             .into()
         );
+    }
+
+    #[test]
+    fn imported_packages_ignore_test_and_invalid_sources() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        let production = package_dir.join("service.go");
+        let external_test = package_dir.join("service_test.go");
+        let malformed = package_dir.join("broken.go");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n\nfunc main() { service.Value() }\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            &production,
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            &external_test,
+            "package service_test\nfunc TestValue() int { return 0 }\n",
+        )
+        .unwrap();
+        fs::write(&malformed, "package service\nfunc Broken(\n").unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let dependencies =
+            go_local_package_dependency_paths(&command, document.tree.root_node(), source).unwrap();
+
+        assert_eq!(
+            dependencies,
+            [normalize_absolute_path(&production).unwrap()].into()
+        );
+    }
+
+    #[test]
+    fn imported_packages_reject_mixed_production_package_names() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        let production = package_dir.join("service.go");
+        let mismatched = package_dir.join("foreign.go");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n\nfunc main() { service.Value() }\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            &production,
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            &mismatched,
+            "package foreign\nfunc Foreign() int { return 0 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let dependencies =
+            go_local_package_dependency_paths(&command, document.tree.root_node(), source).unwrap();
+
+        assert!(dependencies.is_empty());
     }
 
     #[test]

@@ -716,8 +716,9 @@ conservative declaration indexing, local module dependency refresh, conservative
 inline-module-qualified direct-call graph tracing, position identity, and structural patch
 targeting with syntax-level validation. Go now has parsing, raw
 Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
-static local-package dependency refresh under the nearest valid simple `go.mod` module path,
-same-file bare plus unambiguous local-package imported-function direct-call graph tracing, and
+static local-package dependency refresh under the nearest valid simple `go.mod` module path using
+parseable production sources from one uniquely declared package, same-file bare plus unambiguous
+local-package imported-function direct-call graph tracing, and
 structural patch targeting with syntax-level validation. Java
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, structural

@@ -468,7 +468,7 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "go-patch-targeting-v16",
+    analysis_revision: "go-patch-targeting-v17",
     grammar: go_grammar,
 };
 static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

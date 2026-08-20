@@ -340,7 +340,7 @@ fn go_adapter_exposes_skeleton_indexing_dependencies_tracing_and_patching() {
 
     assert_eq!(descriptor.display_name, "Go");
     assert_eq!(descriptor.extensions, &["go"]);
-    assert_eq!(descriptor.analysis_revision, "go-patch-targeting-v16");
+    assert_eq!(descriptor.analysis_revision, "go-patch-targeting-v17");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,

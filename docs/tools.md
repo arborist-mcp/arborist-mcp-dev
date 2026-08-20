@@ -106,8 +106,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
-  simple `go.mod` module path refresh importers when direct `.go` files in their package directory change;
-  matching production sources in one local package also refresh conservatively together. It traces unshadowed
+  simple `go.mod` module path refresh importers when parseable production `.go` files declaring one unique
+  package in their package directory change; mixed package directories and invalid candidates fail closed.
+  Matching production sources in one local package also refresh conservatively together. It traces unshadowed
   bare direct calls to top-level functions declared in the same source file or in one matching production
   source in the same directory and package, plus unambiguous direct calls through local package imports using
   an explicit alias or the imported package's declared name, and calls through named composite literals such as
