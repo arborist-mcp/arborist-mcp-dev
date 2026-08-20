@@ -940,6 +940,33 @@ import (
     }
 
     #[test]
+    fn local_file_dependency_scan_propagates_parser_deadline_errors() {
+        let root = temporary_dir();
+        let source_path = root.join("cmd").join("main.go");
+        let sibling_path = root.join("cmd").join("helper.go");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        let source = "package main\n\nfunc Main() { Helper() }\n";
+        fs::write(&source_path, source).unwrap();
+        fs::write(&sibling_path, "package main\nfunc Helper() {}\n").unwrap();
+
+        let document = parse_document(&source_path, source).unwrap();
+        let error = go_local_package_dependency_paths_with_deadline(
+            &source_path,
+            document.tree.root_node(),
+            source,
+            Some(&RejectRemainingTimeout),
+        )
+        .expect_err("parser deadline budget errors should propagate");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline budget requested during parsing Go same-package sources"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn imported_packages_ignore_test_and_invalid_sources() {
         let root = temporary_dir();
         let command = root.join("cmd").join("main.go");
