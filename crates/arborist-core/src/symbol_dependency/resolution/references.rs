@@ -402,28 +402,18 @@ fn resolve_reference_path_with_deadline<'a>(
                 _ => Ok(None),
             };
         }
-        if let Some((imported_name, binding)) = resolve_go_import_binding_for_reference(
-            &source_symbol.file_path,
-            reference_name,
-            file_overrides,
-            go_import_contexts_by_file,
-            deadline,
-        )? {
-            let candidates = name_index
-                .get(&imported_name)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|index| {
-                    let candidate = &raw_symbols[*index];
-                    candidate.node_kind == "function_declaration"
-                        && candidate.semantic_path == imported_name
-                        && binding.package_paths.contains(&candidate.file_path)
-                })
-                .collect::<Vec<_>>();
-            return Ok(
-                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
-            );
+        if !reference_name.contains("::")
+            && let Some(symbol_id) = resolve_go_imported_function_reference(
+                source_symbol,
+                reference_name,
+                raw_symbols,
+                name_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some(symbol_id));
         }
 
         let candidates = semantic_path_index
@@ -435,6 +425,20 @@ fn resolve_reference_path_with_deadline<'a>(
             .collect::<Vec<_>>();
         if candidates.len() == 1 {
             return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+        }
+        if let Some((receiver_type, method_name)) = reference_name.split_once("::")
+            && let Some(method_symbol_id) = resolve_go_imported_type_method_reference(
+                source_symbol,
+                receiver_type,
+                method_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some(method_symbol_id));
         }
         if reference_name.contains("::") {
             if let Some(method_symbol_id) = resolve_go_same_package_method_reference(
@@ -13433,6 +13437,100 @@ fn csharp_is_struct_declaration(symbol: &IndexedSymbol) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn resolve_go_imported_function_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((imported_name, binding)) = resolve_go_import_binding_for_reference(
+        &source_symbol.file_path,
+        reference_name,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let candidates = name_index
+        .get(&imported_name)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "function_declaration"
+                && candidate.semantic_path == imported_name
+                && binding.package_paths.contains(&candidate.file_path)
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_go_imported_type_method_reference(
+    source_symbol: &IndexedSymbol,
+    receiver_type: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((package_name, imported_type)) = receiver_type.split_once('.') else {
+        return Ok(None);
+    };
+    if package_name.is_empty()
+        || imported_type.is_empty()
+        || imported_type.contains('.')
+        || method_name.is_empty()
+        || method_name.contains(':')
+        || !imported_type.chars().next().is_some_and(char::is_uppercase)
+        || !method_name.chars().next().is_some_and(char::is_uppercase)
+    {
+        return Ok(None);
+    }
+
+    let Some((_, binding)) = resolve_go_import_binding_for_reference(
+        &source_symbol.file_path,
+        receiver_type,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{imported_type}::{method_name}");
+    let mut candidates = Vec::new();
+    for index in semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+    {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go imported type method candidates")?;
+        }
+        let candidate = &raw_symbols[index];
+        if candidate.node_kind == "method_declaration"
+            && candidate.semantic_path == target_path
+            && is_production_go_source_file(&candidate.file_path)
+            && binding.package_paths.contains(&candidate.file_path)
+        {
+            candidates.push(index);
+        }
+    }
+
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn resolve_go_type_conversion_reference(
     source_symbol: &IndexedSymbol,
     reference_name: &str,
@@ -13452,6 +13550,36 @@ fn resolve_go_type_conversion_reference(
         || method_name.contains(':')
     {
         return Ok(None);
+    }
+    if let Some(symbol_id) = resolve_go_imported_type_method_reference(
+        source_symbol,
+        receiver_type,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some(symbol_id));
+    }
+    if receiver_type.contains('.') {
+        if !receiver_type
+            .split_once('.')
+            .and_then(|(_, imported_name)| imported_name.chars().next())
+            .is_some_and(char::is_uppercase)
+        {
+            return Ok(None);
+        }
+        return resolve_go_imported_function_reference(
+            source_symbol,
+            receiver_type,
+            raw_symbols,
+            name_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        );
     }
 
     match go_named_type_declaration_status(
@@ -13528,6 +13656,21 @@ fn resolve_go_type_assertion_reference(
         || receiver_type.contains(':')
         || method_name.contains(':')
     {
+        return Ok(None);
+    }
+    if let Some(symbol_id) = resolve_go_imported_type_method_reference(
+        source_symbol,
+        receiver_type,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some(symbol_id));
+    }
+    if receiver_type.contains('.') {
         return Ok(None);
     }
     let target_type = match go_named_type_declaration_status(

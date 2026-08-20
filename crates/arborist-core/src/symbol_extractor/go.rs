@@ -303,6 +303,22 @@ fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
             .map(|inner| go_named_local_type(inner, source))
             .transpose()
             .map(Option::flatten),
+        "qualified_type" => {
+            let package = node.child_by_field_name("package");
+            let name = node.child_by_field_name("name");
+            match (package, name) {
+                (Some(package), Some(name)) => {
+                    let package = node_text(package, source)?.trim();
+                    let name = node_text(name, source)?.trim();
+                    if package.is_empty() || name.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(format!("{package}.{name}")))
+                    }
+                }
+                _ => Ok(None),
+            }
+        }
         "pointer_type" | "parenthesized_type" => {
             let mut cursor = node.walk();
             node.named_children(&mut cursor)
@@ -762,12 +778,15 @@ fn go_direct_method_reference(
             None
         };
     if let Some(receiver_type) = receiver_type {
+        if go_type_name_is_shadowed(&receiver_type, context.bindings) {
+            return Ok(None);
+        }
         return Ok(Some(GoDirectMethodReference::Plain(format!(
             "{receiver_type}::{method_name}"
         ))));
     }
     if let Some(type_name) = go_type_assertion_receiver(operand, source)? {
-        if context.bindings.contains(&type_name) {
+        if go_type_name_is_shadowed(&type_name, context.bindings) {
             return Ok(None);
         }
         return Ok(Some(GoDirectMethodReference::TypeAssertion(format!(
@@ -778,13 +797,20 @@ fn go_direct_method_reference(
     else {
         return Ok(None);
     };
-    if context.bindings.contains(&type_name) {
+    if go_type_name_is_shadowed(&type_name, context.bindings) {
         return Ok(None);
     }
     Ok(Some(GoDirectMethodReference::TypeConversion {
         method_path: format!("{type_name}::{method_name}"),
         conversion_call_start,
     }))
+}
+
+fn go_type_name_is_shadowed(type_name: &str, bindings: &BTreeSet<String>) -> bool {
+    bindings.contains(type_name)
+        || type_name
+            .split_once('.')
+            .is_some_and(|(package_name, _)| bindings.contains(package_name))
 }
 
 fn go_type_assertion_receiver(operand: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -832,6 +858,23 @@ fn go_ambiguous_type_conversion_function_name(
                 .map(|inner| go_ambiguous_type_conversion_function_name(inner, source))
                 .transpose()
                 .map(Option::flatten)
+        }
+        "selector_expression" => {
+            let Some(package) = node.child_by_field_name("operand") else {
+                return Ok(None);
+            };
+            let Some(name) = node.child_by_field_name("field") else {
+                return Ok(None);
+            };
+            if package.kind() != "identifier" || name.kind() != "field_identifier" {
+                return Ok(None);
+            }
+            let package = node_text(package, source)?.trim();
+            let name = node_text(name, source)?.trim();
+            if package.is_empty() || name.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(format!("{package}.{name}")))
         }
         "unary_expression" => {
             if !node_text(node, source)?.trim().starts_with('*') {
@@ -884,7 +927,12 @@ fn collect_direct_local_calls_from_node(
                 if let Some(reference) =
                     go_imported_selector_reference(function, source, context.bindings)?
                 {
-                    references.references_by_name.insert(reference);
+                    if !references
+                        .suppressed_type_conversion_call_starts
+                        .contains(&node.start_byte())
+                    {
+                        references.references_by_name.insert(reference);
+                    }
                 } else if let Some(reference) =
                     go_direct_method_reference(function, source, context)?
                 {
@@ -1160,6 +1208,62 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert!(caller.references_by_name.is_empty(), "{caller_path}");
             assert!(caller.reference_facts.is_empty(), "{caller_path}");
         }
+    }
+
+    #[test]
+    fn indexes_go_qualified_type_method_reference_facts() {
+        let source = r#"
+package main
+
+import svc "example.com/project/internal/service"
+
+func composite() int { return svc.Counter{}.Value() }
+func conversion(value int) int { return svc.Scalar(value).Value() }
+func assertion(value any) int { return value.(svc.Counter).Value() }
+"#;
+        let path = Path::new("main.go");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_go_symbols_with_deadline(path, source, document.tree.root_node(), None).unwrap();
+
+        let composite = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "composite")
+            .unwrap();
+        assert_eq!(composite.reference_facts.len(), 1);
+        assert_eq!(composite.reference_facts[0].spelling, "svc.Counter::Value");
+        assert_eq!(
+            composite.reference_facts[0].language_details,
+            ReferenceLanguageDetails::None
+        );
+
+        let conversion = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "conversion")
+            .unwrap();
+        assert_eq!(conversion.reference_facts.len(), 1);
+        assert_eq!(conversion.reference_facts[0].spelling, "svc.Scalar::Value");
+        assert_eq!(
+            conversion.reference_facts[0].language_details,
+            ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: true,
+                type_assertion: false,
+            })
+        );
+
+        let assertion = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "assertion")
+            .unwrap();
+        assert_eq!(assertion.reference_facts.len(), 1);
+        assert_eq!(assertion.reference_facts[0].spelling, "svc.Counter::Value");
+        assert_eq!(
+            assertion.reference_facts[0].language_details,
+            ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: false,
+                type_assertion: true,
+            })
+        );
     }
 
     #[test]
