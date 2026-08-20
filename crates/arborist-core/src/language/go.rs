@@ -100,7 +100,7 @@ pub(crate) fn go_local_import_binding_statuses(
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<GoLocalImportBindingStatuses> {
-    let Some((module_root, module_path)) = find_go_module(path) else {
+    let Some((module_root, module_path)) = find_go_module(path, deadline)? else {
         return Ok(GoLocalImportBindingStatuses::default());
     };
 
@@ -258,7 +258,7 @@ pub(crate) fn go_local_package_imports_with_deadline(
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<GoLocalPackageImport>> {
-    let Some((module_root, module_path)) = find_go_module(path) else {
+    let Some((module_root, module_path)) = find_go_module(path, deadline)? else {
         return Ok(Vec::new());
     };
 
@@ -284,18 +284,32 @@ pub(crate) fn go_local_package_imports_with_deadline(
     Ok(imports)
 }
 
-fn find_go_module(path: &Path) -> Option<(PathBuf, String)> {
-    let mut directory = path.parent()?.to_path_buf();
+fn find_go_module(
+    path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<(PathBuf, String)>> {
+    let Some(mut directory) = path.parent().map(Path::to_path_buf) else {
+        return Ok(None);
+    };
     loop {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Go module root")?;
+        }
         let module_file = directory.join("go.mod");
         if module_file.is_file() {
-            let source = fs::read_to_string(module_file).ok()?;
-            let module_path = go_module_path(&source)?;
-            let module_root = normalize_absolute_path(&directory).ok()?;
-            return Some((module_root, module_path));
+            let Ok(source) = fs::read_to_string(module_file) else {
+                return Ok(None);
+            };
+            let Some(module_path) = go_module_path(&source) else {
+                return Ok(None);
+            };
+            let Ok(module_root) = normalize_absolute_path(&directory) else {
+                return Ok(None);
+            };
+            return Ok(Some((module_root, module_path)));
         }
         if !directory.pop() {
-            return None;
+            return Ok(None);
         }
     }
 }
@@ -580,6 +594,17 @@ mod tests {
         }
     }
 
+    struct RejectPhase(&'static str);
+
+    impl DeadlineCheck for RejectPhase {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == self.0 {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
     #[test]
     fn resolves_unambiguous_local_module_imports_to_all_package_source_files() {
         let root = temporary_dir();
@@ -631,7 +656,7 @@ mod tests {
         .unwrap();
 
         let document = parse_document(&command, source).unwrap();
-        let deadline = RejectAfterChecks::new(3);
+        let deadline = RejectPhase("scanning Go local import package files");
         let error = go_local_import_binding_statuses(
             &command,
             document.tree.root_node(),
@@ -644,6 +669,33 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn local_package_import_resolution_checks_deadline_while_locating_module_root() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n";
+        fs::write(&command, source).unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let deadline = RejectAfterChecks::new(0);
+        let error = go_local_package_imports_with_deadline(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("deadline should interrupt Go module-root discovery");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached locating Go module root"),
             "{error:#}"
         );
     }
@@ -670,7 +722,7 @@ mod tests {
         .unwrap();
 
         let document = parse_document(&command, source).unwrap();
-        let deadline = RejectAfterChecks::new(5);
+        let deadline = RejectPhase("validating Go local import package sources");
         let error = go_local_package_imports_with_deadline(
             &command,
             document.tree.root_node(),
@@ -703,7 +755,7 @@ import (
         fs::write(&command, source).unwrap();
 
         let document = parse_document(&command, source).unwrap();
-        let deadline = RejectAfterChecks::new(1);
+        let deadline = RejectPhase("scanning Go import specs");
         let error = go_local_import_binding_statuses(
             &command,
             document.tree.root_node(),
