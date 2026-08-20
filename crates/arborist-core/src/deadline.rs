@@ -84,6 +84,11 @@ impl DeadlineCheck for CooperativeDeadline {
     fn check(&self, phase: &str) -> Result<()> {
         CooperativeDeadline::check(self, phase)
     }
+
+    fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
+        self.remaining_timeout_ms(phase)
+            .map(|timeout_ms| timeout_ms.map(|timeout_ms| timeout_ms.saturating_mul(1_000)))
+    }
 }
 
 fn ceil_duration_millis(duration: Duration) -> u64 {
@@ -127,6 +132,22 @@ mod tests {
                 .contains("workspace edit preview timeout exceeded during source read")
         );
         assert!(error.to_string().contains("timeout_ms=1"));
+    }
+
+    #[test]
+    fn exposes_remaining_parser_budget_in_microseconds() {
+        let deadline = CooperativeDeadline::new(Some(10), 10, "semantic skeleton").unwrap();
+        let remaining = super::DeadlineCheck::remaining_timeout_micros(&deadline, "parsing")
+            .unwrap()
+            .expect("configured deadline should expose a parser budget");
+        assert!(remaining > 0);
+        assert!(remaining <= 10_000);
+
+        let unbounded = CooperativeDeadline::new(None, 10, "semantic skeleton").unwrap();
+        assert_eq!(
+            super::DeadlineCheck::remaining_timeout_micros(&unbounded, "parsing").unwrap(),
+            None
+        );
     }
 
     #[test]

@@ -35,6 +35,11 @@ impl DeadlineCheck for TraceQueryDeadline {
     fn check(&self, phase: &str) -> Result<()> {
         TraceQueryDeadline::check(self, phase)
     }
+
+    fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
+        self.remaining_timeout_ms(phase)
+            .map(|timeout_ms| timeout_ms.map(|timeout_ms| timeout_ms.saturating_mul(1_000)))
+    }
 }
 
 pub(crate) use graph::trace_from_symbol_with_deadline;
