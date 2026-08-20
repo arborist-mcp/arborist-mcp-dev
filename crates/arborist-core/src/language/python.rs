@@ -37,7 +37,7 @@ fn collect_python_import_dependencies(
                     continue;
                 };
                 let module_name = node_text(module_node, source)?.trim();
-                if let Some(candidate) = resolve_python_module_path(path, module_name) {
+                if let Some(candidate) = resolve_local_python_module_path(path, module_name) {
                     dependencies.insert(candidate);
                 }
             }
@@ -49,12 +49,12 @@ fn collect_python_import_dependencies(
                 return Ok(());
             };
             let module_name = node_text(module_node, source)?.trim();
-            if let Some(candidate) = resolve_python_module_path(path, module_name) {
+            if let Some(candidate) = resolve_local_python_module_path(path, module_name) {
                 dependencies.insert(candidate);
             }
             for child in named_children.into_iter().skip(1) {
                 if child.kind() == "wildcard_import" {
-                    if let Some(candidate) = resolve_python_module_path(path, module_name) {
+                    if let Some(candidate) = resolve_local_python_module_path(path, module_name) {
                         dependencies.insert(candidate);
                     }
                     continue;
@@ -72,8 +72,8 @@ fn collect_python_import_dependencies(
                     continue;
                 }
                 let joined_name = join_python_module_name(module_name, imported_name);
-                let candidate = resolve_python_module_path(path, &joined_name)
-                    .or_else(|| resolve_python_module_path(path, module_name));
+                let candidate = resolve_local_python_module_path(path, &joined_name)
+                    .or_else(|| resolve_local_python_module_path(path, module_name));
                 if let Some(candidate) = candidate {
                     dependencies.insert(candidate);
                 }
@@ -99,7 +99,7 @@ fn join_python_module_name(module_name: &str, imported_name: &str) -> String {
     }
 }
 
-fn resolve_python_module_path(path: &Path, module_name: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_local_python_module_path(path: &Path, module_name: &str) -> Option<PathBuf> {
     let parent = path.parent()?;
     let relative_levels = module_name
         .chars()
@@ -172,7 +172,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{python_local_file_dependency_paths, resolve_python_module_path};
+    use super::{python_local_file_dependency_paths, resolve_local_python_module_path};
     use crate::language::parse_document;
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
         let root = temporary_dir();
         let caller = root.join("caller.py");
         fs::write(&caller, "import os\nmodule = __import__('missing')\n").unwrap();
-        assert!(resolve_python_module_path(&caller, "os").is_none());
+        assert!(resolve_local_python_module_path(&caller, "os").is_none());
         let document =
             parse_document(&caller, "import os\nmodule = __import__('missing')\n").unwrap();
         let dependencies = python_local_file_dependency_paths(
