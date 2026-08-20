@@ -73,25 +73,7 @@ fn go_same_package_source_paths(
 }
 
 fn go_production_source_files_in_directory(directory: &Path) -> BTreeSet<PathBuf> {
-    fs::read_dir(directory)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            path.is_file().then_some(path)
-        })
-        .filter(|path| {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
-                && !path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| stem.ends_with("_test"))
-        })
-        .filter_map(|path| normalize_absolute_path(&path).ok())
-        .collect()
+    go_production_source_files_in_directory_with_deadline(directory, None).unwrap_or_default()
 }
 
 pub(crate) fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
