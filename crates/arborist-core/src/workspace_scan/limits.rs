@@ -104,6 +104,13 @@ impl DeadlineCheck for WorkspaceScanDeadline {
     fn check(&self, phase: &str) -> Result<()> {
         WorkspaceScanDeadline::check(self, phase)
     }
+
+    fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
+        if self.deadline.is_none() {
+            return Ok(None);
+        }
+        WorkspaceScanDeadline::remaining_timeout_micros(self, phase).map(Some)
+    }
 }
 
 pub(crate) fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {

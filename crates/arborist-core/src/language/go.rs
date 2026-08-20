@@ -8,7 +8,8 @@ use crate::deadline::DeadlineCheck;
 use tree_sitter::Node;
 
 use super::{
-    node_text, normalize_absolute_path, parse_document, path_is_inside_workspace, read_source,
+    node_text, normalize_absolute_path, parse_document, parse_document_with_timeout,
+    path_is_inside_workspace, read_source,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -523,8 +524,21 @@ fn go_source_files_in_directory_with_deadline(
         let Ok(source) = read_source(&path) else {
             continue;
         };
-        let Ok(document) = parse_document(&path, &source) else {
-            continue;
+        let document = if let Some(deadline) = deadline {
+            match deadline.remaining_timeout_micros("parsing Go local import package sources")? {
+                Some(timeout_micros) => {
+                    parse_document_with_timeout(&path, &source, timeout_micros)?
+                }
+                None => match parse_document(&path, &source) {
+                    Ok(document) => document,
+                    Err(_) => continue,
+                },
+            }
+        } else {
+            match parse_document(&path, &source) {
+                Ok(document) => document,
+                Err(_) => continue,
+            }
         };
         let root = document.tree.root_node();
         if root.has_error() {
@@ -602,6 +616,18 @@ mod tests {
                 anyhow::bail!("deadline check reached {phase}");
             }
             Ok(())
+        }
+    }
+
+    struct RejectRemainingTimeout;
+
+    impl DeadlineCheck for RejectRemainingTimeout {
+        fn check(&self, _phase: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
+            anyhow::bail!("deadline budget requested during {phase}");
         }
     }
 
@@ -696,6 +722,39 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached locating Go module root"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn local_package_import_resolution_propagates_parser_deadline_errors() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            package_dir.join("service.go"),
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let error = go_local_package_imports_with_deadline(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&RejectRemainingTimeout),
+        )
+        .expect_err("parser deadline budget errors should propagate");
+
+        assert!(
+            error.to_string().contains(
+                "deadline budget requested during parsing Go local import package sources"
+            ),
             "{error:#}"
         );
     }

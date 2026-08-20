@@ -4,6 +4,10 @@ use anyhow::{Result, anyhow};
 
 pub(crate) trait DeadlineCheck {
     fn check(&self, phase: &str) -> Result<()>;
+
+    fn remaining_timeout_micros(&self, _phase: &str) -> Result<Option<u64>> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
