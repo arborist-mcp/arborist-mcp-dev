@@ -3,9 +3,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{
-    detect_language, go_local_package_imports, go_source_package_name, normalize_path,
-    parse_document, parse_document_with_timeout, read_source,
+    detect_language, go_local_package_imports_with_deadline, go_source_package_name,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -59,7 +60,12 @@ fn go_import_context_for_file_with_overrides_and_deadline(
     let package_name = go_source_package_name(root, &source)?;
     let mut bindings = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
-    for import in go_local_package_imports(path, root, &source)? {
+    for import in go_local_package_imports_with_deadline(
+        path,
+        root,
+        &source,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
+    )? {
         if let Some(deadline) = deadline {
             deadline.check("extracting Go import bindings")?;
         }

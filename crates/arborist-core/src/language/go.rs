@@ -249,18 +249,31 @@ pub(crate) fn go_local_package_imports(
     root: Node<'_>,
     source: &str,
 ) -> Result<Vec<GoLocalPackageImport>> {
+    go_local_package_imports_with_deadline(path, root, source, None)
+}
+
+pub(crate) fn go_local_package_imports_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<GoLocalPackageImport>> {
     let Some((module_root, module_path)) = find_go_module(path) else {
         return Ok(Vec::new());
     };
 
     let mut imports = Vec::new();
-    for import in go_import_specs(root, source, None)? {
+    for import in go_import_specs(root, source, deadline)? {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go local package imports")?;
+        }
         let Some(package_dir) =
             resolve_local_go_package_directory(&module_root, &module_path, &import.path)
         else {
             continue;
         };
-        let source_paths = go_source_files_in_directory(&module_root, &package_dir);
+        let source_paths =
+            go_source_files_in_directory_with_deadline(&module_root, &package_dir, deadline)?;
         if !source_paths.is_empty() {
             imports.push(GoLocalPackageImport {
                 explicit_local_name: import.explicit_local_name,
@@ -480,34 +493,47 @@ fn resolve_local_go_package_directory(
     Some(directory)
 }
 
-fn go_source_files_in_directory(module_root: &Path, directory: &Path) -> BTreeSet<PathBuf> {
-    let candidates = go_production_source_files_in_directory(directory)
-        .into_iter()
-        .filter(|path| path_is_inside_workspace(module_root, path).unwrap_or(false))
-        .filter_map(|path| {
-            let source = read_source(&path).ok()?;
-            let document = parse_document(&path, &source).ok()?;
-            let root = document.tree.root_node();
-            if root.has_error() {
-                return None;
-            }
-            let package = go_source_package_name(root, &source).ok()??;
-            Some((path, package))
-        })
-        .collect::<Vec<_>>();
+fn go_source_files_in_directory_with_deadline(
+    module_root: &Path,
+    directory: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    let mut candidates = Vec::new();
+    for path in go_production_source_files_in_directory_with_deadline(directory, deadline)? {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Go local import package sources")?;
+        }
+        if !path_is_inside_workspace(module_root, &path).unwrap_or(false) {
+            continue;
+        }
+        let Ok(source) = read_source(&path) else {
+            continue;
+        };
+        let Ok(document) = parse_document(&path, &source) else {
+            continue;
+        };
+        let root = document.tree.root_node();
+        if root.has_error() {
+            continue;
+        }
+        let Some(package) = go_source_package_name(root, &source)? else {
+            continue;
+        };
+        candidates.push((path, package));
+    }
     let package_names = candidates
         .iter()
         .map(|(_, package)| package.as_str())
         .collect::<BTreeSet<_>>();
     if package_names.len() != 1 {
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     }
     let expected_package = package_names.into_iter().next().unwrap().to_string();
-    candidates
+    Ok(candidates
         .into_iter()
         .filter(|(_, package)| package == &expected_package)
         .map(|(path, _)| path)
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -520,7 +546,10 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{go_local_import_binding_statuses, go_local_package_dependency_paths};
+    use super::{
+        go_local_import_binding_statuses, go_local_package_dependency_paths,
+        go_local_package_imports_with_deadline,
+    };
     use crate::deadline::DeadlineCheck;
     use crate::language::{normalize_absolute_path, parse_document};
 
@@ -615,6 +644,45 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn local_package_import_resolution_checks_deadline_while_validating_sources() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            package_dir.join("service.go"),
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            package_dir.join("other.go"),
+            "package service\nfunc Other() int { return 2 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let deadline = RejectAfterChecks::new(5);
+        let error = go_local_package_imports_with_deadline(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("deadline should interrupt local package source validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached validating Go local import package sources"),
             "{error:#}"
         );
     }
