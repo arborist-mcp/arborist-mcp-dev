@@ -808,10 +808,10 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
     .unwrap();
     fs::write(
         &service_path,
-        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\n",
+        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Pointer struct{}\nfunc (*Pointer) Value() int { return 2 }\ntype Box[T any] struct{}\nfunc (Box[T]) Value() int { return 3 }\n",
     )
     .unwrap();
-    let overlay = "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Counter{}.Value() }\n";
+    let overlay = "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Counter{}.Value() }\nfunc pointer() int { return (&svc.Pointer{}).Value() }\nfunc generic() int { return svc.Box[int]{}.Value() }\n";
 
     let live = trace_symbol_graph_with_source(
         &dir,
@@ -823,6 +823,26 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
     .unwrap();
     assert_eq!(live.callers.len(), 1);
     assert_eq!(live.callers[0].symbol_id, "caller");
+    let live_pointer = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Pointer::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live_pointer.callers.len(), 1);
+    assert_eq!(live_pointer.callers[0].symbol_id, "pointer");
+    let live_box = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Box::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live_box.callers.len(), 1);
+    assert_eq!(live_box.callers[0].symbol_id, "generic");
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted = trace_symbol_graph_from_index_with_source(
@@ -835,6 +855,26 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
     .unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
+    let persisted_pointer = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Pointer::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_pointer.callers.len(), 1);
+    assert_eq!(persisted_pointer.callers[0].symbol_id, "pointer");
+    let persisted_box = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Box::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_box.callers.len(), 1);
+    assert_eq!(persisted_box.callers[0].symbol_id, "generic");
 }
 
 #[test]
