@@ -112,6 +112,10 @@ fn traces_go_explicit_type_conversion_method_receiver_forms() {
     assert_eq!(scalar_live.callers.len(), 2);
     assert_eq!(scalar_live.callers[0].symbol_id, "parenthesizedCaller");
     assert_eq!(scalar_live.callers[1].symbol_id, "pointerCaller");
+    let pointer_live = trace_symbol_graph(&dir, "Pointer::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(pointer_live.callers.len(), 1);
+    assert_eq!(pointer_live.callers[0].symbol_id, "pointer");
+
     let box_live = trace_symbol_graph(&dir, "Box::Value", TraceDirection::Callers).unwrap();
     assert_eq!(box_live.callers.len(), 1);
     assert_eq!(box_live.callers[0].symbol_id, "genericCaller");
@@ -122,6 +126,11 @@ fn traces_go_explicit_type_conversion_method_receiver_forms() {
     assert_eq!(scalar_persisted.callers.len(), 2);
     assert_eq!(scalar_persisted.callers[0].symbol_id, "parenthesizedCaller");
     assert_eq!(scalar_persisted.callers[1].symbol_id, "pointerCaller");
+    let pointer_persisted =
+        trace_symbol_graph_from_index(&db_path, "Pointer::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(pointer_persisted.callers.len(), 1);
+    assert_eq!(pointer_persisted.callers[0].symbol_id, "pointer");
+
     let box_persisted =
         trace_symbol_graph_from_index(&db_path, "Box::Value", TraceDirection::Callers).unwrap();
     assert_eq!(box_persisted.callers.len(), 1);
