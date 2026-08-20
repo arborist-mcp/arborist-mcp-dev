@@ -206,6 +206,26 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn resolves_python_stub_and_package_dependencies() {
+        let root = temporary_dir();
+        let caller = root.join("pkg/caller.py");
+        let stub = root.join("pkg/stubs.pyi");
+        let package = root.join("pkg/local_package/__init__.py");
+        fs::create_dir_all(caller.parent().unwrap()).unwrap();
+        fs::create_dir_all(package.parent().unwrap()).unwrap();
+        fs::write(&stub, "def typed() -> None: ...\n").unwrap();
+        fs::write(&package, "def exported() -> None: pass\n").unwrap();
+        let source = "from . import stubs\nfrom .local_package import exported\n";
+        fs::write(&caller, source).unwrap();
+        let document = parse_document(&caller, source).unwrap();
+
+        let dependencies =
+            python_local_file_dependency_paths(&caller, document.tree.root_node(), source).unwrap();
+        assert_eq!(dependencies, [stub, package].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temporary_dir() -> PathBuf {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let suffix = format!(
