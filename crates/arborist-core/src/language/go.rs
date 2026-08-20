@@ -785,6 +785,32 @@ mod tests {
     }
 
     #[test]
+    fn package_directory_limit_counts_non_source_entries() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(package_dir.join("nested")).unwrap();
+        fs::write(package_dir.join("service.go"), "package service\n").unwrap();
+
+        let paths =
+            go_production_source_files_in_directory_with_limit_and_deadline(&package_dir, 1, None)
+                .unwrap();
+
+        assert!(paths.is_empty(), "all directory entries must be bounded");
+    }
+
+    #[test]
+    fn import_spec_limit_counts_blank_and_dot_imports() {
+        let source = "package main\n\nimport (\n    _ \"example.com/blank\"\n    . \"example.com/dot\"\n    \"example.com/ordinary\"\n)\n";
+        let path = temporary_dir().join("main.go");
+        let document = parse_document(&path, source).unwrap();
+
+        let imports =
+            go_import_specs_with_limit(document.tree.root_node(), source, 2, None).unwrap();
+
+        assert!(imports.is_empty(), "all import specs must be bounded");
+    }
+
+    #[test]
     fn resolves_unambiguous_local_module_imports_to_all_package_source_files() {
         let root = temporary_dir();
         let command = root.join("cmd").join("main.go");
