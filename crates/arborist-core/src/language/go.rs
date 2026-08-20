@@ -188,9 +188,14 @@ fn go_unique_local_package_name(
             Ok(candidate_source) => candidate_source,
             Err(_) => return Ok(None),
         };
-        let document = match parse_document(&source_path, &candidate_source) {
-            Ok(document) => document,
-            Err(_) => return Ok(None),
+        let Some(document) = parse_go_source_with_deadline(
+            &source_path,
+            &candidate_source,
+            deadline,
+            "parsing Go local import packages",
+        )?
+        else {
+            return Ok(None);
         };
         let root = document.tree.root_node();
         if root.has_error() {
@@ -210,6 +215,28 @@ fn go_unique_local_package_name(
     Ok(package_name)
 }
 
+fn parse_go_source_with_deadline(
+    path: &Path,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+    phase: &str,
+) -> Result<Option<super::ParsedDocument>> {
+    let document = if let Some(deadline) = deadline {
+        match deadline.remaining_timeout_micros(phase)? {
+            Some(timeout_micros) => parse_document_with_timeout(path, source, timeout_micros)?,
+            None => match parse_document(path, source) {
+                Ok(document) => document,
+                Err(_) => return Ok(None),
+            },
+        }
+    } else {
+        match parse_document(path, source) {
+            Ok(document) => document,
+            Err(_) => return Ok(None),
+        }
+    };
+    Ok(Some(document))
+}
 fn go_production_source_files_in_directory_with_deadline(
     directory: &Path,
     deadline: Option<&dyn DeadlineCheck>,
@@ -524,21 +551,14 @@ fn go_source_files_in_directory_with_deadline(
         let Ok(source) = read_source(&path) else {
             continue;
         };
-        let document = if let Some(deadline) = deadline {
-            match deadline.remaining_timeout_micros("parsing Go local import package sources")? {
-                Some(timeout_micros) => {
-                    parse_document_with_timeout(&path, &source, timeout_micros)?
-                }
-                None => match parse_document(&path, &source) {
-                    Ok(document) => document,
-                    Err(_) => continue,
-                },
-            }
-        } else {
-            match parse_document(&path, &source) {
-                Ok(document) => document,
-                Err(_) => continue,
-            }
+        let Some(document) = parse_go_source_with_deadline(
+            &path,
+            &source,
+            deadline,
+            "parsing Go local import package sources",
+        )?
+        else {
+            continue;
         };
         let root = document.tree.root_node();
         if root.has_error() {
@@ -759,6 +779,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_import_binding_validation_propagates_parser_deadline_errors() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n";
+        fs::write(&command, source).unwrap();
+        fs::write(
+            package_dir.join("service.go"),
+            "package service\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let error = go_local_import_binding_statuses(
+            &command,
+            document.tree.root_node(),
+            source,
+            Some(&RejectRemainingTimeout),
+        )
+        .expect_err("parser deadline budget errors should propagate");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline budget requested during parsing Go local import packages"),
+            "{error:#}"
+        );
+    }
     #[test]
     fn local_package_import_resolution_checks_deadline_while_validating_sources() {
         let root = temporary_dir();
