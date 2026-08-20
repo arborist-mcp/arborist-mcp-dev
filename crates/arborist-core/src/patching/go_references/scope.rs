@@ -40,7 +40,13 @@ pub(super) fn scan_go_symbol_scope(
     match symbol_node.kind() {
         "function_declaration" | "method_declaration" => {
             let mut function_scope = Vec::new();
-            collect_go_function_bindings(symbol_node, source, &mut function_scope, &mut scan)?;
+            collect_go_function_bindings(
+                symbol_node,
+                source,
+                &mut function_scope,
+                &mut scan,
+                deadline,
+            )?;
             scopes.push(function_scope);
             if let Some(body) = symbol_node.child_by_field_name("body") {
                 walk_go_node(body, source, &mut scopes, &mut scan, deadline)?;
@@ -324,12 +330,20 @@ fn walk_go_func_literal(
             "closure_parameter",
             &mut bindings,
             scan,
+            deadline,
         )?;
     }
     if let Some(result) = node.child_by_field_name("result")
         && result.kind() == "parameter_list"
     {
-        collect_go_parameter_list_bindings(result, source, "closure_result", &mut bindings, scan)?;
+        collect_go_parameter_list_bindings(
+            result,
+            source,
+            "closure_result",
+            &mut bindings,
+            scan,
+            deadline,
+        )?;
     }
     scopes.push(bindings);
     if let Some(body) = node.child_by_field_name("body") {
@@ -626,19 +640,20 @@ fn collect_go_function_bindings(
     source: &str,
     out: &mut Vec<GoBinding>,
     scan: &mut GoScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if node.kind() == "method_declaration"
         && let Some(receiver) = node.child_by_field_name("receiver")
     {
-        collect_go_parameter_list_bindings(receiver, source, "receiver", out, scan)?;
+        collect_go_parameter_list_bindings(receiver, source, "receiver", out, scan, deadline)?;
     }
     if let Some(parameters) = node.child_by_field_name("parameters") {
-        collect_go_parameter_list_bindings(parameters, source, "parameter", out, scan)?;
+        collect_go_parameter_list_bindings(parameters, source, "parameter", out, scan, deadline)?;
     }
     if let Some(result) = node.child_by_field_name("result")
         && result.kind() == "parameter_list"
     {
-        collect_go_parameter_list_bindings(result, source, "result", out, scan)?;
+        collect_go_parameter_list_bindings(result, source, "result", out, scan, deadline)?;
     }
     Ok(())
 }
@@ -649,13 +664,20 @@ fn collect_go_parameter_list_bindings(
     node_kind: &'static str,
     out: &mut Vec<GoBinding>,
     scan: &mut GoScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = parameter_list.walk();
     for child in parameter_list.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("scanning Go patch parameter bindings")?;
+        }
         match child.kind() {
             "parameter_declaration" | "variadic_parameter_declaration" => {
                 let mut name_cursor = child.walk();
                 for name in child.children_by_field_name("name", &mut name_cursor) {
+                    if let Some(deadline) = deadline {
+                        deadline.check("scanning Go patch parameter bindings")?;
+                    }
                     push_go_binding(name, source, node_kind, out, scan)?;
                 }
             }
@@ -766,4 +788,67 @@ fn is_ignored_go_node_kind(kind: &str) -> bool {
             | "import_spec"
             | "import_spec_list"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::path::Path;
+
+    use anyhow::Result;
+
+    use super::scan_go_symbol_scope;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        allowed_checks: usize,
+        checks: Cell<usize>,
+    }
+
+    impl RejectAfterChecks {
+        fn new(allowed_checks: usize) -> Self {
+            Self {
+                allowed_checks,
+                checks: Cell::new(0),
+            }
+        }
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.allowed_checks {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn parameter_binding_scans_respect_deadlines() {
+        let source = "package sample\n\nfunc compute(first int, second int, third int) int {\n\treturn first + second + third\n}\n";
+        let document = parse_document(Path::new("sample.go"), source).unwrap();
+        let mut cursor = document.tree.root_node().walk();
+        let function = document
+            .tree
+            .root_node()
+            .named_children(&mut cursor)
+            .find(|node| node.kind() == "function_declaration")
+            .expect("function declaration");
+        let deadline = RejectAfterChecks::new(1);
+
+        let error = match scan_go_symbol_scope(function, source, Some(&deadline)) {
+            Ok(_) => panic!("deadline should interrupt parameter binding scans"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go patch parameter bindings"),
+            "{error:#}"
+        );
+    }
 }
