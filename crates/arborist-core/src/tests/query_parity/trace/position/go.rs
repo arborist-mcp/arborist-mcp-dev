@@ -724,28 +724,30 @@ fn traces_go_local_package_imported_type_method_receivers() {
     fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
     fs::write(
         &caller_path,
-        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc composite() int { return svc.Counter{}.Value() }\nfunc conversion(value int) int { return svc.Scalar(value).Value() }\nfunc assertion(value any) int { return value.(svc.Counter).Value() }\nfunc factory(value int) int { return svc.New(value).Value() }\n",
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc composite() int { return svc.Counter{}.Value() }\nfunc pointer() int { return (&svc.Counter{}).Value() }\nfunc generic() int { return svc.Box[int]{}.Value() }\nfunc conversion(value int) int { return svc.Scalar(value).Value() }\nfunc assertion(value any) int { return value.(svc.Counter).Value() }\nfunc factory(value int) int { return svc.New(value).Value() }\n",
     )
     .unwrap();
     fs::write(
         &service_path,
-        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc New(value int) Counter { return Counter{} }\ntype Scalar int\nfunc (Scalar) Value() int { return 2 }\n",
+        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc New(value int) Counter { return Counter{} }\ntype Scalar int\nfunc (Scalar) Value() int { return 2 }\ntype Box[T any] struct{}\nfunc (Box[T]) Value() int { return 3 }\n",
     )
     .unwrap();
 
     let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(live.indexed_files, 2);
-    assert_eq!(live.callers.len(), 2);
-    assert!(
-        live.callers
-            .iter()
-            .any(|caller| caller.symbol_id == "composite")
-    );
-    assert!(
-        live.callers
-            .iter()
-            .any(|caller| caller.symbol_id == "assertion")
-    );
+    assert_eq!(live.callers.len(), 3);
+    for caller in ["composite", "pointer", "assertion"] {
+        assert!(
+            live.callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing Counter caller {caller}"
+        );
+    }
+
+    let box_live = trace_symbol_graph(&dir, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_live.callers.len(), 1);
+    assert_eq!(box_live.callers[0].symbol_id, "generic");
 
     let scalar_live = trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
     assert_eq!(scalar_live.callers.len(), 1);
@@ -754,19 +756,21 @@ fn traces_go_local_package_imported_type_method_receivers() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 2);
-    assert!(
-        persisted
-            .callers
-            .iter()
-            .any(|caller| caller.symbol_id == "composite")
-    );
-    assert!(
-        persisted
-            .callers
-            .iter()
-            .any(|caller| caller.symbol_id == "assertion")
-    );
+    assert_eq!(persisted.callers.len(), 3);
+    for caller in ["composite", "pointer", "assertion"] {
+        assert!(
+            persisted
+                .callers
+                .iter()
+                .any(|candidate| candidate.symbol_id == caller),
+            "missing persisted Counter caller {caller}"
+        );
+    }
+
+    let box_persisted =
+        trace_symbol_graph_from_index(&db_path, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_persisted.callers.len(), 1);
+    assert_eq!(box_persisted.callers[0].symbol_id, "generic");
 
     let scalar_persisted =
         trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
