@@ -331,6 +331,31 @@ func compute() int {
 }
 
 #[test]
+fn rejects_go_patches_with_conflicting_module_and_import_bindings() {
+    let source = r#"package sample
+
+import "fmt"
+
+type fmt struct{}
+
+func compute() string {
+	return ""
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("sample.go"),
+        source,
+        "compute",
+        "func compute() string {\n\treturn fmt.Sprintf(\"%d\", 1)\n}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["fmt"]);
+}
+
+#[test]
 fn rejects_go_patches_that_treat_dot_or_blank_imports_as_package_bindings() {
     let root = temporary_dir();
     let caller_path = root.join("cmd").join("main.go");

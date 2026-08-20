@@ -17,6 +17,13 @@ pub(crate) struct GoLocalPackageImport {
     pub(crate) source_paths: BTreeSet<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct GoLocalImportBindingStatuses {
+    pub(crate) local_names: BTreeSet<String>,
+    pub(crate) resolved_names: BTreeSet<String>,
+    pub(crate) resolved_ranges: BTreeMap<String, (usize, usize)>,
+}
+
 pub(crate) fn go_local_package_dependency_paths(
     path: &Path,
     root: Node<'_>,
@@ -110,13 +117,9 @@ pub(crate) fn go_local_import_binding_statuses(
     root: Node<'_>,
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
-) -> Result<(
-    BTreeSet<String>,
-    BTreeSet<String>,
-    BTreeMap<String, (usize, usize)>,
-)> {
+) -> Result<GoLocalImportBindingStatuses> {
     let Some((module_root, module_path)) = find_go_module(path) else {
-        return Ok((BTreeSet::new(), BTreeSet::new(), BTreeMap::new()));
+        return Ok(GoLocalImportBindingStatuses::default());
     };
 
     let mut local_names = BTreeSet::new();
@@ -194,7 +197,11 @@ pub(crate) fn go_local_import_binding_statuses(
             resolved_names.insert(resolved_name);
         }
     }
-    Ok((local_names, resolved_names, resolved_ranges))
+    Ok(GoLocalImportBindingStatuses {
+        local_names,
+        resolved_names,
+        resolved_ranges,
+    })
 }
 
 pub(crate) fn go_local_package_imports(

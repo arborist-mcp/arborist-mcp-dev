@@ -1,6 +1,6 @@
 mod scope;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -29,8 +29,15 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
     let normalized_path = normalize_path(path);
     let scope_scan = scan_go_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
-    collect_go_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
-    let (local_import_names, resolved_local_import_names, resolved_local_import_ranges) =
+    let mut ambiguous_file_item_names = BTreeSet::new();
+    collect_go_file_items(
+        document.tree.root_node(),
+        source,
+        &mut file_items,
+        &mut ambiguous_file_item_names,
+        deadline,
+    )?;
+    let import_statuses =
         go_local_import_binding_statuses(path, document.tree.root_node(), source, deadline)?;
     let scope_path = go_symbol_scope_path(symbol_node, source)?;
 
@@ -59,7 +66,10 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
         if GO_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
         }
-        if local_import_names.contains(name) && !resolved_local_import_names.contains(name) {
+        if ambiguous_file_item_names.contains(name)
+            || (import_statuses.local_names.contains(name)
+                && !import_statuses.resolved_names.contains(name))
+        {
             validation
                 .binding_decisions
                 .push(unresolved_binding_decision(name));
@@ -75,11 +85,12 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
                 name: name.clone(),
                 symbol: summary,
             });
-        } else if resolved_local_import_names.contains(name) {
+        } else if import_statuses.resolved_names.contains(name) {
             let summary = go_resolved_local_import_symbol_summary(
                 &normalized_path,
                 name,
-                resolved_local_import_ranges
+                import_statuses
+                    .resolved_ranges
                     .get(name)
                     .copied()
                     .unwrap_or((0, 0)),
@@ -202,6 +213,7 @@ fn collect_go_file_items<'tree>(
     root: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = root.walk();
@@ -210,12 +222,18 @@ fn collect_go_file_items<'tree>(
             deadline.check("scanning Go file items")?;
         }
         match child.kind() {
-            "function_declaration" => {
-                insert_go_declaration_item(child, source, "function_declaration", items)?
+            "function_declaration" => insert_go_declaration_item(
+                child,
+                source,
+                "function_declaration",
+                items,
+                ambiguous_names,
+            )?,
+            "type_declaration" => collect_go_type_names(child, source, items, ambiguous_names)?,
+            "import_declaration" => collect_go_import_names(child, source, items, ambiguous_names)?,
+            "var_declaration" | "const_declaration" => {
+                collect_go_spec_names(child, source, items, ambiguous_names)?
             }
-            "type_declaration" => collect_go_type_names(child, source, items)?,
-            "import_declaration" => collect_go_import_names(child, source, items)?,
-            "var_declaration" | "const_declaration" => collect_go_spec_names(child, source, items)?,
             _ => {}
         }
     }
@@ -227,6 +245,7 @@ fn insert_go_declaration_item<'tree>(
     source: &str,
     node_kind: &'static str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
 ) -> Result<()> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(());
@@ -235,8 +254,9 @@ fn insert_go_declaration_item<'tree>(
     if name.is_empty() {
         return Ok(());
     }
-    items.insert(
-        name.clone(),
+    insert_go_file_item(
+        items,
+        ambiguous_names,
         GoFileItem {
             name,
             node_kind,
@@ -251,14 +271,16 @@ fn collect_go_spec_names<'tree>(
     node: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
 ) -> Result<()> {
     if matches!(node.kind(), "var_spec" | "const_spec") {
         let mut cursor = node.walk();
         for name in node.children_by_field_name("name", &mut cursor) {
             let name = node_text(name, source)?.trim().to_string();
             if !name.is_empty() {
-                items.insert(
-                    name.clone(),
+                insert_go_file_item(
+                    items,
+                    ambiguous_names,
                     GoFileItem {
                         name,
                         node_kind: node.kind(),
@@ -272,7 +294,7 @@ fn collect_go_spec_names<'tree>(
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_spec_names(child, source, items)?;
+        collect_go_spec_names(child, source, items, ambiguous_names)?;
     }
     Ok(())
 }
@@ -281,13 +303,14 @@ fn collect_go_type_names<'tree>(
     node: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
 ) -> Result<()> {
     if matches!(node.kind(), "type_spec" | "type_alias") {
-        return insert_go_declaration_item(node, source, node.kind(), items);
+        return insert_go_declaration_item(node, source, node.kind(), items, ambiguous_names);
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_type_names(child, source, items)?;
+        collect_go_type_names(child, source, items, ambiguous_names)?;
     }
     Ok(())
 }
@@ -296,14 +319,15 @@ fn collect_go_import_names<'tree>(
     node: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
 ) -> Result<()> {
     if node.kind() == "import_spec" {
-        insert_go_import_name(node, source, items);
+        insert_go_import_name(node, source, items, ambiguous_names);
         return Ok(());
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_import_names(child, source, items)?;
+        collect_go_import_names(child, source, items, ambiguous_names)?;
     }
     Ok(())
 }
@@ -312,6 +336,7 @@ fn insert_go_import_name<'tree>(
     node: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
 ) {
     if let Some(name_node) = node.child_by_field_name("name") {
         // Dot imports and blank imports do not introduce a usable local name.
@@ -320,8 +345,9 @@ fn insert_go_import_name<'tree>(
             && !name.trim().is_empty()
         {
             let name = name.trim().to_string();
-            items.insert(
-                name.clone(),
+            insert_go_file_item(
+                items,
+                ambiguous_names,
                 GoFileItem {
                     name,
                     node_kind: "import_spec",
@@ -348,6 +374,21 @@ fn insert_go_import_name<'tree>(
                 origin_type: "imported_module",
             },
         );
+    }
+}
+
+fn insert_go_file_item<'tree>(
+    items: &mut BTreeMap<String, GoFileItem<'tree>>,
+    ambiguous_names: &mut BTreeSet<String>,
+    item: GoFileItem<'tree>,
+) {
+    if ambiguous_names.contains(&item.name) {
+        return;
+    }
+    let name = item.name.clone();
+    if items.insert(name.clone(), item).is_some() {
+        items.remove(&name);
+        ambiguous_names.insert(name);
     }
 }
 
