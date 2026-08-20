@@ -352,7 +352,7 @@ fn find_go_module(
         }
         let module_file = directory.join("go.mod");
         if module_file.is_file() {
-            let Ok(source) = fs::read_to_string(module_file) else {
+            let Ok(source) = read_source(&module_file) else {
                 return Ok(None);
             };
             let Some(module_path) = go_module_path(&source) else {
@@ -623,10 +623,11 @@ mod tests {
 
     use super::{
         go_local_import_binding_statuses, go_local_package_dependency_paths,
-        go_local_package_dependency_paths_with_deadline, go_local_package_imports_with_deadline,
+        go_local_package_dependency_paths_with_deadline, go_local_package_imports,
+        go_local_package_imports_with_deadline,
     };
     use crate::deadline::DeadlineCheck;
-    use crate::language::{normalize_absolute_path, parse_document};
+    use crate::language::{MAX_SOURCE_FILE_BYTES, normalize_absolute_path, parse_document};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1117,6 +1118,24 @@ import (
                 .unwrap();
 
         assert!(dependencies.is_empty());
+    }
+
+    #[test]
+    fn ignores_oversized_go_module_metadata() {
+        let root = temporary_dir();
+        let command = root.join("cmd").join("main.go");
+        fs::create_dir_all(command.parent().unwrap()).unwrap();
+        let module_file = root.join("go.mod");
+        let file = fs::File::create(&module_file).unwrap();
+        file.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+        let source = "package main\n\nimport \"example.com/project/internal/service\"\n";
+        fs::write(&command, source).unwrap();
+
+        let document = parse_document(&command, source).unwrap();
+        let imports =
+            go_local_package_imports(&command, document.tree.root_node(), source).unwrap();
+
+        assert!(imports.is_empty());
     }
 
     #[test]
