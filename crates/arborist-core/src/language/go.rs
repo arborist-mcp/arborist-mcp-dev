@@ -120,6 +120,7 @@ pub(crate) fn go_local_import_binding_statuses(
         };
         let default_name = import.path.rsplit('/').next().map(str::to_string);
         let explicit_name = import.explicit_local_name.clone();
+        let has_explicit_name = explicit_name.is_some();
         let candidate_name = explicit_name.clone().or(default_name);
         let Some(candidate_name) = candidate_name.filter(|name| is_valid_go_identifier(name))
         else {
@@ -148,7 +149,7 @@ pub(crate) fn go_local_import_binding_statuses(
         if ambiguous_names.contains(&resolved_name) {
             continue;
         }
-        if !seen_binding_names.insert(resolved_name.clone()) {
+        if !has_explicit_name && !seen_binding_names.insert(resolved_name.clone()) {
             resolved_names.remove(&resolved_name);
             resolved_ranges.remove(&resolved_name);
             ambiguous_names.insert(resolved_name);

@@ -331,6 +331,50 @@ func compute() int {
 }
 
 #[test]
+fn resolves_go_patches_with_explicit_local_package_import_aliases() {
+    let root = temporary_dir();
+    let caller_path = root.join("cmd").join("main.go");
+    let package_path = root.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(package_path.parent().unwrap()).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &package_path,
+        "package service\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let source = r#"package main
+
+import catalog "example.com/project/internal/service"
+
+func compute() int {
+	return 1
+}
+"#;
+    fs::write(&caller_path, source).unwrap();
+
+    let result = patch_ast_node(
+        &caller_path,
+        source,
+        "compute",
+        "func compute() int {\n\treturn catalog.Value()\n}",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "catalog" && decision.status == "resolved"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn rejects_go_patches_with_invalid_local_import_package_sources() {
     let root = temporary_dir();
     let caller_path = root.join("cmd").join("main.go");
