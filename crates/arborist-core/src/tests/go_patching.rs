@@ -287,6 +287,50 @@ func compute(value int) int {
 }
 
 #[test]
+fn rejects_go_patches_that_use_unresolved_local_package_imports() {
+    let root = temporary_dir();
+    let caller_path = root.join("cmd").join("main.go");
+    let package_path = root.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(package_path.parent().unwrap()).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &package_path,
+        "package catalog\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let source = r#"package main
+
+import "example.com/project/internal/service"
+
+func compute() int {
+	return 1
+}
+"#;
+    fs::write(&caller_path, source).unwrap();
+
+    let result = patch_ast_node(
+        &caller_path,
+        source,
+        "compute",
+        "func compute() int {\n\treturn service.Value()\n}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["service"]);
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| { decision.name == "service" && decision.status == "unresolved" })
+    );
+}
+
+#[test]
 fn rejects_go_function_patch_with_unresolved_identifier() {
     let source = "package sample\n\nfunc compute(value int) int {\n\treturn value + 1\n}\n";
     let replacement = "func compute(value int) int {\n\treturn missing(value)\n}";

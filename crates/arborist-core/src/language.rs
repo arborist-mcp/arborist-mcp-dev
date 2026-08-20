@@ -27,7 +27,9 @@ pub(crate) use csharp::{
     csharp_global_namespace_imports, csharp_global_static_type_imports,
     csharp_global_type_alias_imports, csharp_local_file_dependency_paths,
 };
-pub(crate) use go::{go_local_package_dependency_paths, go_local_package_imports};
+pub(crate) use go::{
+    go_local_import_binding_statuses, go_local_package_dependency_paths, go_local_package_imports,
+};
 pub(crate) use java::{
     JavaDirectSuperclassReference, java_direct_interface_references_for_declaration,
     java_direct_superclass_reference, java_local_explicit_static_member_imports,

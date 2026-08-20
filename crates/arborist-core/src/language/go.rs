@@ -103,6 +103,62 @@ fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>
     Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
+pub(crate) fn go_local_import_binding_statuses(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+    let Some((module_root, module_path)) = find_go_module(path) else {
+        return Ok((BTreeSet::new(), BTreeSet::new()));
+    };
+
+    let mut local_names = BTreeSet::new();
+    let mut resolved_names = BTreeSet::new();
+    for import in go_import_specs(root, source)? {
+        let Some(package_dir) =
+            resolve_local_go_package_directory(&module_root, &module_path, &import.path)
+        else {
+            continue;
+        };
+        let default_name = import.path.rsplit('/').next().map(str::to_string);
+        let binding_name = import.explicit_local_name.clone().or(default_name);
+        let Some(binding_name) = binding_name.filter(|name| is_valid_go_identifier(name)) else {
+            continue;
+        };
+        local_names.insert(binding_name.clone());
+
+        let source_paths = go_source_files_in_directory(&module_root, &package_dir);
+        if source_paths.is_empty() {
+            continue;
+        }
+        let mut package_names = BTreeSet::new();
+        for source_path in source_paths {
+            let candidate_source = match read_source(&source_path) {
+                Ok(candidate_source) => candidate_source,
+                Err(_) => continue,
+            };
+            let document = match parse_document(&source_path, &candidate_source) {
+                Ok(document) => document,
+                Err(_) => continue,
+            };
+            if let Ok(Some(package_name)) =
+                go_source_package_name(document.tree.root_node(), &candidate_source)
+            {
+                package_names.insert(package_name);
+            }
+        }
+        if package_names.len() == 1 {
+            let resolved_name = if import.explicit_local_name.is_some() {
+                binding_name
+            } else {
+                package_names.into_iter().next().unwrap()
+            };
+            resolved_names.insert(resolved_name);
+        }
+    }
+    Ok((local_names, resolved_names))
+}
+
 pub(crate) fn go_local_package_imports(
     path: &Path,
     root: Node<'_>,
@@ -254,6 +310,17 @@ fn go_import_path_literal(node: Node<'_>, source: &str) -> Result<Option<String>
 
 fn is_valid_go_import_path(import_path: &str) -> bool {
     !import_path.is_empty() && import_path.split('/').all(is_safe_go_package_segment)
+}
+
+fn is_valid_go_identifier(name: &str) -> bool {
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_alphabetic()) {
+        return false;
+    }
+    characters.all(|character| character == '_' || character.is_alphanumeric())
 }
 
 fn is_safe_go_package_segment(segment: &str) -> bool {

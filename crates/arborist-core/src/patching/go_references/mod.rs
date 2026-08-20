@@ -8,7 +8,9 @@ use tree_sitter::Node;
 
 use super::{ReferenceValidation, resolved_binding_decision, unresolved_binding_decision};
 use crate::deadline::DeadlineCheck;
-use crate::language::{ParsedDocument, node_text, normalize_path};
+use crate::language::{
+    ParsedDocument, go_local_import_binding_statuses, node_text, normalize_path,
+};
 use crate::model::{SymbolSummary, SymbolSummaryInit, ValidationBinding};
 use crate::semantic::go::{
     go_parameters, go_return_type, go_semantic_path, go_signature, go_symbol_name,
@@ -28,6 +30,8 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
     let scope_scan = scan_go_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
     collect_go_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
+    let (local_import_names, resolved_local_import_names) =
+        go_local_import_binding_statuses(path, document.tree.root_node(), source)?;
     let scope_path = go_symbol_scope_path(symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();
@@ -53,6 +57,13 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
             deadline.check("validating Go references")?;
         }
         if GO_PREDECLARED_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+        if local_import_names.contains(name) && !resolved_local_import_names.contains(name) {
+            validation
+                .binding_decisions
+                .push(unresolved_binding_decision(name));
+            validation.unresolved_identifiers.push(name.clone());
             continue;
         }
         match file_items.get(name) {
