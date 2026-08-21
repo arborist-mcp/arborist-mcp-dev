@@ -191,9 +191,11 @@ fn collect_direct_local_calls(
         });
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
+    let local_type_names = source_file_type_names(symbol_node, source)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
-    let local_variable_types = go_function_body_local_variable_types(body, source)?;
+    let local_variable_types =
+        go_function_body_local_variable_types(body, source, &local_type_names)?;
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
@@ -334,6 +336,7 @@ fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
 fn go_function_body_local_variable_types(
     body: Node<'_>,
     source: &str,
+    local_type_names: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, GoLocalVariableType>> {
     let mut local_variable_types = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
@@ -352,12 +355,14 @@ fn go_function_body_local_variable_types(
                 source,
                 &mut local_variable_types,
                 &mut ambiguous_names,
+                local_type_names,
             )?,
             "short_var_declaration" => collect_go_short_variable_declaration_types(
                 statement,
                 source,
                 &mut local_variable_types,
                 &mut ambiguous_names,
+                local_type_names,
             )?,
             _ => {}
         }
@@ -371,13 +376,18 @@ fn collect_go_var_declaration_types(
     source: &str,
     local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
     ambiguous_names: &mut BTreeSet<String>,
+    local_type_names: &BTreeSet<String>,
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for node in declaration.named_children(&mut cursor) {
         match node.kind() {
-            "var_spec" => {
-                collect_go_var_spec_types(node, source, local_variable_types, ambiguous_names)?
-            }
+            "var_spec" => collect_go_var_spec_types(
+                node,
+                source,
+                local_variable_types,
+                ambiguous_names,
+                local_type_names,
+            )?,
             "var_spec_list" => {
                 let mut spec_cursor = node.walk();
                 for spec in node.named_children(&mut spec_cursor) {
@@ -387,6 +397,7 @@ fn collect_go_var_declaration_types(
                             source,
                             local_variable_types,
                             ambiguous_names,
+                            local_type_names,
                         )?;
                     }
                 }
@@ -402,6 +413,7 @@ fn collect_go_var_spec_types(
     source: &str,
     local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
     ambiguous_names: &mut BTreeSet<String>,
+    local_type_names: &BTreeSet<String>,
 ) -> Result<()> {
     let mut name_cursor = spec.walk();
     let names = spec
@@ -414,11 +426,13 @@ fn collect_go_var_spec_types(
 
     let type_name = if let Some(type_node) = spec.child_by_field_name("type") {
         go_named_local_type(type_node, source)?
-    } else if let Some(type_node) = spec
+    } else if let Some(type_name) = spec
         .child_by_field_name("value")
-        .and_then(go_single_composite_literal_type)
+        .map(|value| go_single_local_initializer_type(value, source, local_type_names))
+        .transpose()?
+        .flatten()
     {
-        go_named_local_type(type_node, source)?
+        Some(type_name)
     } else {
         None
     };
@@ -442,6 +456,7 @@ fn collect_go_short_variable_declaration_types(
     source: &str,
     local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
     ambiguous_names: &mut BTreeSet<String>,
+    local_type_names: &BTreeSet<String>,
 ) -> Result<()> {
     let Some(left) = declaration.child_by_field_name("left") else {
         return Ok(());
@@ -463,10 +478,8 @@ fn collect_go_short_variable_declaration_types(
         if name.is_empty() || name == "_" {
             continue;
         }
-        let Some(type_node) = go_single_composite_literal_type(value) else {
-            continue;
-        };
-        let Some(type_name) = go_named_local_type(type_node, source)? else {
+        let Some(type_name) = go_single_local_initializer_type(value, source, local_type_names)?
+        else {
             continue;
         };
         insert_go_local_variable_type(
@@ -478,6 +491,51 @@ fn collect_go_short_variable_declaration_types(
         );
     }
     Ok(())
+}
+
+fn go_single_local_initializer_type(
+    node: Node<'_>,
+    source: &str,
+    local_type_names: &BTreeSet<String>,
+) -> Result<Option<String>> {
+    if let Some(type_node) = go_single_composite_literal_type(node) {
+        return go_named_local_type(type_node, source);
+    }
+    if node.kind() == "expression_list" {
+        let mut cursor = node.walk();
+        let mut expressions = node.named_children(&mut cursor);
+        let Some(value) = expressions.next() else {
+            return Ok(None);
+        };
+        if expressions.next().is_some() {
+            return Ok(None);
+        }
+        return go_single_local_initializer_type(value, source, local_type_names);
+    }
+    let type_name = if node.kind() == "type_conversion_expression" {
+        node.child_by_field_name("type")
+            .map(|type_node| go_named_local_type(type_node, source))
+            .transpose()?
+            .flatten()
+    } else {
+        if node.kind() != "call_expression" {
+            return Ok(None);
+        }
+        let Some(function) = node.child_by_field_name("function") else {
+            return Ok(None);
+        };
+        match function.kind() {
+            "generic_type" => go_named_local_type(function, source)?,
+            _ => go_ambiguous_type_conversion_function_name(function, source)?,
+        }
+    };
+    let Some(type_name) = type_name else {
+        return Ok(None);
+    };
+    let local_name = type_name
+        .rsplit_once('.')
+        .map_or(type_name.as_str(), |(_, name)| name);
+    Ok((!type_name.contains('.') && local_type_names.contains(local_name)).then_some(type_name))
 }
 
 fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
@@ -595,6 +653,35 @@ fn source_file_function_paths(
         .into_iter()
         .filter_map(|(name, paths)| (paths.len() == 1).then(|| (name, paths[0].clone())))
         .collect())
+}
+
+fn source_file_type_names(symbol_node: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut type_names = BTreeSet::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "type_declaration" {
+            continue;
+        }
+        let mut declaration_cursor = child.walk();
+        for spec in child.named_children(&mut declaration_cursor) {
+            if spec.kind() != "type_spec" {
+                continue;
+            }
+            let Some(name) = spec.child_by_field_name("name") else {
+                continue;
+            };
+            let name = node_text(name, source)?.trim();
+            if !name.is_empty() {
+                type_names.insert(name.to_string());
+            }
+        }
+    }
+    Ok(type_names)
 }
 
 fn collect_function_bindings(
