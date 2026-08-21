@@ -191,8 +191,9 @@ fn collect_direct_local_calls(
         });
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
-    let local_factory_return_types = source_file_function_return_types(symbol_node, source)?;
     let local_type_names = source_file_type_names(symbol_node, source)?;
+    let local_factory_return_types =
+        source_file_function_return_types(symbol_node, source, &local_type_names)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
     let local_variable_types = go_function_body_local_variable_types(
@@ -746,6 +747,7 @@ fn source_file_type_names(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
 fn source_file_function_return_types(
     symbol_node: Node<'_>,
     source: &str,
+    local_type_names: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, String>> {
     let mut root = symbol_node;
     while let Some(parent) = root.parent() {
@@ -767,6 +769,12 @@ fn source_file_function_return_types(
         let Some(type_name) = go_named_local_type(result, source)? else {
             continue;
         };
+        let local_name = type_name
+            .rsplit_once('.')
+            .map_or(type_name.as_str(), |(_, name)| name);
+        if type_name.contains('.') || !local_type_names.contains(local_name) {
+            continue;
+        }
         return_types_by_name
             .entry(name)
             .or_default()
