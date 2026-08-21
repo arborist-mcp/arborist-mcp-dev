@@ -761,6 +761,30 @@ fn traces_go_var_initialized_receivers_through_factory_aliases() {
 }
 
 #[test]
+fn does_not_trace_go_multi_result_factory_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() (Counter, error) { return Counter{}, nil }\nfunc caller() int { counter, err := NewCounter(); _ = err; return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+    let factory =
+        trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory.callers.len(), 1);
+    assert_eq!(factory.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_grouped_var_factory_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
