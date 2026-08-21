@@ -192,8 +192,13 @@ fn collect_direct_local_calls(
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
     let local_type_names = source_file_type_names(symbol_node, source)?;
-    let local_factory_return_types =
-        source_file_function_return_types(symbol_node, source, &local_type_names)?;
+    let local_type_alias_targets = source_file_type_alias_targets(symbol_node, source)?;
+    let local_factory_return_types = source_file_function_return_types(
+        symbol_node,
+        source,
+        &local_type_names,
+        &local_type_alias_targets,
+    )?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
     let mut bindings = BTreeSet::new();
@@ -741,9 +746,11 @@ fn source_file_type_names(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
             child
                 .named_children(&mut declaration_cursor)
                 .find_map(|spec| {
-                    (spec.kind() == "type_spec")
-                        .then(|| spec.child_by_field_name("name"))
-                        .flatten()
+                    if matches!(spec.kind(), "type_spec" | "type_alias") {
+                        spec.child_by_field_name("name")
+                    } else {
+                        None
+                    }
                 })
         };
         let Some(name) = name else {
@@ -757,10 +764,79 @@ fn source_file_type_names(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
     Ok(type_names)
 }
 
+fn source_file_type_alias_targets(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut targets_by_name = BTreeMap::<String, Vec<String>>::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let alias = if child.kind() == "type_alias" {
+            Some(child)
+        } else if child.kind() == "type_declaration" {
+            let mut declaration_cursor = child.walk();
+            child
+                .named_children(&mut declaration_cursor)
+                .find(|spec| spec.kind() == "type_alias")
+        } else {
+            None
+        };
+        let Some(alias) = alias else {
+            continue;
+        };
+        let (Some(name), Some(value)) = (
+            alias.child_by_field_name("name"),
+            alias.child_by_field_name("type"),
+        ) else {
+            continue;
+        };
+        let name = node_text(name, source)?.trim();
+        let Some(target) = go_named_local_type(value, source)? else {
+            continue;
+        };
+        if name.is_empty() || target.contains('.') {
+            continue;
+        }
+        targets_by_name
+            .entry(name.to_string())
+            .or_default()
+            .push(target);
+    }
+
+    Ok(targets_by_name
+        .into_iter()
+        .filter_map(|(name, targets)| (targets.len() == 1).then(|| (name, targets[0].clone())))
+        .collect())
+}
+
+fn go_resolve_local_type_alias(
+    type_name: &str,
+    local_type_names: &BTreeSet<String>,
+    local_type_alias_targets: &BTreeMap<String, String>,
+) -> Option<String> {
+    let mut current = type_name.to_string();
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(current.clone()) {
+            return None;
+        }
+        let Some(target) = local_type_alias_targets.get(&current) else {
+            return local_type_names.contains(&current).then_some(current);
+        };
+        current = target.clone();
+    }
+}
+
 fn source_file_function_return_types(
     symbol_node: Node<'_>,
     source: &str,
     local_type_names: &BTreeSet<String>,
+    local_type_alias_targets: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>> {
     let mut root = symbol_node;
     while let Some(parent) = root.parent() {
@@ -788,6 +864,11 @@ fn source_file_function_return_types(
         if type_name.contains('.') || !local_type_names.contains(local_name) {
             continue;
         }
+        let Some(type_name) =
+            go_resolve_local_type_alias(&type_name, local_type_names, local_type_alias_targets)
+        else {
+            continue;
+        };
         return_types_by_name
             .entry(name)
             .or_default()
