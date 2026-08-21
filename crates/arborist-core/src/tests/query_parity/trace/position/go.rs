@@ -856,10 +856,10 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
     .unwrap();
     fs::write(
         &service_path,
-        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Pointer struct{}\nfunc (*Pointer) Value() int { return 2 }\ntype Box[T any] struct{}\nfunc (Box[T]) Value() int { return 3 }\n",
+        "package service\n\ntype Counter struct{}\ntype CounterAlias = Counter\nfunc (Counter) Value() int { return 1 }\ntype Pointer struct{}\ntype PointerAlias = *Pointer\nfunc (*Pointer) Value() int { return 2 }\ntype Box[T any] struct{}\ntype IntBox = Box[int]\nfunc (Box[T]) Value() int { return 3 }\n",
     )
     .unwrap();
-    let overlay = "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Counter{}.Value() }\nfunc pointer() int { return (&svc.Pointer{}).Value() }\nfunc generic() int { return svc.Box[int]{}.Value() }\n";
+    let overlay = "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.CounterAlias{}.Value() }\nfunc pointer() int { var value svc.PointerAlias; return value.Value() }\nfunc generic() int { return svc.IntBox{}.Value() }\n";
 
     let live = trace_symbol_graph_with_source(
         &dir,
