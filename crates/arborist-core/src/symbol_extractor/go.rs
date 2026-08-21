@@ -508,6 +508,7 @@ fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
     }
     None
 }
+
 fn insert_go_local_variable_type(
     local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
     ambiguous_names: &mut BTreeSet<String>,
