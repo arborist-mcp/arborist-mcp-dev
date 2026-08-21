@@ -2491,6 +2491,48 @@ fn traces_go_nested_block_local_variable_method_calls() {
 }
 
 #[test]
+fn traces_go_nested_block_local_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("counter.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\nfunc caller() int { if true { counter := Counter{}; return counter.Value() }; return 0 }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn does_not_leak_go_nested_block_local_variable_method_calls() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
