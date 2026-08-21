@@ -424,18 +424,15 @@ fn collect_go_var_spec_types(
         return Ok(());
     }
 
-    let type_name = if let Some(type_node) = spec.child_by_field_name("type") {
-        go_named_local_type(type_node, source)?
-    } else if let Some(type_name) = spec
-        .child_by_field_name("value")
-        .map(|value| go_single_local_initializer_type(value, source, local_type_names))
+    let type_name = spec
+        .child_by_field_name("type")
+        .map(|type_node| go_named_local_type(type_node, source))
+        .or_else(|| {
+            spec.child_by_field_name("value")
+                .map(|value| go_single_local_initializer_type(value, source, local_type_names))
+        })
         .transpose()?
-        .flatten()
-    {
-        Some(type_name)
-    } else {
-        None
-    };
+        .flatten();
     let Some(type_name) = type_name else {
         return Ok(());
     };
