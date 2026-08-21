@@ -1283,6 +1283,34 @@ fn traces_go_multi_value_var_factory_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn preserves_go_direct_named_result_factory_call_edges() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() (result Counter) { return Counter{} }\nfunc caller() int { return NewCounter().Value() }\n",
+    )
+    .unwrap();
+
+    let method_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(method_live.callers.is_empty());
+    let factory_live = trace_symbol_graph(&dir, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_live.callers.len(), 1);
+    assert_eq!(factory_live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let method_persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
+            .unwrap();
+    assert!(method_persisted.callers.is_empty());
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_persisted.callers.len(), 1);
+    assert_eq!(factory_persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_parenthesized_factory_alias_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
