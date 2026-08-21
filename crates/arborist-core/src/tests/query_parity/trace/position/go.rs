@@ -779,8 +779,7 @@ fn does_not_trace_go_multi_named_result_factory_receivers() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let method_persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert!(method_persisted.callers.is_empty());
     let factory_persisted =
         trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
@@ -1094,8 +1093,7 @@ fn traces_go_parenthesized_named_result_factory_receivers() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
@@ -1119,8 +1117,7 @@ fn does_not_trace_go_single_result_factory_into_mismatched_var_names() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let method_persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert!(method_persisted.callers.is_empty());
     let factory_persisted =
         trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
@@ -1145,8 +1142,7 @@ fn traces_go_grouped_var_named_result_factory_receivers() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
@@ -1301,8 +1297,7 @@ fn preserves_go_direct_named_result_factory_call_edges() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let method_persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert!(method_persisted.callers.is_empty());
     let factory_persisted =
         trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
