@@ -410,6 +410,15 @@ fn collect_go_local_variable_types_in_scope(
             declaration_scope_range,
             context,
         )?;
+    } else if node.kind() == "range_clause" {
+        collect_go_range_clause_types(
+            node,
+            source,
+            local_variable_types,
+            ambiguous_names,
+            declaration_scope_range,
+            context,
+        )?;
     }
     let next_scope_range = if node.kind() == "block" {
         (node.start_byte(), node.end_byte())
@@ -452,6 +461,81 @@ fn go_local_variable_declaration_scope(
         current = parent.parent();
     }
     fallback_range
+}
+
+fn collect_go_range_clause_types(
+    clause: Node<'_>,
+    source: &str,
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    ambiguous_names: &mut BTreeSet<String>,
+    scope_range: (usize, usize),
+    context: &GoLocalVariableTypeContext<'_>,
+) -> Result<()> {
+    let Some(left) = clause.child_by_field_name("left") else {
+        return Ok(());
+    };
+    let Some(right) = clause.child_by_field_name("right") else {
+        return Ok(());
+    };
+    let operator_text = &source[left.end_byte()..right.start_byte()];
+    if !operator_text.contains(":=") {
+        return Ok(());
+    }
+    let mut left_cursor = left.walk();
+    let names = left
+        .named_children(&mut left_cursor)
+        .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
+        .collect::<Result<Vec<_>>>()?;
+    if names.len() != 2 {
+        return Ok(());
+    }
+    let Some(element_type) = go_range_element_type(right, source, context.local_type_names)? else {
+        return Ok(());
+    };
+    let name = &names[1];
+    if name.is_empty() || name == "_" {
+        return Ok(());
+    }
+    insert_go_local_variable_type(
+        local_variable_types,
+        ambiguous_names,
+        name.clone(),
+        element_type,
+        clause.end_byte(),
+        scope_range,
+    );
+    Ok(())
+}
+
+fn go_range_element_type(
+    node: Node<'_>,
+    source: &str,
+    local_type_names: &BTreeSet<String>,
+) -> Result<Option<String>> {
+    let type_node = if node.kind() == "composite_literal" {
+        node.child_by_field_name("type")
+    } else {
+        Some(node)
+    };
+    let Some(type_node) = type_node else {
+        return Ok(None);
+    };
+    let element_node = match type_node.kind() {
+        "array_type" | "implicit_length_array_type" | "slice_type" => {
+            type_node.child_by_field_name("element")
+        }
+        "map_type" | "channel_type" => type_node.child_by_field_name("value"),
+        "parenthesized_type" => {
+            let mut cursor = type_node.walk();
+            type_node.named_children(&mut cursor).next()
+        }
+        _ => None,
+    };
+    element_node
+        .map(|element| go_named_local_type(element, source))
+        .transpose()
+        .map(Option::flatten)
+        .map(|type_name| type_name.filter(|name| local_type_names.contains(name)))
 }
 
 fn collect_go_var_declaration_types(
