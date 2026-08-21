@@ -13506,7 +13506,17 @@ fn resolve_go_imported_type_method_reference(
     else {
         return Ok(None);
     };
-    let target_path = format!("{imported_type}::{method_name}");
+    let Some(target_type) = go_imported_simple_type_alias_terminal_target(
+        imported_type,
+        &binding.package_paths,
+        raw_symbols,
+        semantic_path_index,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{target_type}::{method_name}");
     let mut candidates = Vec::new();
     for index in semantic_path_index
         .get(&target_path)
@@ -13528,6 +13538,50 @@ fn resolve_go_imported_type_method_reference(
     }
 
     Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn go_imported_simple_type_alias_terminal_target(
+    alias_name: &str,
+    package_paths: &BTreeSet<String>,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut current_name = alias_name.to_string();
+    let mut visited_aliases = BTreeSet::new();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go imported type alias chain")?;
+        }
+        if !visited_aliases.insert(current_name.clone()) {
+            return Ok(None);
+        }
+
+        let candidates = semantic_path_index
+            .get(&current_name)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                matches!(candidate.node_kind.as_str(), "type_spec" | "type_alias")
+                    && candidate.semantic_path == current_name
+                    && is_production_go_source_file(&candidate.file_path)
+                    && package_paths.contains(&candidate.file_path)
+            })
+            .collect::<Vec<_>>();
+        let [candidate_index] = candidates.as_slice() else {
+            return Ok(None);
+        };
+        let candidate = &raw_symbols[*candidate_index];
+        if candidate.node_kind == "type_spec" {
+            return Ok(Some(current_name));
+        }
+        let Some(next_name) = go_simple_type_alias_target(candidate) else {
+            return Ok(None);
+        };
+        current_name = next_name;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

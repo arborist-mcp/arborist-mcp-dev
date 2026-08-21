@@ -784,6 +784,48 @@ fn traces_go_local_package_imported_type_method_receivers() {
 }
 
 #[test]
+fn traces_go_imported_type_alias_method_receivers() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Alias{}.Value() }\nfunc chained() int { return svc.Chained{}.Value() }\nfunc scalarConversion(value int) int { return svc.ScalarAlias(value).Value() }\nfunc scalarAssertion(value any) int { return value.(svc.ScalarAlias).Value() }\nfunc cycle() int { return svc.LoopA{}.Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\ntype Scalar int\ntype ScalarAlias = Scalar\ntype LoopA = LoopB\ntype LoopB = LoopA\nfunc (Counter) Value() int { return 1 }\nfunc (Scalar) Value() int { return 2 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+    assert_eq!(live.callers[1].symbol_id, "chained");
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+    assert_eq!(persisted.callers[1].symbol_id, "chained");
+
+    let scalar_live = trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_live.callers.len(), 2);
+    assert_eq!(scalar_live.callers[0].symbol_id, "scalarAssertion");
+    assert_eq!(scalar_live.callers[1].symbol_id, "scalarConversion");
+    let scalar_persisted =
+        trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_persisted.callers.len(), 2);
+    assert_eq!(scalar_persisted.callers[0].symbol_id, "scalarAssertion");
+    assert_eq!(scalar_persisted.callers[1].symbol_id, "scalarConversion");
+}
+
+#[test]
 fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");
