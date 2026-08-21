@@ -121,6 +121,12 @@ struct GoLocalVariableType {
     scope_range: (usize, usize),
 }
 
+struct GoLocalCollectionType {
+    element_type_name: String,
+    available_after: usize,
+    scope_range: (usize, usize),
+}
+
 struct GoLocalVariableTypeContext<'a> {
     local_type_names: &'a BTreeSet<String>,
     local_factory_return_types: &'a BTreeMap<String, String>,
@@ -359,6 +365,7 @@ fn go_function_body_local_variable_types(
     bindings: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, Vec<GoLocalVariableType>>> {
     let mut local_variable_types = BTreeMap::new();
+    let mut local_collection_types = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
     let function_body_range = (body.start_byte(), body.end_byte());
     let context = GoLocalVariableTypeContext {
@@ -371,6 +378,7 @@ fn go_function_body_local_variable_types(
         source,
         function_body_range,
         &mut local_variable_types,
+        &mut local_collection_types,
         &mut ambiguous_names,
         &context,
     )?;
@@ -385,6 +393,7 @@ fn collect_go_local_variable_types_in_scope(
     source: &str,
     scope_range: (usize, usize),
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
     ambiguous_names: &mut BTreeSet<String>,
     context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<()> {
@@ -397,6 +406,7 @@ fn collect_go_local_variable_types_in_scope(
             node,
             source,
             local_variable_types,
+            local_collection_types,
             ambiguous_names,
             declaration_scope_range,
             context,
@@ -406,6 +416,7 @@ fn collect_go_local_variable_types_in_scope(
             node,
             source,
             local_variable_types,
+            local_collection_types,
             ambiguous_names,
             declaration_scope_range,
             context,
@@ -415,6 +426,7 @@ fn collect_go_local_variable_types_in_scope(
             node,
             source,
             local_variable_types,
+            local_collection_types,
             ambiguous_names,
             declaration_scope_range,
             context,
@@ -432,6 +444,7 @@ fn collect_go_local_variable_types_in_scope(
             source,
             next_scope_range,
             local_variable_types,
+            local_collection_types,
             ambiguous_names,
             context,
         )?;
@@ -467,6 +480,7 @@ fn collect_go_range_clause_types(
     clause: Node<'_>,
     source: &str,
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
     context: &GoLocalVariableTypeContext<'_>,
@@ -489,7 +503,9 @@ fn collect_go_range_clause_types(
     if names.len() != 2 {
         return Ok(());
     }
-    let Some(element_type) = go_range_element_type(right, source, context.local_type_names)? else {
+    let element_type = go_range_element_type(right, source, context.local_type_names)?
+        .or_else(|| go_local_collection_element_type(right, source, local_collection_types));
+    let Some(element_type) = element_type else {
         return Ok(());
     };
     let name = &names[1];
@@ -542,6 +558,7 @@ fn collect_go_var_declaration_types(
     declaration: Node<'_>,
     source: &str,
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
     context: &GoLocalVariableTypeContext<'_>,
@@ -553,6 +570,7 @@ fn collect_go_var_declaration_types(
                 node,
                 source,
                 local_variable_types,
+                local_collection_types,
                 ambiguous_names,
                 scope_range,
                 context,
@@ -565,6 +583,7 @@ fn collect_go_var_declaration_types(
                             spec,
                             source,
                             local_variable_types,
+                            local_collection_types,
                             ambiguous_names,
                             scope_range,
                             context,
@@ -582,6 +601,7 @@ fn collect_go_var_spec_types(
     spec: Node<'_>,
     source: &str,
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
     context: &GoLocalVariableTypeContext<'_>,
@@ -596,6 +616,19 @@ fn collect_go_var_spec_types(
     }
 
     if let Some(type_node) = spec.child_by_field_name("type") {
+        if let Some(element_type) =
+            go_range_element_type(type_node, source, context.local_type_names)?
+        {
+            for name in &names {
+                insert_go_local_collection_type(
+                    local_collection_types,
+                    name.clone(),
+                    element_type.clone(),
+                    spec.end_byte(),
+                    scope_range,
+                );
+            }
+        }
         let Some(type_name) = go_named_local_type(type_node, source)? else {
             return Ok(());
         };
@@ -625,6 +658,16 @@ fn collect_go_var_spec_types(
         return Ok(());
     }
     for (name, value) in names.into_iter().zip(values) {
+        if let Some(element_type) = go_range_element_type(value, source, context.local_type_names)?
+        {
+            insert_go_local_collection_type(
+                local_collection_types,
+                name.clone(),
+                element_type,
+                spec.end_byte(),
+                scope_range,
+            );
+        }
         let Some(type_name) = go_single_local_initializer_type(
             value,
             source,
@@ -651,6 +694,7 @@ fn collect_go_short_variable_declaration_types(
     declaration: Node<'_>,
     source: &str,
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
     context: &GoLocalVariableTypeContext<'_>,
@@ -674,6 +718,16 @@ fn collect_go_short_variable_declaration_types(
     for (name, value) in names.into_iter().zip(values) {
         if name.is_empty() || name == "_" {
             continue;
+        }
+        if let Some(element_type) = go_range_element_type(value, source, context.local_type_names)?
+        {
+            insert_go_local_collection_type(
+                local_collection_types,
+                name.clone(),
+                element_type,
+                declaration.end_byte(),
+                scope_range,
+            );
         }
         let Some(type_name) = go_single_local_initializer_type(
             value,
@@ -804,6 +858,49 @@ fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
         return go_single_composite_literal_type(literal);
     }
     None
+}
+
+fn insert_go_local_collection_type(
+    local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
+    name: String,
+    element_type_name: String,
+    available_after: usize,
+    scope_range: (usize, usize),
+) {
+    let entries = local_collection_types.entry(name.clone()).or_default();
+    if entries.iter().any(|entry| entry.scope_range == scope_range) {
+        local_collection_types.remove(&name);
+        return;
+    }
+    entries.push(GoLocalCollectionType {
+        element_type_name,
+        available_after,
+        scope_range,
+    });
+}
+
+fn go_local_collection_element_type(
+    operand: Node<'_>,
+    source: &str,
+    local_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
+) -> Option<String> {
+    let name = node_text(operand, source).ok()?.trim();
+    let candidates = local_collection_types.get(name)?;
+    let mut candidates = candidates
+        .iter()
+        .filter(|entry| {
+            entry.available_after <= operand.start_byte()
+                && entry.scope_range.0 <= operand.start_byte()
+                && operand.end_byte() <= entry.scope_range.1
+        })
+        .collect::<Vec<_>>();
+    let best_scope_size = candidates
+        .iter()
+        .map(|entry| entry.scope_range.1.saturating_sub(entry.scope_range.0))
+        .min()?;
+    candidates
+        .retain(|entry| entry.scope_range.1.saturating_sub(entry.scope_range.0) == best_scope_size);
+    (candidates.len() == 1).then(|| candidates[0].element_type_name.clone())
 }
 
 fn insert_go_local_variable_type(
