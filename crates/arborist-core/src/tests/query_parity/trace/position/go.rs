@@ -3064,3 +3064,25 @@ fn keeps_go_unsupported_range_receiver_sources_fail_closed() {
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_go_pointer_range_element_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc caller() int { for _, counter := range []*Counter{&Counter{}} { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
