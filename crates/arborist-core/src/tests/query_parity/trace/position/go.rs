@@ -1152,6 +1152,46 @@ fn traces_go_grouped_var_named_result_factory_receivers() {
 }
 
 #[test]
+fn does_not_trace_go_mismatched_named_result_vars_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\nfunc NewCounter() (result Counter) { return Counter{} }\nfunc caller() int { var counter, err = NewCounter(); _ = err; return counter.Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_multi_value_var_factory_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
