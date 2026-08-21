@@ -916,8 +916,7 @@ fn traces_go_named_result_factory_receivers_through_aliases() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
@@ -939,8 +938,7 @@ fn traces_go_pointer_named_result_factory_receivers_through_aliases() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
@@ -1219,8 +1217,7 @@ fn does_not_trace_go_shadowed_named_result_factory_as_local_receiver() {
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let method_persisted =
-        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
-            .unwrap();
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
     assert!(method_persisted.callers.is_empty());
     let factory_persisted =
         trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
