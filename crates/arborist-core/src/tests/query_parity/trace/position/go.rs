@@ -568,6 +568,79 @@ fn traces_go_named_conversion_local_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_go_local_variables_initialized_from_same_file_factories() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter(seed int) Counter { return Counter{} }\nfunc caller() int { counter := NewCounter(1); var second = NewCounter(2); return counter.Value() + second.Value() }\nfunc direct() int { return NewCounter(3).Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+    let factory_live = trace_symbol_graph(&dir, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_live.callers.len(), 2);
+    assert_eq!(factory_live.callers[0].symbol_id, "caller");
+    assert_eq!(factory_live.callers[1].symbol_id, "direct");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_persisted.callers.len(), 2);
+    assert_eq!(factory_persisted.callers[0].symbol_id, "caller");
+    assert_eq!(factory_persisted.callers[1].symbol_id, "direct");
+}
+
+#[test]
+fn traces_go_factory_initialized_local_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\nfunc NewCounter() Counter { return Counter{} }\nfunc caller() int { counter := NewCounter(); var second = NewCounter(); return counter.Value() + second.Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_local_variable_method_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
