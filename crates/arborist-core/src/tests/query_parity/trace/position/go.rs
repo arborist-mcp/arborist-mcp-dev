@@ -534,6 +534,37 @@ fn traces_go_local_variable_method_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_go_local_variables_initialized_from_parenthesized_and_pointer_literals() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc parenthesized() int { counter := (Counter{}); return counter.Value() }\nfunc pointer() int { counter := &Counter{}; return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort_unstable();
+    assert_eq!(callers, ["parenthesized", "pointer"]);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort_unstable();
+    assert_eq!(callers, ["parenthesized", "pointer"]);
+}
+#[test]
 fn traces_go_unshadowed_named_parameter_method_calls() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

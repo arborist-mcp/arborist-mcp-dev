@@ -481,19 +481,33 @@ fn collect_go_short_variable_declaration_types(
 }
 
 fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
-    let literal = if node.kind() == "composite_literal" {
-        Some(node)
-    } else if node.kind() == "expression_list" {
+    if node.kind() == "composite_literal" {
+        return node.child_by_field_name("type");
+    }
+    if matches!(node.kind(), "parenthesized_expression" | "unary_expression") {
+        let operator_is_address = node.kind() != "unary_expression"
+            || node.child(0).is_some_and(|operator| operator.kind() == "&");
+        return operator_is_address
+            .then(|| {
+                node.child_by_field_name("operand").or_else(|| {
+                    let mut cursor = node.walk();
+                    node.named_children(&mut cursor).next()
+                })
+            })
+            .flatten()
+            .and_then(go_single_composite_literal_type);
+    }
+    if node.kind() == "expression_list" {
         let mut cursor = node.walk();
         let mut expressions = node.named_children(&mut cursor);
         let literal = expressions.next()?;
-        (expressions.next().is_none() && literal.kind() == "composite_literal").then_some(literal)
-    } else {
-        None
-    };
-    literal.and_then(|literal| literal.child_by_field_name("type"))
+        if expressions.next().is_some() {
+            return None;
+        }
+        return go_single_composite_literal_type(literal);
+    }
+    None
 }
-
 fn insert_go_local_variable_type(
     local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
     ambiguous_names: &mut BTreeSet<String>,
