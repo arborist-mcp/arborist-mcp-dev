@@ -1202,6 +1202,32 @@ fn does_not_trace_go_shadowed_factory_names_as_local_receivers() {
 }
 
 #[test]
+fn does_not_trace_go_shadowed_named_result_factory_as_local_receiver() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() (result Counter) { return Counter{} }\nfunc caller() int { NewCounter := func() Counter { return Counter{} }; counter := NewCounter(); return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let method_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(method_live.callers.is_empty());
+    let factory_live = trace_symbol_graph(&dir, "NewCounter", TraceDirection::Callers).unwrap();
+    assert!(factory_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let method_persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers)
+            .unwrap();
+    assert!(method_persisted.callers.is_empty());
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewCounter", TraceDirection::Callers).unwrap();
+    assert!(factory_persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_factory_alias_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
