@@ -645,6 +645,33 @@ fn traces_go_factory_initialized_local_receivers_through_grouped_aliases() {
 }
 
 #[test]
+fn does_not_trace_go_factory_initialized_local_receivers_through_alias_cycles() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\ntype Alias = Chained\ntype Chained = Alias\nfunc (Counter) Value() int { return 1 }\nfunc NewChained() Chained { return Chained{} }\nfunc caller() int { counter := NewChained(); return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+    let factory_live = trace_symbol_graph(&dir, "NewChained", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_live.callers.len(), 1);
+    assert_eq!(factory_live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewChained", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_persisted.callers.len(), 1);
+    assert_eq!(factory_persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_parenthesized_factory_initialized_local_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
