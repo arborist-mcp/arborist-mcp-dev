@@ -794,12 +794,12 @@ fn traces_go_imported_type_alias_method_receivers() {
     fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
     fs::write(
         &caller_path,
-        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Alias{}.Value() }\nfunc chained() int { return svc.Chained{}.Value() }\nfunc pointerAlias(value svc.PointerAlias) int { return value.Value() }\nfunc genericAlias() int { return svc.IntBox{}.Value() }\nfunc scalarConversion(value int) int { return svc.ScalarAlias(value).Value() }\nfunc scalarAssertion(value any) int { return value.(svc.ScalarAlias).Value() }\nfunc cycle() int { return svc.LoopA{}.Value() }\n",
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Alias{}.Value() }\nfunc chained() int { return svc.Chained{}.Value() }\nfunc pointerAlias(value svc.PointerAlias) int { return value.Value() }\nfunc parenthesizedAlias(value svc.ParenthesizedAlias) int { return value.Value() }\nfunc genericAlias() int { return svc.IntBox{}.Value() }\nfunc scalarConversion(value int) int { return svc.ScalarAlias(value).Value() }\nfunc scalarAssertion(value any) int { return value.(svc.ScalarAlias).Value() }\nfunc cycle() int { return svc.LoopA{}.Value() }\n",
     )
     .unwrap();
     fs::write(
         &service_path,
-        "package service\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\ntype PointerAlias = *Counter\ntype Box[T any] struct{}\ntype IntBox = Box[int]\ntype Scalar int\ntype ScalarAlias = Scalar\ntype LoopA = LoopB\ntype LoopB = LoopA\nfunc (Counter) Value() int { return 1 }\nfunc (Box[T]) Value() int { return 2 }\nfunc (Scalar) Value() int { return 3 }\n",
+        "package service\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\ntype PointerAlias = *Counter\ntype ParenthesizedAlias = (Counter)\ntype Box[T any] struct{}\ntype IntBox = Box[int]\ntype Scalar int\ntype ScalarAlias = Scalar\ntype LoopA = LoopB\ntype LoopB = LoopA\nfunc (Counter) Value() int { return 1 }\nfunc (Box[T]) Value() int { return 2 }\nfunc (Scalar) Value() int { return 3 }\n",
     )
     .unwrap();
     fs::write(
@@ -809,17 +809,19 @@ fn traces_go_imported_type_alias_method_receivers() {
     .unwrap();
 
     let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 3);
+    assert_eq!(live.callers.len(), 4);
     assert_eq!(live.callers[0].symbol_id, "caller");
     assert_eq!(live.callers[1].symbol_id, "chained");
-    assert_eq!(live.callers[2].symbol_id, "pointerAlias");
+    assert_eq!(live.callers[2].symbol_id, "parenthesizedAlias");
+    assert_eq!(live.callers[3].symbol_id, "pointerAlias");
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 3);
+    assert_eq!(persisted.callers.len(), 4);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
     assert_eq!(persisted.callers[1].symbol_id, "chained");
-    assert_eq!(persisted.callers[2].symbol_id, "pointerAlias");
+    assert_eq!(persisted.callers[2].symbol_id, "parenthesizedAlias");
+    assert_eq!(persisted.callers[3].symbol_id, "pointerAlias");
 
     let generic_live = trace_symbol_graph(&dir, "Box::Value", TraceDirection::Callers).unwrap();
     assert_eq!(generic_live.callers.len(), 1);
