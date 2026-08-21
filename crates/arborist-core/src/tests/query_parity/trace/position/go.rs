@@ -2821,3 +2821,25 @@ fn resolves_go_switch_initializer_receiver_shadowing_by_nearest_scope() {
         trace_symbol_graph_from_index(&db_path, "Inner::Value", TraceDirection::Callers).unwrap();
     assert_eq!(inner.callers.len(), 1);
 }
+
+#[test]
+fn traces_go_switch_initializer_parenthesized_and_factory_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() Counter { return Counter{} }\nfunc caller() int { switch first := (Counter{}); first.Value() { default: switch second := NewCounter(); second.Value() { default: return second.Value() } }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
