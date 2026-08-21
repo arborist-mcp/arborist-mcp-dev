@@ -121,6 +121,12 @@ struct GoLocalVariableType {
     scope_range: (usize, usize),
 }
 
+struct GoLocalVariableTypeContext<'a> {
+    local_type_names: &'a BTreeSet<String>,
+    local_factory_return_types: &'a BTreeMap<String, String>,
+    bindings: &'a BTreeSet<String>,
+}
+
 struct GoDirectCallContext<'a> {
     local_functions: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
@@ -355,15 +361,18 @@ fn go_function_body_local_variable_types(
     let mut local_variable_types = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
     let function_body_range = (body.start_byte(), body.end_byte());
+    let context = GoLocalVariableTypeContext {
+        local_type_names,
+        local_factory_return_types,
+        bindings,
+    };
     collect_go_local_variable_types_in_scope(
         body,
         source,
         function_body_range,
         &mut local_variable_types,
         &mut ambiguous_names,
-        local_type_names,
-        local_factory_return_types,
-        bindings,
+        &context,
     )?;
     for name in ambiguous_names {
         local_variable_types.remove(&name);
@@ -377,9 +386,7 @@ fn collect_go_local_variable_types_in_scope(
     scope_range: (usize, usize),
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
-    local_type_names: &BTreeSet<String>,
-    local_factory_return_types: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<()> {
     if node.kind() == "function_literal" {
         return Ok(());
@@ -392,9 +399,7 @@ fn collect_go_local_variable_types_in_scope(
             local_variable_types,
             ambiguous_names,
             declaration_scope_range,
-            local_type_names,
-            local_factory_return_types,
-            bindings,
+            context,
         )?;
     } else if node.kind() == "short_var_declaration" {
         collect_go_short_variable_declaration_types(
@@ -403,9 +408,7 @@ fn collect_go_local_variable_types_in_scope(
             local_variable_types,
             ambiguous_names,
             declaration_scope_range,
-            local_type_names,
-            local_factory_return_types,
-            bindings,
+            context,
         )?;
     }
     let next_scope_range = if node.kind() == "block" {
@@ -421,9 +424,7 @@ fn collect_go_local_variable_types_in_scope(
             next_scope_range,
             local_variable_types,
             ambiguous_names,
-            local_type_names,
-            local_factory_return_types,
-            bindings,
+            context,
         )?;
     }
     Ok(())
@@ -459,9 +460,7 @@ fn collect_go_var_declaration_types(
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
-    local_type_names: &BTreeSet<String>,
-    local_factory_return_types: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for node in declaration.named_children(&mut cursor) {
@@ -472,9 +471,7 @@ fn collect_go_var_declaration_types(
                 local_variable_types,
                 ambiguous_names,
                 scope_range,
-                local_type_names,
-                local_factory_return_types,
-                bindings,
+                context,
             )?,
             "var_spec_list" => {
                 let mut spec_cursor = node.walk();
@@ -486,9 +483,7 @@ fn collect_go_var_declaration_types(
                             local_variable_types,
                             ambiguous_names,
                             scope_range,
-                            local_type_names,
-                            local_factory_return_types,
-                            bindings,
+                            context,
                         )?;
                     }
                 }
@@ -505,9 +500,7 @@ fn collect_go_var_spec_types(
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
-    local_type_names: &BTreeSet<String>,
-    local_factory_return_types: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<()> {
     let mut name_cursor = spec.walk();
     let names = spec
@@ -551,9 +544,9 @@ fn collect_go_var_spec_types(
         let Some(type_name) = go_single_local_initializer_type(
             value,
             source,
-            local_type_names,
-            local_factory_return_types,
-            bindings,
+            context.local_type_names,
+            context.local_factory_return_types,
+            context.bindings,
         )?
         else {
             continue;
@@ -576,9 +569,7 @@ fn collect_go_short_variable_declaration_types(
     local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
     scope_range: (usize, usize),
-    local_type_names: &BTreeSet<String>,
-    local_factory_return_types: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<()> {
     let Some(left) = declaration.child_by_field_name("left") else {
         return Ok(());
@@ -603,9 +594,9 @@ fn collect_go_short_variable_declaration_types(
         let Some(type_name) = go_single_local_initializer_type(
             value,
             source,
-            local_type_names,
-            local_factory_return_types,
-            bindings,
+            context.local_type_names,
+            context.local_factory_return_types,
+            context.bindings,
         )?
         else {
             continue;
@@ -1551,14 +1542,28 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             );
             assert_eq!(caller.reference_facts.len(), 1, "{caller_path}");
         }
-        for caller_path in ["call_before_local_declaration", "nested_local_method_call"] {
-            let caller = symbols
-                .iter()
-                .find(|symbol| symbol.semantic_path == caller_path)
-                .unwrap();
-            assert!(caller.references_by_name.is_empty(), "{caller_path}");
-            assert!(caller.reference_facts.is_empty(), "{caller_path}");
-        }
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "call_before_local_declaration")
+            .unwrap();
+        assert!(
+            caller.references_by_name.is_empty(),
+            "call_before_local_declaration"
+        );
+        assert!(
+            caller.reference_facts.is_empty(),
+            "call_before_local_declaration"
+        );
+
+        let nested_caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "nested_local_method_call")
+            .unwrap();
+        assert_eq!(
+            nested_caller.references_by_name,
+            ["Other::Value".to_string()].into()
+        );
+        assert_eq!(nested_caller.reference_facts.len(), 1);
 
         let parameter_call = symbols
             .iter()
@@ -1573,8 +1578,11 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             .iter()
             .find(|symbol| symbol.semantic_path == "shadowed_parameter_method")
             .unwrap();
-        assert!(shadowed_parameter_method.references_by_name.is_empty());
-        assert!(shadowed_parameter_method.reference_facts.is_empty());
+        assert_eq!(
+            shadowed_parameter_method.references_by_name,
+            ["Other::Value".to_string()].into()
+        );
+        assert_eq!(shadowed_parameter_method.reference_facts.len(), 1);
 
         let receiver_call = symbols
             .iter()
@@ -1589,8 +1597,11 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             .iter()
             .find(|symbol| symbol.semantic_path == "Counter::shadowed_receiver")
             .unwrap();
-        assert!(shadowed_receiver.references_by_name.is_empty());
-        assert!(shadowed_receiver.reference_facts.is_empty());
+        assert_eq!(
+            shadowed_receiver.references_by_name,
+            ["Other::Value".to_string()].into()
+        );
+        assert_eq!(shadowed_receiver.reference_facts.len(), 1);
 
         let generic_literal_method_call = symbols
             .iter()
