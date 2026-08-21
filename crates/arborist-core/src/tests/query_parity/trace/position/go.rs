@@ -509,7 +509,8 @@ fn traces_go_local_variables_initialized_from_named_type_conversions() {
     assert_eq!(box_live.callers.len(), 1);
     assert_eq!(box_live.callers[0].symbol_id, "caller");
     let counter_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert!(counter_live.callers.is_empty());
+    assert_eq!(counter_live.callers.len(), 1);
+    assert_eq!(counter_live.callers[0].symbol_id, "caller");
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let scalar_persisted =
@@ -522,7 +523,8 @@ fn traces_go_local_variables_initialized_from_named_type_conversions() {
     assert_eq!(box_persisted.callers[0].symbol_id, "caller");
     let counter_persisted =
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert!(counter_persisted.callers.is_empty());
+    assert_eq!(counter_persisted.callers.len(), 1);
+    assert_eq!(counter_persisted.callers[0].symbol_id, "caller");
 }
 
 #[test]
