@@ -3391,3 +3391,28 @@ fn traces_go_collection_parameter_range_receivers_from_dirty_vfs_overrides() {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn resolves_go_collection_parameter_shadowing_by_nearest_scope() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Outer struct{}\ntype Inner struct{}\nfunc (Outer) Value() int { return 1 }\nfunc (Inner) Value() int { return 2 }\nfunc caller(values []Outer) int { { values := []Inner{{}}; for _, counter := range values { return counter.Value() } }; for _, counter := range values { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let outer = trace_symbol_graph(&dir, "Outer::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(outer.callers.len(), 1);
+    let inner = trace_symbol_graph(&dir, "Inner::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(inner.callers.len(), 1);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let outer =
+        trace_symbol_graph_from_index(&db_path, "Outer::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(outer.callers.len(), 1);
+    let inner =
+        trace_symbol_graph_from_index(&db_path, "Inner::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(inner.callers.len(), 1);
+}
