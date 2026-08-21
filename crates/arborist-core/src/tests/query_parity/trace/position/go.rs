@@ -911,6 +911,32 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn does_not_trace_go_imported_ambiguous_type_aliases() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_dir = dir.join("internal").join("service");
+    let service_path = service_dir.join("service.go");
+    let duplicate_path = service_dir.join("duplicate.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(&service_dir).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.Alias{}.Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Counter struct{}\ntype Alias = Counter\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(&duplicate_path, "package service\n\ntype Alias = Counter\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
+
+#[test]
 fn traces_go_imported_type_alias_method_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");
