@@ -538,7 +538,7 @@ fn traces_go_named_conversion_local_receivers_from_dirty_vfs_overrides() {
     .unwrap();
     fs::write(
         &method_path,
-        "package metrics\n\ntype Scalar int\nfunc (Scalar) Value() int { return 1 }\n",
+        "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
     )
     .unwrap();
     let caller_overlay =
