@@ -118,6 +118,7 @@ struct GoMethodReceiver {
 struct GoLocalVariableType {
     type_name: String,
     available_after: usize,
+    scope_range: (usize, usize),
 }
 
 struct GoDirectCallContext<'a> {
@@ -125,7 +126,7 @@ struct GoDirectCallContext<'a> {
     bindings: &'a BTreeSet<String>,
     method_receiver: Option<&'a GoMethodReceiver>,
     parameter_types: &'a BTreeMap<String, String>,
-    local_variable_types: &'a BTreeMap<String, GoLocalVariableType>,
+    local_variable_types: &'a BTreeMap<String, Vec<GoLocalVariableType>>,
     function_body_range: (usize, usize),
     body_bindings: &'a BTreeSet<String>,
 }
@@ -350,49 +351,89 @@ fn go_function_body_local_variable_types(
     local_type_names: &BTreeSet<String>,
     local_factory_return_types: &BTreeMap<String, String>,
     bindings: &BTreeSet<String>,
-) -> Result<BTreeMap<String, GoLocalVariableType>> {
+) -> Result<BTreeMap<String, Vec<GoLocalVariableType>>> {
     let mut local_variable_types = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
-    let mut body_cursor = body.walk();
-    let Some(statement_list) = body
-        .named_children(&mut body_cursor)
-        .find(|node| node.kind() == "statement_list")
-    else {
-        return Ok(local_variable_types);
-    };
-    let mut statement_cursor = statement_list.walk();
-    for statement in statement_list.named_children(&mut statement_cursor) {
-        match statement.kind() {
-            "var_declaration" => collect_go_var_declaration_types(
-                statement,
-                source,
-                &mut local_variable_types,
-                &mut ambiguous_names,
-                local_type_names,
-                local_factory_return_types,
-                bindings,
-            )?,
-            "short_var_declaration" => collect_go_short_variable_declaration_types(
-                statement,
-                source,
-                &mut local_variable_types,
-                &mut ambiguous_names,
-                local_type_names,
-                local_factory_return_types,
-                bindings,
-            )?,
-            _ => {}
-        }
+    let function_body_range = (body.start_byte(), body.end_byte());
+    collect_go_local_variable_types_in_scope(
+        body,
+        source,
+        function_body_range,
+        &mut local_variable_types,
+        &mut ambiguous_names,
+        local_type_names,
+        local_factory_return_types,
+        bindings,
+    )?;
+    for name in ambiguous_names {
+        local_variable_types.remove(&name);
     }
-    local_variable_types.retain(|name, _| !ambiguous_names.contains(name));
     Ok(local_variable_types)
+}
+
+fn collect_go_local_variable_types_in_scope(
+    node: Node<'_>,
+    source: &str,
+    scope_range: (usize, usize),
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
+    ambiguous_names: &mut BTreeSet<String>,
+    local_type_names: &BTreeSet<String>,
+    local_factory_return_types: &BTreeMap<String, String>,
+    bindings: &BTreeSet<String>,
+) -> Result<()> {
+    if node.kind() == "function_literal" {
+        return Ok(());
+    }
+    if node.kind() == "var_declaration" {
+        collect_go_var_declaration_types(
+            node,
+            source,
+            local_variable_types,
+            ambiguous_names,
+            scope_range,
+            local_type_names,
+            local_factory_return_types,
+            bindings,
+        )?;
+    } else if node.kind() == "short_var_declaration" {
+        collect_go_short_variable_declaration_types(
+            node,
+            source,
+            local_variable_types,
+            ambiguous_names,
+            scope_range,
+            local_type_names,
+            local_factory_return_types,
+            bindings,
+        )?;
+    }
+    let next_scope_range = if node.kind() == "block" {
+        (node.start_byte(), node.end_byte())
+    } else {
+        scope_range
+    };
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_go_local_variable_types_in_scope(
+            child,
+            source,
+            next_scope_range,
+            local_variable_types,
+            ambiguous_names,
+            local_type_names,
+            local_factory_return_types,
+            bindings,
+        )?;
+    }
+    Ok(())
 }
 
 fn collect_go_var_declaration_types(
     declaration: Node<'_>,
     source: &str,
-    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
+    scope_range: (usize, usize),
     local_type_names: &BTreeSet<String>,
     local_factory_return_types: &BTreeMap<String, String>,
     bindings: &BTreeSet<String>,
@@ -405,6 +446,7 @@ fn collect_go_var_declaration_types(
                 source,
                 local_variable_types,
                 ambiguous_names,
+                scope_range,
                 local_type_names,
                 local_factory_return_types,
                 bindings,
@@ -418,6 +460,7 @@ fn collect_go_var_declaration_types(
                             source,
                             local_variable_types,
                             ambiguous_names,
+                            scope_range,
                             local_type_names,
                             local_factory_return_types,
                             bindings,
@@ -434,8 +477,9 @@ fn collect_go_var_declaration_types(
 fn collect_go_var_spec_types(
     spec: Node<'_>,
     source: &str,
-    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
+    scope_range: (usize, usize),
     local_type_names: &BTreeSet<String>,
     local_factory_return_types: &BTreeMap<String, String>,
     bindings: &BTreeSet<String>,
@@ -460,6 +504,7 @@ fn collect_go_var_spec_types(
                 name,
                 type_name.clone(),
                 spec.end_byte(),
+                scope_range,
             );
         }
         return Ok(());
@@ -494,6 +539,7 @@ fn collect_go_var_spec_types(
             name,
             type_name,
             spec.end_byte(),
+            scope_range,
         );
     }
     Ok(())
@@ -502,8 +548,9 @@ fn collect_go_var_spec_types(
 fn collect_go_short_variable_declaration_types(
     declaration: Node<'_>,
     source: &str,
-    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
+    scope_range: (usize, usize),
     local_type_names: &BTreeSet<String>,
     local_factory_return_types: &BTreeMap<String, String>,
     bindings: &BTreeSet<String>,
@@ -544,6 +591,7 @@ fn collect_go_short_variable_declaration_types(
             name,
             type_name,
             declaration.end_byte(),
+            scope_range,
         );
     }
     Ok(())
@@ -659,24 +707,23 @@ fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
 }
 
 fn insert_go_local_variable_type(
-    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    local_variable_types: &mut BTreeMap<String, Vec<GoLocalVariableType>>,
     ambiguous_names: &mut BTreeSet<String>,
     name: String,
     type_name: String,
     available_after: usize,
+    scope_range: (usize, usize),
 ) {
-    if local_variable_types
-        .insert(
-            name.clone(),
-            GoLocalVariableType {
-                type_name,
-                available_after,
-            },
-        )
-        .is_some()
-    {
+    let entries = local_variable_types.entry(name.clone()).or_default();
+    if entries.iter().any(|entry| entry.scope_range == scope_range) {
         ambiguous_names.insert(name);
+        return;
     }
+    entries.push(GoLocalVariableType {
+        type_name,
+        available_after,
+        scope_range,
+    });
 }
 
 fn go_local_variable_type_for_operand(
@@ -688,8 +735,22 @@ fn go_local_variable_type_for_operand(
         return None;
     }
     let name = node_text(operand, source).ok()?.trim();
-    let local_type = context.local_variable_types.get(name)?;
-    (local_type.available_after <= operand.start_byte()).then(|| local_type.type_name.clone())
+    let candidates = context.local_variable_types.get(name)?;
+    let mut candidates = candidates
+        .iter()
+        .filter(|entry| {
+            entry.available_after <= operand.start_byte()
+                && entry.scope_range.0 <= operand.start_byte()
+                && operand.end_byte() <= entry.scope_range.1
+        })
+        .collect::<Vec<_>>();
+    let best_scope_size = candidates
+        .iter()
+        .map(|entry| entry.scope_range.1.saturating_sub(entry.scope_range.0))
+        .min()?;
+    candidates
+        .retain(|entry| entry.scope_range.1.saturating_sub(entry.scope_range.0) == best_scope_size);
+    (candidates.len() == 1).then(|| candidates[0].type_name.clone())
 }
 
 fn go_operand_is_in_function_body_scope(
@@ -698,22 +759,15 @@ fn go_operand_is_in_function_body_scope(
 ) -> bool {
     let mut current = operand.parent();
     while let Some(node) = current {
-        if node.kind() == "block" && (node.start_byte(), node.end_byte()) != function_body_range {
+        if node.kind() == "function_literal" {
             return false;
         }
-        if matches!(
-            node.kind(),
-            "if_statement"
-                | "for_statement"
-                | "expression_switch_statement"
-                | "type_switch_statement"
-                | "select_statement"
-        ) {
-            return false;
+        if node.kind() == "block" && (node.start_byte(), node.end_byte()) == function_body_range {
+            return true;
         }
         current = node.parent();
     }
-    true
+    false
 }
 
 fn source_file_function_paths(
