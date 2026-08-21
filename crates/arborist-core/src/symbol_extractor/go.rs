@@ -736,29 +736,31 @@ fn source_file_type_names(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
     let mut type_names = BTreeSet::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
-        if !matches!(child.kind(), "type_declaration" | "type_alias") {
-            continue;
-        }
-        let name = if child.kind() == "type_alias" {
-            child.child_by_field_name("name")
-        } else {
-            let mut declaration_cursor = child.walk();
-            child
-                .named_children(&mut declaration_cursor)
-                .find_map(|spec| {
-                    if matches!(spec.kind(), "type_spec" | "type_alias") {
-                        spec.child_by_field_name("name")
-                    } else {
-                        None
+        match child.kind() {
+            "type_alias" => {
+                if let Some(name) = child.child_by_field_name("name") {
+                    let name = node_text(name, source)?.trim();
+                    if !name.is_empty() {
+                        type_names.insert(name.to_string());
                     }
-                })
-        };
-        let Some(name) = name else {
-            continue;
-        };
-        let name = node_text(name, source)?.trim();
-        if !name.is_empty() {
-            type_names.insert(name.to_string());
+                }
+            }
+            "type_declaration" => {
+                let mut declaration_cursor = child.walk();
+                for spec in child.named_children(&mut declaration_cursor) {
+                    if !matches!(spec.kind(), "type_spec" | "type_alias") {
+                        continue;
+                    }
+                    let Some(name) = spec.child_by_field_name("name") else {
+                        continue;
+                    };
+                    let name = node_text(name, source)?.trim();
+                    if !name.is_empty() {
+                        type_names.insert(name.to_string());
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(type_names)
@@ -776,36 +778,38 @@ fn source_file_type_alias_targets(
     let mut targets_by_name = BTreeMap::<String, Vec<String>>::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
-        let alias = if child.kind() == "type_alias" {
-            Some(child)
-        } else if child.kind() == "type_declaration" {
-            let mut declaration_cursor = child.walk();
-            child
-                .named_children(&mut declaration_cursor)
-                .find(|spec| spec.kind() == "type_alias")
-        } else {
-            None
-        };
-        let Some(alias) = alias else {
-            continue;
-        };
-        let (Some(name), Some(value)) = (
-            alias.child_by_field_name("name"),
-            alias.child_by_field_name("type"),
-        ) else {
-            continue;
-        };
-        let name = node_text(name, source)?.trim();
-        let Some(target) = go_named_local_type(value, source)? else {
-            continue;
-        };
-        if name.is_empty() || target.contains('.') {
-            continue;
+        let mut aliases = Vec::new();
+        match child.kind() {
+            "type_alias" => aliases.push(child),
+            "type_declaration" => {
+                let mut declaration_cursor = child.walk();
+                aliases.extend(
+                    child
+                        .named_children(&mut declaration_cursor)
+                        .filter(|spec| spec.kind() == "type_alias"),
+                );
+            }
+            _ => {}
         }
-        targets_by_name
-            .entry(name.to_string())
-            .or_default()
-            .push(target);
+        for alias in aliases {
+            let (Some(name), Some(value)) = (
+                alias.child_by_field_name("name"),
+                alias.child_by_field_name("type"),
+            ) else {
+                continue;
+            };
+            let name = node_text(name, source)?.trim();
+            let Some(target) = go_named_local_type(value, source)? else {
+                continue;
+            };
+            if name.is_empty() || target.contains('.') {
+                continue;
+            }
+            targets_by_name
+                .entry(name.to_string())
+                .or_default()
+                .push(target);
+        }
     }
 
     Ok(targets_by_name
