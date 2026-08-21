@@ -541,14 +541,11 @@ fn go_single_local_initializer_type(
     }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
-        && function.kind() == "identifier"
+        && let Some(function_name) = go_local_function_name(function, source)?
+        && !local_type_names.contains(&function_name)
+        && let Some(return_type) = local_factory_return_types.get(&function_name)
     {
-        let function_name = node_text(function, source)?.trim();
-        if !local_type_names.contains(function_name)
-            && let Some(return_type) = local_factory_return_types.get(function_name)
-        {
-            return Ok(Some(return_type.clone()));
-        }
+        return Ok(Some(return_type.clone()));
     }
     let type_name = if node.kind() == "type_conversion_expression" {
         node.child_by_field_name("type")
@@ -574,6 +571,24 @@ fn go_single_local_initializer_type(
         .rsplit_once('.')
         .map_or(type_name.as_str(), |(_, name)| name);
     Ok((!type_name.contains('.') && local_type_names.contains(local_name)).then_some(type_name))
+}
+
+fn go_local_function_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    match node.kind() {
+        "identifier" => {
+            let name = node_text(node, source)?.trim();
+            Ok((!name.is_empty()).then(|| name.to_string()))
+        }
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .next()
+                .map(|inner| go_local_function_name(inner, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
