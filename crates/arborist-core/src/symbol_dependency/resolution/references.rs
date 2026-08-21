@@ -14024,13 +14024,10 @@ fn go_simple_type_alias_target(alias_symbol: &IndexedSymbol) -> Option<String> {
 
 fn go_simple_alias_target_name(value: &str) -> Option<String> {
     let mut target_name = value.trim();
-    loop {
-        let Some(inner) = target_name
-            .strip_prefix('(')
-            .and_then(|value| value.strip_suffix(')'))
-        else {
-            break;
-        };
+    while let Some(inner) = target_name
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+    {
         target_name = inner.trim();
     }
     target_name = target_name.strip_prefix('*').map_or(target_name, str::trim);
