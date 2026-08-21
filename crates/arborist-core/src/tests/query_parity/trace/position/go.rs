@@ -714,6 +714,31 @@ fn traces_go_factory_initialized_pointer_receivers_through_aliases() {
 }
 
 #[test]
+fn does_not_trace_go_factory_receivers_through_ambiguous_aliases() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\ntype Other struct{}\ntype Alias = Counter\ntype Alias = Other\nfunc (Counter) Value() int { return 1 }\nfunc (Other) Value() int { return 2 }\nfunc NewAlias() Alias { return Alias{} }\nfunc caller() int { counter := NewAlias(); return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let counter_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_live.callers.is_empty());
+    let other_live = trace_symbol_graph(&dir, "Other::Value", TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let counter_persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_persisted.callers.is_empty());
+    let other_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Value", TraceDirection::Callers).unwrap();
+    assert!(other_persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_parenthesized_factory_initialized_local_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
