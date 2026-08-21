@@ -492,6 +492,40 @@ fn traces_go_unshadowed_function_body_local_variable_method_calls() {
 }
 
 #[test]
+fn traces_go_local_variables_initialized_from_named_type_conversions() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Scalar int\ntype Box[T ~int] int\ntype Counter struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Box[T]) Value() int { return 2 }\nfunc (Counter) Value() int { return 3 }\nfunc Factory() Counter { return Counter{} }\nfunc caller() int { scalar := Scalar(1); box := Box[int](1); factory := Factory(); return scalar.Value() + box.Value() + factory.Value() }\n",
+    )
+    .unwrap();
+
+    let scalar_live = trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_live.callers.len(), 1);
+    assert_eq!(scalar_live.callers[0].symbol_id, "caller");
+    let box_live = trace_symbol_graph(&dir, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_live.callers.len(), 1);
+    assert_eq!(box_live.callers[0].symbol_id, "caller");
+    let counter_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let scalar_persisted =
+        trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_persisted.callers.len(), 1);
+    assert_eq!(scalar_persisted.callers[0].symbol_id, "caller");
+    let box_persisted =
+        trace_symbol_graph_from_index(&db_path, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_persisted.callers.len(), 1);
+    assert_eq!(box_persisted.callers[0].symbol_id, "caller");
+    let counter_persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_local_variable_method_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
