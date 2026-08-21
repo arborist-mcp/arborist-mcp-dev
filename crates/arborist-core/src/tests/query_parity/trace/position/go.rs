@@ -926,6 +926,45 @@ fn traces_go_imported_type_method_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn does_not_trace_go_imported_unsupported_alias_targets() {
+    let cases = [
+        (
+            "unexported-alias",
+            "type Counter struct{}\ntype alias = Counter\nfunc (Counter) Value() int { return 1 }\n",
+            "svc.alias{}.Value()",
+            "Counter::Value",
+        ),
+        (
+            "qualified-alias",
+            "type Counter struct{}\ntype Alias = other.Counter\nfunc (Counter) Value() int { return 1 }\n",
+            "svc.Alias{}.Value()",
+            "Counter::Value",
+        ),
+    ];
+    for (name, service_source, call, target) in cases {
+        let dir = temporary_dir();
+        let caller_path = dir.join("cmd").join("main.go");
+        let service_path = dir.join("internal").join("service").join("service.go");
+        fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+        fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+        fs::write(
+            &caller_path,
+            format!("package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int {{ return {call} }}\n"),
+        )
+        .unwrap();
+        fs::write(
+            &service_path,
+            format!("package service\n\n{service_source}"),
+        )
+        .unwrap();
+
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{name}: {live:#?}");
+    }
+}
+
+#[test]
 fn does_not_trace_go_imported_test_only_type_aliases() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");
