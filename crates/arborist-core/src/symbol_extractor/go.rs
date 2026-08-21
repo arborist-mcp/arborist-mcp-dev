@@ -855,6 +855,38 @@ fn go_resolve_local_type_alias(
     }
 }
 
+fn go_single_function_result_type(result: Node<'_>, source: &str) -> Result<Option<String>> {
+    if let Some(type_name) = go_named_local_type(result, source)? {
+        return Ok(Some(type_name));
+    }
+    if result.kind() != "parameter_list" {
+        return Ok(None);
+    }
+
+    let mut cursor = result.walk();
+    let parameters = result
+        .named_children(&mut cursor)
+        .filter(|parameter| parameter.kind() == "parameter_declaration")
+        .collect::<Vec<_>>();
+    if parameters.len() != 1 {
+        return Ok(None);
+    }
+    let parameter = parameters[0];
+    let mut name_cursor = parameter.walk();
+    if parameter
+        .children_by_field_name("name", &mut name_cursor)
+        .count()
+        > 1
+    {
+        return Ok(None);
+    }
+    parameter
+        .child_by_field_name("type")
+        .map(|type_node| go_named_local_type(type_node, source))
+        .transpose()
+        .map(Option::flatten)
+}
+
 fn source_file_function_return_types(
     symbol_node: Node<'_>,
     source: &str,
@@ -878,7 +910,7 @@ fn source_file_function_return_types(
         let Some(result) = child.child_by_field_name("result") else {
             continue;
         };
-        let Some(type_name) = go_named_local_type(result, source)? else {
+        let Some(type_name) = go_single_function_result_type(result, source)? else {
             continue;
         };
         let local_name = type_name
