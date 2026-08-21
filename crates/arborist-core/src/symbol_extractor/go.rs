@@ -121,6 +121,7 @@ struct GoLocalVariableType {
     scope_range: (usize, usize),
 }
 
+#[derive(Clone)]
 struct GoLocalCollectionType {
     element_type_name: String,
     available_after: usize,
@@ -214,6 +215,12 @@ fn collect_direct_local_calls(
     )?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
+    let parameter_collection_types = go_named_parameter_collection_types(
+        symbol_node,
+        source,
+        &local_type_names,
+        (body.start_byte(), body.end_byte()),
+    )?;
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
     let local_variable_types = go_function_body_local_variable_types(
@@ -222,6 +229,7 @@ fn collect_direct_local_calls(
         &local_type_names,
         &local_factory_return_types,
         &bindings,
+        &parameter_collection_types,
     )?;
     let mut body_bindings = BTreeSet::new();
     collect_body_bindings(body, source, &mut body_bindings)?;
@@ -318,6 +326,46 @@ fn go_named_parameter_types(
     Ok(parameter_types)
 }
 
+fn go_named_parameter_collection_types(
+    symbol_node: Node<'_>,
+    source: &str,
+    local_type_names: &BTreeSet<String>,
+    scope_range: (usize, usize),
+) -> Result<BTreeMap<String, Vec<GoLocalCollectionType>>> {
+    let Some(parameters) = symbol_node.child_by_field_name("parameters") else {
+        return Ok(BTreeMap::new());
+    };
+    let mut collection_types = BTreeMap::new();
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        if parameter.kind() != "parameter_declaration" {
+            continue;
+        }
+        let Some(type_node) = parameter.child_by_field_name("type") else {
+            continue;
+        };
+        let Some(element_type_name) = go_range_element_type(type_node, source, local_type_names)?
+        else {
+            continue;
+        };
+        let mut name_cursor = parameter.walk();
+        for name in parameter.children_by_field_name("name", &mut name_cursor) {
+            let name = node_text(name, source)?.trim();
+            if name.is_empty() || name == "_" {
+                continue;
+            }
+            insert_go_local_collection_type(
+                &mut collection_types,
+                name.to_string(),
+                element_type_name.clone(),
+                parameter.end_byte(),
+                scope_range,
+            );
+        }
+    }
+    Ok(collection_types)
+}
+
 fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "type_identifier" => node_text(node, source)
@@ -363,9 +411,10 @@ fn go_function_body_local_variable_types(
     local_type_names: &BTreeSet<String>,
     local_factory_return_types: &BTreeMap<String, String>,
     bindings: &BTreeSet<String>,
+    parameter_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
 ) -> Result<BTreeMap<String, Vec<GoLocalVariableType>>> {
     let mut local_variable_types = BTreeMap::new();
-    let mut local_collection_types = BTreeMap::new();
+    let mut local_collection_types = parameter_collection_types.clone();
     let mut ambiguous_names = BTreeSet::new();
     let function_body_range = (body.start_byte(), body.end_byte());
     let context = GoLocalVariableTypeContext {
