@@ -449,31 +449,50 @@ fn collect_go_var_spec_types(
         return Ok(());
     }
 
-    let type_name = spec
-        .child_by_field_name("type")
-        .map(|type_node| go_named_local_type(type_node, source))
-        .or_else(|| {
-            spec.child_by_field_name("value").map(|value| {
-                go_single_local_initializer_type(
-                    value,
-                    source,
-                    local_type_names,
-                    local_factory_return_types,
-                    bindings,
-                )
-            })
-        })
-        .transpose()?
-        .flatten();
-    let Some(type_name) = type_name else {
+    if let Some(type_node) = spec.child_by_field_name("type") {
+        let Some(type_name) = go_named_local_type(type_node, source)? else {
+            return Ok(());
+        };
+        for name in names {
+            insert_go_local_variable_type(
+                local_variable_types,
+                ambiguous_names,
+                name,
+                type_name.clone(),
+                spec.end_byte(),
+            );
+        }
+        return Ok(());
+    }
+
+    let Some(value) = spec.child_by_field_name("value") else {
         return Ok(());
     };
-    for name in names {
+    let mut value_cursor = value.walk();
+    let values = if value.kind() == "expression_list" {
+        value.named_children(&mut value_cursor).collect::<Vec<_>>()
+    } else {
+        vec![value]
+    };
+    if values.len() != names.len() {
+        return Ok(());
+    }
+    for (name, value) in names.into_iter().zip(values) {
+        let Some(type_name) = go_single_local_initializer_type(
+            value,
+            source,
+            local_type_names,
+            local_factory_return_types,
+            bindings,
+        )?
+        else {
+            continue;
+        };
         insert_go_local_variable_type(
             local_variable_types,
             ambiguous_names,
             name,
-            type_name.clone(),
+            type_name,
             spec.end_byte(),
         );
     }

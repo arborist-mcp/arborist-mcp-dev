@@ -761,6 +761,35 @@ fn traces_go_var_initialized_receivers_through_factory_aliases() {
 }
 
 #[test]
+fn traces_go_multi_value_var_factory_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Left struct{}\ntype Right struct{}\nfunc (Left) Value() int { return 1 }\nfunc (Right) Value() int { return 2 }\nfunc NewLeft() Left { return Left{} }\nfunc NewRight() Right { return Right{} }\nfunc caller() int { var left, right = NewLeft(), NewRight(); return left.Value() + right.Value() }\n",
+    )
+    .unwrap();
+
+    let left_live = trace_symbol_graph(&dir, "Left::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(left_live.callers.len(), 1);
+    assert_eq!(left_live.callers[0].symbol_id, "caller");
+    let right_live = trace_symbol_graph(&dir, "Right::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(right_live.callers.len(), 1);
+    assert_eq!(right_live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let left_persisted =
+        trace_symbol_graph_from_index(&db_path, "Left::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(left_persisted.callers.len(), 1);
+    assert_eq!(left_persisted.callers[0].symbol_id, "caller");
+    let right_persisted =
+        trace_symbol_graph_from_index(&db_path, "Right::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(right_persisted.callers.len(), 1);
+    assert_eq!(right_persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_parenthesized_factory_alias_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
