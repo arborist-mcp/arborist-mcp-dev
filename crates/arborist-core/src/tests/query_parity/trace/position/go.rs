@@ -672,6 +672,26 @@ fn does_not_trace_go_factory_initialized_local_receivers_through_alias_cycles() 
 }
 
 #[test]
+fn does_not_trace_go_factory_initialized_local_receivers_through_unresolved_aliases() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\ntype Alias = Missing\nfunc (Counter) Value() int { return 1 }\nfunc NewAlias() Alias { return Alias{} }\nfunc caller() int { counter := NewAlias(); return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_parenthesized_factory_initialized_local_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
