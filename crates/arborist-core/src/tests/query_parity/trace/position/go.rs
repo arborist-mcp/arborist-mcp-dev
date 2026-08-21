@@ -802,6 +802,11 @@ fn traces_go_imported_type_alias_method_receivers() {
         "package service\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\ntype PointerAlias = *Counter\ntype Box[T any] struct{}\ntype IntBox = Box[int]\ntype Scalar int\ntype ScalarAlias = Scalar\ntype LoopA = LoopB\ntype LoopB = LoopA\nfunc (Counter) Value() int { return 1 }\nfunc (Box[T]) Value() int { return 2 }\nfunc (Scalar) Value() int { return 3 }\n",
     )
     .unwrap();
+    fs::write(
+        service_path.parent().unwrap().join("broken_test.go"),
+        "package service\n\nfunc broken( {\n",
+    )
+    .unwrap();
 
     let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 3);
