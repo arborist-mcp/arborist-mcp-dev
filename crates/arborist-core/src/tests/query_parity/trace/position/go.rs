@@ -541,8 +541,7 @@ fn traces_go_named_conversion_local_receivers_from_dirty_vfs_overrides() {
         "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
     )
     .unwrap();
-    let caller_overlay =
-        "package metrics\n\nfunc caller() int { var scalar = Scalar(1); return scalar.Value() }\n";
+    let caller_overlay = "package metrics\n\ntype Scalar int\nfunc caller() int { var scalar = Scalar(1); return scalar.Value() }\n";
 
     let live = trace_symbol_graph_with_source(
         &dir,
