@@ -790,6 +790,68 @@ fn traces_go_multi_value_var_factory_receivers() {
 }
 
 #[test]
+fn traces_go_multi_value_var_factory_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\ntype Left struct{}\ntype Right struct{}\nfunc (Left) Value() int { return 1 }\nfunc (Right) Value() int { return 2 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Left struct{}\ntype Right struct{}\nfunc NewLeft() Left { return Left{} }\nfunc NewRight() Right { return Right{} }\nfunc caller() int { var left, right = NewLeft(), NewRight(); return left.Value() + right.Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Left::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+    let live_right = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Right::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live_right.callers.len(), 1);
+    assert_eq!(live_right.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Left::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+    let persisted_right = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Right::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_right.callers.len(), 1);
+    assert_eq!(persisted_right.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_parenthesized_factory_alias_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
