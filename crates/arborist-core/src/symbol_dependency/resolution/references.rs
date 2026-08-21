@@ -14019,9 +14019,27 @@ fn go_simple_type_alias_target(alias_symbol: &IndexedSymbol) -> Option<String> {
     if alias_name.trim() != alias_symbol.semantic_path {
         return None;
     }
-    let target_name = target_name.trim();
-    go_simple_identifier(target_name).then(|| target_name.to_string())
+    go_simple_alias_target_name(target_name)
 }
+
+fn go_simple_alias_target_name(value: &str) -> Option<String> {
+    let mut target_name = value.trim();
+    loop {
+        let Some(inner) = target_name
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+        else {
+            break;
+        };
+        target_name = inner.trim();
+    }
+    target_name = target_name.strip_prefix('*').map_or(target_name, str::trim);
+    let base_name = target_name
+        .split_once('[')
+        .map_or(target_name, |(base_name, _)| base_name.trim());
+    go_simple_identifier(base_name).then(|| base_name.to_string())
+}
+
 fn go_simple_identifier(value: &str) -> bool {
     let mut characters = value.chars();
     let Some(first) = characters.next() else {
