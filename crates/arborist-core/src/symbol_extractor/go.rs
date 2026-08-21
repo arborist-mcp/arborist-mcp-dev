@@ -384,13 +384,14 @@ fn collect_go_local_variable_types_in_scope(
     if node.kind() == "function_literal" {
         return Ok(());
     }
+    let declaration_scope_range = go_local_variable_declaration_scope(node, scope_range);
     if node.kind() == "var_declaration" {
         collect_go_var_declaration_types(
             node,
             source,
             local_variable_types,
             ambiguous_names,
-            scope_range,
+            declaration_scope_range,
             local_type_names,
             local_factory_return_types,
             bindings,
@@ -401,7 +402,7 @@ fn collect_go_local_variable_types_in_scope(
             source,
             local_variable_types,
             ambiguous_names,
-            scope_range,
+            declaration_scope_range,
             local_type_names,
             local_factory_return_types,
             bindings,
@@ -426,6 +427,30 @@ fn collect_go_local_variable_types_in_scope(
         )?;
     }
     Ok(())
+}
+
+fn go_local_variable_declaration_scope(
+    node: Node<'_>,
+    fallback_range: (usize, usize),
+) -> (usize, usize) {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == "block" {
+            return (parent.start_byte(), parent.end_byte());
+        }
+        if matches!(
+            parent.kind(),
+            "if_statement"
+                | "for_statement"
+                | "expression_switch_statement"
+                | "type_switch_statement"
+                | "select_statement"
+        ) {
+            return (parent.start_byte(), parent.end_byte());
+        }
+        current = parent.parent();
+    }
+    fallback_range
 }
 
 fn collect_go_var_declaration_types(
