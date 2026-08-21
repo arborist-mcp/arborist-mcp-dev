@@ -672,6 +672,31 @@ fn does_not_trace_go_factory_local_receivers_with_unresolved_return_types() {
 }
 
 #[test]
+fn does_not_trace_go_ambiguous_same_file_factory_return_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\ntype Other struct{}\nfunc (Counter) Value() int { return 1 }\nfunc (Other) Value() int { return 2 }\nfunc New() Counter { return Counter{} }\nfunc New() Other { return Other{} }\nfunc caller() int { counter := New(); return counter.Value() }\n",
+    )
+    .unwrap();
+
+    let counter_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_live.callers.is_empty());
+    let other_live = trace_symbol_graph(&dir, "Other::Value", TraceDirection::Callers).unwrap();
+    assert!(other_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let counter_persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(counter_persisted.callers.is_empty());
+    let other_persisted =
+        trace_symbol_graph_from_index(&db_path, "Other::Value", TraceDirection::Callers).unwrap();
+    assert!(other_persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_factory_initialized_local_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
