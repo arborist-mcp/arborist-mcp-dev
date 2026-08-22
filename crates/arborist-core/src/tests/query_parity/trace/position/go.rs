@@ -1580,6 +1580,26 @@ fn traces_go_factory_initialized_local_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn keeps_go_interface_typed_calls_fail_closed_for_ambiguous_interface_declarations() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\ntype Worker interface { Stop() error }\nfunc caller(worker Worker) error { return worker.Run(1) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_interface_typed_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");

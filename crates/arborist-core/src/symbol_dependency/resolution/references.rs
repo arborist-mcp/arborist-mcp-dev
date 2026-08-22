@@ -424,7 +424,26 @@ fn resolve_reference_path_with_deadline<'a>(
             .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
             .collect::<Vec<_>>();
         if candidates.len() == 1 {
-            return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+            let receiver_is_unique =
+                reference_name
+                    .split_once("::")
+                    .is_none_or(|(receiver_type, _)| {
+                        matches!(
+                            go_named_type_declaration_status(
+                                source_symbol,
+                                receiver_type,
+                                raw_symbols,
+                                semantic_path_index,
+                                file_overrides,
+                                go_import_contexts_by_file,
+                                deadline,
+                            ),
+                            Ok(GoNamedTypeDeclaration::Unique)
+                        )
+                    });
+            if receiver_is_unique {
+                return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+            }
         }
         if let Some((receiver_type, method_name)) = reference_name.split_once("::")
             && let Some(method_symbol_id) = resolve_go_imported_type_method_reference(
@@ -14090,6 +14109,20 @@ fn resolve_go_same_package_method_reference(
         || receiver_type.contains(':')
         || method_name.contains(':')
     {
+        return Ok(None);
+    }
+    if !matches!(
+        go_named_type_declaration_status(
+            source_symbol,
+            receiver_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        ),
+        Ok(GoNamedTypeDeclaration::Unique)
+    ) {
         return Ok(None);
     }
     let candidate_indexes = semantic_path_index
