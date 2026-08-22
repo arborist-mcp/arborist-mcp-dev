@@ -18,11 +18,20 @@ fuzz_target!(|data: &[u8]| {
     let first_new_text = String::from_utf8_lossy(&data[source_end..first_text_end]).into_owned();
     let second_new_text = String::from_utf8_lossy(&data[first_text_end..]).into_owned();
     let position_bytes = data.get(..8).unwrap_or_default();
-    let row = u32::from_le_bytes(position_bytes.get(..4).unwrap_or(&[0; 4]).try_into().unwrap())
-        as usize;
-    let column =
-        u32::from_le_bytes(position_bytes.get(4..8).unwrap_or(&[0; 4]).try_into().unwrap())
-            as usize;
+    let row = u32::from_le_bytes(
+        position_bytes
+            .get(..4)
+            .unwrap_or(&[0; 4])
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let column = u32::from_le_bytes(
+        position_bytes
+            .get(4..8)
+            .unwrap_or(&[0; 4])
+            .try_into()
+            .unwrap(),
+    ) as usize;
     let first = Position { row, column };
     let second = Position {
         row: column,

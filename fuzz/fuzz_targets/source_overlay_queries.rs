@@ -5,21 +5,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use arborist_core::{
     Position, TraceDirection, list_symbols_from_index_with_source_filtered,
-    list_symbols_with_source_filtered, rebuild_symbol_index,
-    read_symbol_at_position_from_index_with_source, read_symbol_at_position_with_source,
-    read_symbol_discovery_context_from_index_with_source,
+    list_symbols_with_source_filtered, read_symbol_at_position_from_index_with_source,
+    read_symbol_at_position_with_source, read_symbol_discovery_context_from_index_with_source,
     read_symbol_discovery_context_with_source, read_symbol_from_index_with_source,
-    read_symbol_with_source,
-    search_symbols_from_index_with_source_filtered, search_symbols_with_source_filtered,
-    trace_symbol_graph_from_index_with_source_and_timeout,
+    read_symbol_with_source, rebuild_symbol_index, search_symbols_from_index_with_source_filtered,
+    search_symbols_with_source_filtered, trace_symbol_graph_from_index_with_source_and_timeout,
     trace_symbol_graph_with_source_and_timeout,
 };
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 192 * 1024;
 const MAX_SELECTOR_BYTES: usize = 4 * 1024;
-const BASELINE_SOURCE: &str =
-    "def helper(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return helper(value)\n";
+const BASELINE_SOURCE: &str = "def helper(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return helper(value)\n";
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(0);
 
 fuzz_target!(|data: &[u8]| {
@@ -125,7 +122,8 @@ fuzz_target!(|data: &[u8]| {
         Some(10),
     );
     let _ = read_symbol_from_index_with_source(&db_path, &overlay_path, &source, &query);
-    let _ = read_symbol_at_position_from_index_with_source(&db_path, &overlay_path, &source, &position);
+    let _ =
+        read_symbol_at_position_from_index_with_source(&db_path, &overlay_path, &source, &position);
     let _ = read_symbol_discovery_context_from_index_with_source(
         &db_path,
         &overlay_path,

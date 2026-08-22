@@ -4,8 +4,8 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arborist_core::{
-    list_symbols_from_index, read_symbol_from_index, rebuild_symbol_index,
-    search_symbols_from_index, trace_symbol_graph_from_index_with_timeout, TraceDirection,
+    TraceDirection, list_symbols_from_index, read_symbol_from_index, rebuild_symbol_index,
+    search_symbols_from_index, trace_symbol_graph_from_index_with_timeout,
 };
 use libfuzzer_sys::fuzz_target;
 

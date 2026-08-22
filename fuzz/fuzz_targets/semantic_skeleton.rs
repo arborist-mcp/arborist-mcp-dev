@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use arborist_core::{LanguageId, builtin_language_registry, get_semantic_skeleton, supported_languages};
+use arborist_core::{
+    LanguageId, builtin_language_registry, get_semantic_skeleton, supported_languages,
+};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 192 * 1024;
