@@ -579,34 +579,98 @@ fn collect_go_range_clause_types(
         .named_children(&mut left_cursor)
         .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
         .collect::<Result<Vec<_>>>()?;
-    if names.len() != 2 {
+    if names.is_empty() || names.len() > 2 {
         return Ok(());
     }
-    let element_type = go_range_element_type(
-        right,
-        source,
-        context.local_type_names,
-        context.collection_type_elements,
-        context.collection_type_definitions,
-        context.local_type_alias_targets,
-    )?
-    .or_else(|| go_local_collection_element_type(right, source, local_collection_types));
-    let Some(element_type) = element_type else {
-        return Ok(());
-    };
-    let name = &names[1];
-    if name.is_empty() || name == "_" {
-        return Ok(());
+    let key_type = go_range_key_type(right, source, context)?;
+    if let Some(key_type) = key_type {
+        let name = &names[0];
+        if !name.is_empty() && name != "_" {
+            insert_go_local_variable_type(
+                local_variable_types,
+                ambiguous_names,
+                name.clone(),
+                key_type,
+                clause.end_byte(),
+                scope_range,
+            );
+        }
     }
-    insert_go_local_variable_type(
-        local_variable_types,
-        ambiguous_names,
-        name.clone(),
-        element_type,
-        clause.end_byte(),
-        scope_range,
-    );
+    if names.len() == 2 {
+        let element_type = go_range_element_type(
+            right,
+            source,
+            context.local_type_names,
+            context.collection_type_elements,
+            context.collection_type_definitions,
+            context.local_type_alias_targets,
+        )?
+        .or_else(|| go_local_collection_element_type(right, source, local_collection_types));
+        let Some(element_type) = element_type else {
+            return Ok(());
+        };
+        let name = &names[1];
+        if name.is_empty() || name == "_" {
+            return Ok(());
+        }
+        insert_go_local_variable_type(
+            local_variable_types,
+            ambiguous_names,
+            name.clone(),
+            element_type,
+            clause.end_byte(),
+            scope_range,
+        );
+    }
     Ok(())
+}
+
+fn go_range_key_type(
+    node: Node<'_>,
+    source: &str,
+    context: &GoLocalVariableTypeContext<'_>,
+) -> Result<Option<String>> {
+    if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && node_text(function, source)?.trim() == "make"
+        && !context.bindings.contains("make")
+        && let Some(arguments) = node.child_by_field_name("arguments")
+    {
+        let mut cursor = arguments.walk();
+        if let Some(collection_type) = arguments.named_children(&mut cursor).next() {
+            return go_range_key_type(collection_type, source, context);
+        }
+    }
+    let type_node = if node.kind() == "composite_literal" {
+        node.child_by_field_name("type")
+    } else {
+        Some(node)
+    };
+    let Some(type_node) = type_node else {
+        return Ok(None);
+    };
+    if type_node.kind() == "pointer_type" || type_node.kind() == "parenthesized_type" {
+        let mut cursor = type_node.walk();
+        return Ok(type_node
+            .named_children(&mut cursor)
+            .next()
+            .map(|inner| go_range_key_type(inner, source, context))
+            .transpose()?
+            .flatten());
+    }
+    let Some(key_node) = (type_node.kind() == "map_type")
+        .then(|| type_node.child_by_field_name("key"))
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    let Some(key_name) = go_named_local_type(key_node, source)? else {
+        return Ok(None);
+    };
+    Ok(context
+        .local_type_names
+        .contains(&key_name)
+        .then_some(key_name))
 }
 
 fn go_range_element_type(
