@@ -617,6 +617,23 @@ fn go_range_element_type(
     collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
     local_type_alias_targets: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
+    if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && node_text(function, source)?.trim() == "make"
+        && let Some(arguments) = node.child_by_field_name("arguments")
+    {
+        let mut cursor = arguments.walk();
+        if let Some(collection_type) = arguments.named_children(&mut cursor).next() {
+            return go_range_element_type(
+                collection_type,
+                source,
+                local_type_names,
+                collection_type_elements,
+                collection_type_definitions,
+                local_type_alias_targets,
+            );
+        }
+    }
     let type_node = if node.kind() == "composite_literal" {
         node.child_by_field_name("type")
     } else {
