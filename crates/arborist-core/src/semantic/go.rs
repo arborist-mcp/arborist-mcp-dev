@@ -375,11 +375,19 @@ func (counter *Counter) Increment(amount int) int { return counter.value + amoun
             vec![
                 "Counter",
                 "Renderer",
+                "Renderer::Render",
                 "Alias",
                 "NewCounter",
                 "Counter::Increment"
             ]
         );
+        let render = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "Renderer::Render")
+            .unwrap();
+        assert_eq!(render.parameters, Vec::<String>::new());
+        assert_eq!(render.return_type.as_deref(), Some("string"));
         let increment = skeleton
             .available_symbols
             .iter()
