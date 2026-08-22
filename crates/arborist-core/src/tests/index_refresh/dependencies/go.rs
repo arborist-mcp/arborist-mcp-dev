@@ -101,3 +101,40 @@ fn refreshes_go_embedded_interface_dependents_across_same_package_files() {
     assert_eq!(stats.rebuilt_files, 3);
     assert_eq!(stats.reused_files, 0);
 }
+
+#[test]
+fn refreshes_go_cross_file_interface_factory_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.go");
+    let factory = dir.join("factory.go");
+    let unrelated = dir.join("unrelated.go");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &caller,
+        "package metrics\nfunc Caller() error { return NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory,
+        "package metrics\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package metrics\nfunc Unrelated() int { return 0 }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &factory,
+        "package metrics\ntype Worker interface { Run(value int) error; Stop() error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &factory).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 0);
+}
