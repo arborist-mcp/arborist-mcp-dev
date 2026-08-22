@@ -2851,7 +2851,7 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
             .unwrap();
         assert_eq!(
             factory_method.references_by_name,
-            ["Factory".to_string(), "Result::Value".to_string()].into()
+            ["Factory".to_string()].into()
         );
         assert_eq!(
             factory_method
@@ -2859,7 +2859,7 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
                 .iter()
                 .map(|fact| fact.spelling.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Factory", "Result::Value"]
+            vec!["Factory"]
         );
 
         let parenthesized_factory_method = symbols
@@ -2868,7 +2868,7 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
             .unwrap();
         assert_eq!(
             parenthesized_factory_method.references_by_name,
-            ["Factory".to_string(), "Result::Value".to_string()].into()
+            ["Factory".to_string()].into()
         );
 
         let shadowed_conversion = symbols
