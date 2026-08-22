@@ -14140,7 +14140,8 @@ fn resolve_go_same_package_reference(
             deadline.check("resolving Go same-package reference candidates")?;
         }
         let candidate = &raw_symbols[*index];
-        if candidate.node_kind != target.node_kind
+        if !(candidate.node_kind == target.node_kind
+            || (target.node_kind == "method_declaration" && candidate.node_kind == "method_elem"))
             || candidate.semantic_path != target.reference_name
             || !is_production_go_source_file(&candidate.file_path)
             || Path::new(&candidate.file_path)

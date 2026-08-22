@@ -168,7 +168,7 @@ pub(crate) fn find_go_semantic_node<'tree>(
 pub(crate) fn is_go_symbol_node(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "function_declaration" | "method_declaration" | "type_alias" | "type_spec"
+        "function_declaration" | "method_declaration" | "method_elem" | "type_alias" | "type_spec"
     )
 }
 
@@ -180,10 +180,16 @@ pub(crate) fn go_symbol_name(node: Node<'_>, source: &str) -> Result<Option<Stri
 }
 
 pub(crate) fn go_semantic_path(node: Node<'_>, source: &str, name: &str) -> Result<Option<String>> {
-    if node.kind() != "method_declaration" {
-        return Ok(Some(name.to_string()));
+    match node.kind() {
+        "method_declaration" => Ok(
+            go_method_receiver_name(node, source)?.map(|receiver| format!("{receiver}::{name}"))
+        ),
+        "method_elem" => {
+            Ok(go_interface_method_owner_name(node, source)?
+                .map(|owner| format!("{owner}::{name}")))
+        }
+        _ => Ok(Some(name.to_string())),
     }
-    Ok(go_method_receiver_name(node, source)?.map(|receiver| format!("{receiver}::{name}")))
 }
 
 pub(crate) fn go_signature(node: Node<'_>, source: &str) -> Option<String> {
@@ -203,7 +209,10 @@ pub(crate) fn go_signature(node: Node<'_>, source: &str) -> Option<String> {
 }
 
 pub(crate) fn go_parameters(node: Node<'_>, source: &str) -> Vec<String> {
-    if !matches!(node.kind(), "function_declaration" | "method_declaration") {
+    if !matches!(
+        node.kind(),
+        "function_declaration" | "method_declaration" | "method_elem"
+    ) {
         return Vec::new();
     }
     let Some(parameters) = node.child_by_field_name("parameters") else {
@@ -219,7 +228,10 @@ pub(crate) fn go_parameters(node: Node<'_>, source: &str) -> Vec<String> {
 }
 
 pub(crate) fn go_return_type(node: Node<'_>, source: &str) -> Option<String> {
-    if !matches!(node.kind(), "function_declaration" | "method_declaration") {
+    if !matches!(
+        node.kind(),
+        "function_declaration" | "method_declaration" | "method_elem"
+    ) {
         return None;
     }
     node.child_by_field_name("result")
@@ -249,6 +261,26 @@ fn go_full_declaration(node: Node<'_>, source: &str) -> Result<String> {
     } else {
         declaration.to_string()
     })
+}
+
+fn go_interface_method_owner_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(interface_type) = node
+        .parent()
+        .filter(|parent| parent.kind() == "interface_type")
+    else {
+        return Ok(None);
+    };
+    let Some(type_spec) = interface_type
+        .parent()
+        .filter(|parent| matches!(parent.kind(), "type_spec" | "type_alias"))
+    else {
+        return Ok(None);
+    };
+    let Some(name) = type_spec.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let name = node_text(name, source)?.trim();
+    Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
 fn go_method_receiver_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
