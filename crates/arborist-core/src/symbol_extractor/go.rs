@@ -641,6 +641,13 @@ fn collect_go_range_clause_types(
     Ok(())
 }
 
+fn go_parenthesized_expression_inner(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    let mut named_children = node.named_children(&mut cursor);
+    let inner = named_children.next()?;
+    named_children.next().is_none().then_some(inner)
+}
+
 fn go_range_key_type(
     node: Node<'_>,
     source: &str,
@@ -652,11 +659,10 @@ fn go_range_key_type(
     {
         return Ok(Some(key_type));
     }
-    if node.kind() == "parenthesized_expression" {
-        let mut cursor = node.walk();
-        if let Some(inner) = node.named_children(&mut cursor).next() {
-            return go_range_key_type(inner, source, local_collection_types, context);
-        }
+    if node.kind() == "parenthesized_expression"
+        && let Some(inner) = go_parenthesized_expression_inner(node)
+    {
+        return go_range_key_type(inner, source, local_collection_types, context);
     }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
@@ -783,19 +789,18 @@ fn go_range_element_type_with_bindings(
             );
         }
     }
-    if node.kind() == "parenthesized_expression" {
-        let mut cursor = node.walk();
-        if let Some(inner) = node.named_children(&mut cursor).next() {
-            return go_range_element_type_with_bindings(
-                inner,
-                source,
-                local_type_names,
-                collection_type_elements,
-                collection_type_definitions,
-                local_type_alias_targets,
-                bindings,
-            );
-        }
+    if node.kind() == "parenthesized_expression"
+        && let Some(inner) = go_parenthesized_expression_inner(node)
+    {
+        return go_range_element_type_with_bindings(
+            inner,
+            source,
+            local_type_names,
+            collection_type_elements,
+            collection_type_definitions,
+            local_type_alias_targets,
+            bindings,
+        );
     }
     let type_node = if node.kind() == "composite_literal" {
         node.child_by_field_name("type")
