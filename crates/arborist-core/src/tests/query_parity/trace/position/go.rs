@@ -3182,7 +3182,7 @@ fn traces_go_generic_named_collection_range_receivers() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters[T any] []T\ntype Alias[T any] = Counters[T]\ntype Concrete = Alias[Counter]\nfunc caller(values Counters[Counter], aliases Alias[Counter], concrete Concrete) int { for _, counter := range values { return counter.Value() }; for _, counter := range aliases { return counter.Value() }; for _, counter := range concrete { return counter.Value() }; return 0 }\n",
+        "package metrics\n\ntype Counter struct{}\ntype CounterAlias = Counter\nfunc (Counter) Value() int { return 1 }\ntype Counters[T any] []T\ntype Alias[T any] = Counters[T]\ntype Concrete = Alias[CounterAlias]\nfunc caller(values Counters[CounterAlias], aliases Alias[CounterAlias], concrete Concrete) int { for _, counter := range values { return counter.Value() }; for _, counter := range aliases { return counter.Value() }; for _, counter := range concrete { return counter.Value() }; return 0 }\n",
     )
     .unwrap();
 
