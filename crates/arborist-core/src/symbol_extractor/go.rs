@@ -2946,4 +2946,41 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
         assert!(shadowed_assertion.references_by_name.is_empty());
         assert!(shadowed_assertion.reference_facts.is_empty());
     }
+    #[test]
+    fn indexes_go_interface_factory_method_reference_facts_with_factory_metadata() {
+        let source = r#"
+package metrics
+
+type Worker interface { Run(value int) error }
+func NewWorker() Worker { return nil }
+func caller() error { return NewWorker().Run(1) }
+"#;
+        let path = Path::new("metrics.go");
+        let document = crate::language::parse_document(path, source).unwrap();
+        let symbols =
+            index_go_symbols_with_deadline(path, source, document.tree.root_node(), None).unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+
+        assert_eq!(
+            caller.references_by_name,
+            ["NewWorker".to_string(), "Worker::Run".to_string()].into()
+        );
+        let method_fact = caller
+            .reference_facts
+            .iter()
+            .find(|fact| fact.spelling == "Worker::Run")
+            .unwrap();
+        assert_eq!(
+            method_fact.language_details,
+            ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: false,
+                type_assertion: false,
+                factory_return: true,
+                factory_name: Some("NewWorker".to_string()),
+            })
+        );
+    }
 }
