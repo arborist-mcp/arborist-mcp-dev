@@ -3442,6 +3442,46 @@ fn keeps_go_map_range_key_receivers_fail_closed_when_type_resolution_is_uncertai
 }
 
 #[test]
+fn keeps_go_parenthesized_range_receivers_fail_closed_when_type_resolution_is_uncertain() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\nfunc (Counter) Value() int { return 2 }\ntype Generic[K comparable] map[K]Counter\ntype Ambiguous map[Key]Counter\ntype Ambiguous map[string]Counter\nfunc caller(unknown Generic[Missing], ambiguous Ambiguous) int { for key := range (unknown) { return key.Value() }; for key := range ((ambiguous)) { return key.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Key::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Key::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_parenthesized_shadowed_make_range_receivers_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc caller() int { make := func(int) []Counter { return nil }; for _, counter := range (make(1)) { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_range_element_receivers_from_make_collections() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
