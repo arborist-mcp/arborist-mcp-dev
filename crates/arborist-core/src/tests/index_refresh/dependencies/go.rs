@@ -138,3 +138,45 @@ fn refreshes_go_cross_file_interface_factory_dependents() {
     assert_eq!(stats.rebuilt_files, 3);
     assert_eq!(stats.reused_files, 0);
 }
+
+#[test]
+fn refreshes_go_imported_interface_factory_dependents() {
+    let dir = temporary_dir();
+    let command_dir = dir.join("cmd");
+    let service_dir = dir.join("internal").join("service");
+    let caller = command_dir.join("main.go");
+    let factory = service_dir.join("service.go");
+    let unrelated = dir.join("unrelated.go");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&command_dir).unwrap();
+    fs::create_dir_all(&service_dir).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc Caller() error { return svc.NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory,
+        "package service\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package project\n\nfunc Unrelated() int { return 0 }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &factory,
+        "package service\n\ntype Worker interface { Run(value int) error; Stop() error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &factory).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
+}

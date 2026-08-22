@@ -2273,6 +2273,108 @@ fn traces_go_imported_interface_factory_returns() {
 }
 
 #[test]
+fn keeps_go_imported_concrete_factory_methods_fail_closed() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() int { return svc.NewCounter().Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() Counter { return Counter{} }\n",
+    )
+    .unwrap();
+
+    let method = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(method.callers.is_empty());
+    let factory = trace_symbol_graph(&dir, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory.callers.len(), 1);
+    assert_eq!(factory.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn keeps_go_imported_named_result_factory_methods_fail_closed() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() error { return svc.NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() (worker Worker) { return nil }\n",
+    )
+    .unwrap();
+
+    let method = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(method.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_imported_multi_result_factory_methods_fail_closed() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() error { worker, _ := svc.NewWorker(); return worker.Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() (Worker, error) { return nil, nil }\n",
+    )
+    .unwrap();
+
+    let method = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(method.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_imported_ambiguous_factory_methods_fail_closed() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_dir = dir.join("internal").join("service");
+    let first_path = service_dir.join("first.go");
+    let second_path = service_dir.join("second.go");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(&service_dir).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport svc \"example.com/project/internal/service\"\n\nfunc caller() error { return svc.NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &first_path,
+        "package service\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_path,
+        "package service\n\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let method = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(method.callers.is_empty());
+}
+
+#[test]
 fn traces_go_imported_type_alias_method_receivers() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");
