@@ -4499,3 +4499,19 @@ fn keeps_go_directly_embedded_interface_method_calls_fail_closed_when_parent_is_
     let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
     assert!(live.callers.is_empty());
 }
+
+#[test]
+fn keeps_go_directly_embedded_interface_method_calls_fail_closed_for_ambiguous_parents() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Left interface { Run() error }\ntype Right interface { Run() error }\ntype Worker interface { Left; Right }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Left::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+    let right = trace_symbol_graph(&dir, "Right::Run", TraceDirection::Callers).unwrap();
+    assert!(right.callers.is_empty());
+}
