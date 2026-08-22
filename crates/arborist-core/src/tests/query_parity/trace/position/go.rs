@@ -3218,6 +3218,33 @@ fn traces_go_range_element_receivers_from_pointer_to_arrays() {
 }
 
 #[test]
+fn traces_go_map_range_key_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\nfunc (Counter) Value() int { return 2 }\nfunc caller() int { for key := range map[Key]Counter{} { return key.Value() }; for _, counter := range map[Key]Counter{} { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let key = trace_symbol_graph(&dir, "Key::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(key.callers.len(), 1);
+    assert_eq!(key.callers[0].symbol_id, "caller");
+    let value = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(value.callers.len(), 1);
+    assert_eq!(value.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let key =
+        trace_symbol_graph_from_index(&db_path, "Key::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(key.callers.len(), 1);
+    let value =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(value.callers.len(), 1);
+}
+
+#[test]
 fn traces_go_range_element_receivers_from_make_collections() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
