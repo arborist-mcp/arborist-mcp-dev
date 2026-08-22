@@ -4581,3 +4581,46 @@ fn traces_go_directly_embedded_interface_methods_across_same_package_files_from_
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn keeps_go_cross_package_embedded_interface_methods_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("worker.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Base }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("base.go"),
+        "package other\n\ntype Base interface { Run() error }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_cross_file_embedded_interface_methods_fail_closed_when_parent_is_ambiguous() {
+    let dir = temporary_dir();
+    let worker_path = dir.join("worker.go");
+    fs::write(
+        &worker_path,
+        "package metrics\n\ntype Worker interface { Base }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("base_one.go"),
+        "package metrics\n\ntype Base interface { Run() error }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("base_two.go"),
+        "package metrics\n\ntype Base interface { Stop() error }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
