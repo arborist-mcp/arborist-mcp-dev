@@ -2347,6 +2347,40 @@ fn traces_go_generic_imported_interface_factory_returns() {
 }
 
 #[test]
+fn traces_go_generic_local_interface_factory_returns() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker[T any]() Worker { return nil }\nfunc caller() error { return NewWorker[int]().Run(1) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+
+    let overlay = "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker[T any]() Worker { return nil }\nfunc overlayCaller() error { return NewWorker[string]().Run(1) }\n";
+    let dirty = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "Worker::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(dirty.callers.len(), 1);
+    assert_eq!(dirty.callers[0].symbol_id, "overlayCaller");
+}
+
+#[test]
 fn traces_go_imported_interface_factory_returns_with_declared_package_name() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");

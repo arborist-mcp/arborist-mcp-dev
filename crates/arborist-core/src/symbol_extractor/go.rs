@@ -1601,7 +1601,10 @@ fn go_local_function_name(node: Node<'_>, source: &str) -> Result<Option<String>
             let name = node_text(node, source)?.trim();
             Ok((!name.is_empty()).then(|| name.to_string()))
         }
-        "parenthesized_expression" => {
+        // Generic instantiation calls such as `NewWorker[int](...)` parse
+        // their function field as an index expression (or a generic type in
+        // type contexts); the instantiated name is the first named child.
+        "parenthesized_expression" | "index_expression" | "generic_type" => {
             let mut cursor = node.walk();
             node.named_children(&mut cursor)
                 .next()
