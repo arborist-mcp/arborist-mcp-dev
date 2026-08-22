@@ -2350,6 +2350,10 @@ fn go_imported_factory_call_name(
         || function_name.is_empty()
         || context.bindings.contains(package_name)
         || !function_name.chars().next().is_some_and(char::is_uppercase)
+        // A qualified call is syntactically ambiguous with an imported type
+        // conversion. Keep the factory-return fast path conservative until
+        // package type information is available to the extractor.
+        || !function_name.starts_with("New")
     {
         return Ok(None);
     }
