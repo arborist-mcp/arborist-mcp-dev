@@ -680,16 +680,40 @@ fn source_file_collection_type_elements(
         }
     }
 
+    let mut ambiguous_names = BTreeSet::new();
     let direct_elements = direct_elements
         .into_iter()
-        .filter_map(|(name, values)| (values.len() == 1).then(|| (name, values[0].clone())))
+        .filter_map(|(name, values)| {
+            if values.len() == 1 {
+                Some((name, values[0].clone()))
+            } else {
+                ambiguous_names.insert(name);
+                None
+            }
+        })
         .collect::<BTreeMap<_, _>>();
     let named_targets = named_targets
         .into_iter()
-        .filter_map(|(name, values)| (values.len() == 1).then(|| (name, values[0].clone())))
+        .filter_map(|(name, values)| {
+            if values.len() == 1 {
+                Some((name, values[0].clone()))
+            } else {
+                ambiguous_names.insert(name);
+                None
+            }
+        })
         .collect::<BTreeMap<_, _>>();
+    for name in direct_elements
+        .keys()
+        .filter(|name| named_targets.contains_key(*name))
+    {
+        ambiguous_names.insert(name.clone());
+    }
     let mut resolved = BTreeMap::new();
     for name in local_type_names {
+        if ambiguous_names.contains(name) {
+            continue;
+        }
         let Some(element_name) = go_resolve_collection_type_element(
             name,
             &direct_elements,
