@@ -201,10 +201,20 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
         "parenthesizedFactoryCaller"
     );
     let broken_live = trace_symbol_graph(&dir, "Broken", TraceDirection::Callers).unwrap();
-    assert!(broken_live.callers.is_empty());
+    assert_eq!(broken_live.callers.len(), 1);
+    assert_eq!(broken_live.callers[0].symbol_id, "brokenConversionCaller");
     let result_method_live =
         trace_symbol_graph(&dir, "Result::Value", TraceDirection::Callers).unwrap();
-    assert!(result_method_live.callers.is_empty());
+    assert_eq!(result_method_live.callers.len(), 3);
+    assert_eq!(
+        result_method_live.callers[0].symbol_id,
+        "brokenConversionCaller"
+    );
+    assert_eq!(result_method_live.callers[1].symbol_id, "factoryCaller");
+    assert_eq!(
+        result_method_live.callers[2].symbol_id,
+        "parenthesizedFactoryCaller"
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let conversion_persisted =
@@ -232,10 +242,26 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     );
     let broken_persisted =
         trace_symbol_graph_from_index(&db_path, "Broken", TraceDirection::Callers).unwrap();
-    assert!(broken_persisted.callers.is_empty());
+    assert_eq!(broken_persisted.callers.len(), 1);
+    assert_eq!(
+        broken_persisted.callers[0].symbol_id,
+        "brokenConversionCaller"
+    );
     let result_method_persisted =
         trace_symbol_graph_from_index(&db_path, "Result::Value", TraceDirection::Callers).unwrap();
-    assert!(result_method_persisted.callers.is_empty());
+    assert_eq!(result_method_persisted.callers.len(), 3);
+    assert_eq!(
+        result_method_persisted.callers[0].symbol_id,
+        "brokenConversionCaller"
+    );
+    assert_eq!(
+        result_method_persisted.callers[1].symbol_id,
+        "factoryCaller"
+    );
+    assert_eq!(
+        result_method_persisted.callers[2].symbol_id,
+        "parenthesizedFactoryCaller"
+    );
 }
 
 #[test]
@@ -1650,6 +1676,69 @@ fn traces_go_interface_typed_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn keeps_go_interface_factory_calls_fail_closed_for_ambiguous_factory_returns() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\ntype Other struct{}\nfunc (Other) Run(value int) error { return nil }\nfunc NewWorker() Worker { return nil }\nfunc NewWorker() Other { return Other{} }\nfunc caller() error { return NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+    let factory_live = trace_symbol_graph(&dir, "NewWorker", TraceDirection::Callers).unwrap();
+    assert!(factory_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewWorker", TraceDirection::Callers).unwrap();
+    assert!(factory_persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_go_interface_factory_return_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let stale_path = dir.join("stale.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() error { return nil }\n",
+    )
+    .unwrap();
+    fs::write(&stale_path, "package metrics\n").unwrap();
+    let caller_overlay = "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\nfunc caller() error { return NewWorker().Run(1) }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Worker::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Worker::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_interface_method_calls_across_same_package_files() {
     let dir = temporary_dir();
     let interface_path = dir.join("worker.go");
@@ -1663,6 +1752,28 @@ fn traces_go_interface_method_calls_across_same_package_files() {
     fs::write(
         &caller_path,
         "package metrics\n\nfunc caller(worker Worker) error { return worker.Run(1) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn traces_go_interface_method_calls_from_factory_returns_in_live_and_persisted_indexes() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\nfunc caller() error { return NewWorker().Run(1) }\n",
     )
     .unwrap();
 
