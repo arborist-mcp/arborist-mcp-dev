@@ -14192,16 +14192,40 @@ fn resolve_go_factory_return_method_reference(
     if method_name.is_empty() || factory_name.is_empty() {
         return Ok(None);
     }
-    let Some(factory_symbol_id) = resolve_go_same_package_function_reference(
-        source_symbol,
-        factory_name,
-        raw_symbols,
-        name_index,
-        file_overrides,
-        go_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    let factory_symbol_id = if factory_name.contains('.') {
+        resolve_go_imported_function_reference(
+            source_symbol,
+            factory_name,
+            raw_symbols,
+            name_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        resolve_go_same_package_function_reference(
+            source_symbol,
+            factory_name,
+            raw_symbols,
+            name_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(factory_symbol_id) = factory_symbol_id else {
+        if factory_name.contains('.') {
+            return resolve_go_type_conversion_reference(
+                source_symbol,
+                reference_name,
+                raw_symbols,
+                name_index,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            );
+        }
         return Ok(None);
     };
     let Some(factory_symbol) = raw_symbols
@@ -14213,6 +14237,19 @@ fn resolve_go_factory_return_method_reference(
     let Some(return_type) = go_indexed_function_return_type(factory_symbol) else {
         return Ok(None);
     };
+    if factory_name.contains('.') {
+        return resolve_go_imported_factory_return_method_reference(
+            source_symbol,
+            factory_name,
+            method_name,
+            &return_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        );
+    }
     if !matches!(
         go_interface_declaration_status(
             source_symbol,
@@ -14237,6 +14274,70 @@ fn resolve_go_factory_return_method_reference(
         go_import_contexts_by_file,
         deadline,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_go_imported_factory_return_method_reference(
+    source_symbol: &IndexedSymbol,
+    factory_name: &str,
+    method_name: &str,
+    return_type: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((_, binding)) = resolve_go_import_binding_for_reference(
+        &source_symbol.file_path,
+        factory_name,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let method_path = format!("{return_type}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&method_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            matches!(
+                candidate.node_kind.as_str(),
+                "method_declaration" | "method_elem"
+            ) && candidate.semantic_path == method_path
+                && is_production_go_source_file(&candidate.file_path)
+                && binding.package_paths.contains(&candidate.file_path)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let interface_candidates = semantic_path_index
+        .get(return_type)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "type_spec" || candidate.node_kind == "type_alias"
+        })
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.semantic_path == return_type
+                && is_production_go_source_file(&candidate.file_path)
+                && binding.package_paths.contains(&candidate.file_path)
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(go_signature_declares_interface)
+        })
+        .collect::<Vec<_>>();
+    Ok((interface_candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
 }
 
 fn go_indexed_function_return_type(symbol: &IndexedSymbol) -> Option<String> {

@@ -2262,6 +2262,12 @@ fn go_direct_method_reference(
             factory_name,
         }));
     }
+    if let Some(factory_name) = go_imported_factory_call_name(operand, source, context)? {
+        return Ok(Some(GoDirectMethodReference::FactoryReturn {
+            method_path: format!("{factory_name}::{method_name}"),
+            factory_name,
+        }));
+    }
     if let Some(factory_name) = go_factory_name_for_receiver(operand, source, context) {
         return Ok(Some(GoDirectMethodReference::FactoryCall(factory_name)));
     }
@@ -2313,6 +2319,41 @@ fn go_factory_return_receiver(
         None => function_name.clone(),
     };
     Ok(Some((method_receiver_name, function_name)))
+}
+
+fn go_imported_factory_call_name(
+    operand: Node<'_>,
+    source: &str,
+    context: &GoDirectCallContext<'_>,
+) -> Result<Option<String>> {
+    if operand.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let Some(function) = operand.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    if function.kind() != "selector_expression" {
+        return Ok(None);
+    }
+    let Some(package) = function.child_by_field_name("operand") else {
+        return Ok(None);
+    };
+    let Some(name) = function.child_by_field_name("field") else {
+        return Ok(None);
+    };
+    if package.kind() != "identifier" || name.kind() != "field_identifier" {
+        return Ok(None);
+    }
+    let package_name = node_text(package, source)?.trim();
+    let function_name = node_text(name, source)?.trim();
+    if package_name.is_empty()
+        || function_name.is_empty()
+        || context.bindings.contains(package_name)
+        || !function_name.chars().next().is_some_and(char::is_uppercase)
+    {
+        return Ok(None);
+    }
+    Ok(Some(format!("{package_name}.{function_name}")))
 }
 
 fn go_factory_name_for_receiver(
