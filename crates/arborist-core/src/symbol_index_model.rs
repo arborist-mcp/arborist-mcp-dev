@@ -32,6 +32,10 @@ pub(crate) struct GoReferenceDetails {
     pub(crate) type_conversion: bool,
     #[serde(default)]
     pub(crate) type_assertion: bool,
+    #[serde(default)]
+    pub(crate) factory_return: bool,
+    #[serde(default)]
+    pub(crate) factory_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

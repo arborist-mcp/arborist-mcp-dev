@@ -379,6 +379,21 @@ fn resolve_reference_path_with_deadline<'a>(
     let call_arity = call_context.arity;
     if language_id == Some(LanguageId::Go) {
         if let Some(details) = go_reference_details {
+            if details.factory_return
+                && let Some(factory_name) = details.factory_name.as_deref()
+            {
+                return resolve_go_factory_return_method_reference(
+                    source_symbol,
+                    reference_name,
+                    factory_name,
+                    raw_symbols,
+                    name_index,
+                    semantic_path_index,
+                    file_overrides,
+                    go_import_contexts_by_file,
+                    deadline,
+                );
+            }
             return match (details.type_conversion, details.type_assertion) {
                 (true, false) => resolve_go_type_conversion_reference(
                     source_symbol,
@@ -14157,6 +14172,89 @@ fn go_simple_identifier(value: &str) -> bool {
     };
     (first == '_' || first.is_alphabetic())
         && characters.all(|character| character == '_' || character.is_alphanumeric())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_go_factory_return_method_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    factory_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((_, method_name)) = reference_name.rsplit_once("::") else {
+        return Ok(None);
+    };
+    if method_name.is_empty() || factory_name.is_empty() {
+        return Ok(None);
+    }
+    let Some(factory_symbol_id) = resolve_go_same_package_function_reference(
+        source_symbol,
+        factory_name,
+        raw_symbols,
+        name_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory_symbol) = raw_symbols
+        .iter()
+        .find(|symbol| symbol.symbol_id == factory_symbol_id)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = go_indexed_function_return_type(factory_symbol) else {
+        return Ok(None);
+    };
+    if !matches!(
+        go_interface_declaration_status(
+            source_symbol,
+            &return_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        ),
+        Ok(GoNamedTypeDeclaration::Unique)
+    ) {
+        return Ok(None);
+    }
+    let method_path = format!("{return_type}::{method_name}");
+    resolve_go_same_package_method_reference(
+        source_symbol,
+        &method_path,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn go_indexed_function_return_type(symbol: &IndexedSymbol) -> Option<String> {
+    if symbol.node_kind != "function_declaration" {
+        return None;
+    }
+    let signature = symbol.signature.as_deref()?.strip_prefix("func ")?;
+    let result = signature.split_once(')')?.1.trim();
+    let result = if let Some(result) = result.strip_prefix('(') {
+        result.strip_suffix(')')?.trim()
+    } else {
+        result
+    };
+    if result.is_empty() {
+        return None;
+    }
+    let result = result.strip_prefix('*').map_or(result, str::trim);
+    go_simple_identifier(result).then(|| result.to_string())
 }
 
 fn resolve_go_same_package_function_reference(

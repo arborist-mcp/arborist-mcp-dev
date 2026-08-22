@@ -71,6 +71,7 @@ fn indexed_symbol(
         &references_by_name,
         &direct_references.type_assertion_method_references,
         &direct_references.type_conversion_method_references,
+        &direct_references.factory_return_method_references,
         &call_arities_by_name,
     );
 
@@ -98,6 +99,7 @@ struct GoDirectReferences {
     references_by_name: BTreeSet<String>,
     type_assertion_method_references: BTreeSet<String>,
     type_conversion_method_references: BTreeSet<String>,
+    factory_return_method_references: BTreeMap<String, String>,
     suppressed_type_conversion_call_starts: BTreeSet<usize>,
 }
 
@@ -154,6 +156,7 @@ struct GoLocalVariableTypeContext<'a> {
 
 struct GoDirectCallContext<'a> {
     local_functions: &'a BTreeMap<String, String>,
+    local_type_names: &'a BTreeSet<String>,
     bindings: &'a BTreeSet<String>,
     method_receiver: Option<&'a GoMethodReceiver>,
     parameter_types: &'a BTreeMap<String, String>,
@@ -168,6 +171,7 @@ fn go_reference_facts(
     references_by_name: &BTreeSet<String>,
     type_assertion_method_references: &BTreeSet<String>,
     type_conversion_method_references: &BTreeSet<String>,
+    factory_return_method_references: &BTreeMap<String, String>,
     call_arities_by_name: &BTreeMap<String, BTreeSet<usize>>,
 ) -> Vec<ReferenceFact> {
     let mut reference_facts = reference_facts_from_legacy(references_by_name, call_arities_by_name);
@@ -181,9 +185,24 @@ fn go_reference_facts(
                 language_details: ReferenceLanguageDetails::Go(GoReferenceDetails {
                     type_conversion: false,
                     type_assertion: true,
+                    factory_return: false,
+                    factory_name: None,
                 }),
             }),
     );
+    for (spelling, factory_name) in factory_return_method_references {
+        if let Some(fact) = reference_facts
+            .iter_mut()
+            .find(|fact| fact.spelling == *spelling)
+        {
+            fact.language_details = ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: false,
+                type_assertion: false,
+                factory_return: true,
+                factory_name: Some(factory_name.clone()),
+            });
+        }
+    }
     reference_facts.extend(
         type_conversion_method_references
             .iter()
@@ -194,6 +213,8 @@ fn go_reference_facts(
                 language_details: ReferenceLanguageDetails::Go(GoReferenceDetails {
                     type_conversion: true,
                     type_assertion: false,
+                    factory_return: false,
+                    factory_name: None,
                 }),
             }),
     );
@@ -213,6 +234,7 @@ fn collect_direct_local_calls(
             references_by_name: BTreeSet::new(),
             type_assertion_method_references: BTreeSet::new(),
             type_conversion_method_references: BTreeSet::new(),
+            factory_return_method_references: BTreeMap::new(),
             suppressed_type_conversion_call_starts: BTreeSet::new(),
         });
     }
@@ -221,6 +243,7 @@ fn collect_direct_local_calls(
             references_by_name: BTreeSet::new(),
             type_assertion_method_references: BTreeSet::new(),
             type_conversion_method_references: BTreeSet::new(),
+            factory_return_method_references: BTreeMap::new(),
             suppressed_type_conversion_call_starts: BTreeSet::new(),
         });
     };
@@ -272,6 +295,7 @@ fn collect_direct_local_calls(
     collect_body_bindings(body, source, &mut body_bindings)?;
     let context = GoDirectCallContext {
         local_functions: &local_functions,
+        local_type_names: &local_type_names,
         bindings: &bindings,
         method_receiver: method_receiver.as_ref(),
         parameter_types: &parameter_types,
@@ -285,6 +309,7 @@ fn collect_direct_local_calls(
         references_by_name: BTreeSet::new(),
         type_assertion_method_references: BTreeSet::new(),
         type_conversion_method_references: BTreeSet::new(),
+        factory_return_method_references: BTreeMap::new(),
         suppressed_type_conversion_call_starts: BTreeSet::new(),
     };
     collect_direct_local_calls_from_node(body, source, deadline, &context, &mut references)?;
@@ -2277,13 +2302,16 @@ fn go_factory_return_receiver(
     if context.bindings.contains(&function_name) {
         return Ok(None);
     }
-    let Some(return_type) = context.local_factory_return_types.get(&function_name) else {
-        return Ok(None);
-    };
-    if !context.local_interface_type_names.contains(return_type) {
+    if context.local_type_names.contains(&function_name) {
         return Ok(None);
     }
-    Ok(Some((return_type.clone(), function_name)))
+    let method_receiver_name = context
+        .local_factory_return_types
+        .get(&function_name)
+        .filter(|return_type| context.local_interface_type_names.contains(*return_type))
+        .cloned()
+        .unwrap_or_else(|| function_name.clone());
+    Ok(Some((method_receiver_name, function_name)))
 }
 
 fn go_factory_name_for_receiver(
@@ -2439,8 +2467,11 @@ fn collect_direct_local_calls_from_node(
                             method_path,
                             factory_name,
                         } => {
-                            references.references_by_name.insert(method_path);
-                            references.references_by_name.insert(factory_name);
+                            references.references_by_name.insert(method_path.clone());
+                            references.references_by_name.insert(factory_name.clone());
+                            references
+                                .factory_return_method_references
+                                .insert(method_path, factory_name);
                         }
                         GoDirectMethodReference::FactoryCall(factory_name) => {
                             references.references_by_name.insert(factory_name);
@@ -2768,6 +2799,8 @@ func assertion(value any) int { return value.(svc.Counter).Value() }
             ReferenceLanguageDetails::Go(GoReferenceDetails {
                 type_conversion: true,
                 type_assertion: false,
+                factory_return: false,
+                factory_name: None,
             })
         );
 
@@ -2782,6 +2815,8 @@ func assertion(value any) int { return value.(svc.Counter).Value() }
             ReferenceLanguageDetails::Go(GoReferenceDetails {
                 type_conversion: false,
                 type_assertion: true,
+                factory_return: false,
+                factory_name: None,
             })
         );
     }
@@ -2840,6 +2875,8 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
                 ReferenceLanguageDetails::Go(GoReferenceDetails {
                     type_conversion: true,
                     type_assertion: false,
+                    factory_return: false,
+                    factory_name: None,
                 }),
                 "{caller_path}"
             );
@@ -2897,6 +2934,8 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
             ReferenceLanguageDetails::Go(GoReferenceDetails {
                 type_conversion: false,
                 type_assertion: true,
+                factory_return: false,
+                factory_name: None,
             })
         );
 
