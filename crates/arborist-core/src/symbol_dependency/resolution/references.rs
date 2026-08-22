@@ -14385,7 +14385,7 @@ fn go_direct_embedded_interface_types(signature: Option<&str>) -> Vec<String> {
     else {
         return Vec::new();
     };
-    body.split(|character: char| character == ';' || character == '\n' || character == '\r')
+    body.split([';', '\n', '\r'])
         .filter_map(|clause| {
             let clause = clause.trim();
             (go_simple_identifier(clause)).then(|| clause.to_string())
