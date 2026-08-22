@@ -724,6 +724,20 @@ fn go_range_element_type_with_bindings(
             );
         }
     }
+    if type_node.kind() == "parenthesized_type" {
+        let mut cursor = type_node.walk();
+        if let Some(inner_type) = type_node.named_children(&mut cursor).next() {
+            return go_range_element_type_with_bindings(
+                inner_type,
+                source,
+                local_type_names,
+                collection_type_elements,
+                collection_type_definitions,
+                local_type_alias_targets,
+                bindings,
+            );
+        }
+    }
     let element_node = match type_node.kind() {
         "array_type" | "implicit_length_array_type" | "slice_type" => {
             type_node.child_by_field_name("element")

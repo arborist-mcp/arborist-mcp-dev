@@ -3160,7 +3160,7 @@ fn traces_go_range_element_receivers_from_pointer_to_arrays() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Counter struct{}\ntype Fixed [1]Counter\nfunc (Counter) Value() int { return 1 }\nfunc caller(values *[1]Counter, fixed *Fixed) int { for _, counter := range values { return counter.Value() }; for _, counter := range fixed { return counter.Value() }; return 0 }\n",
+        "package metrics\n\ntype Counter struct{}\ntype Fixed [1]Counter\nfunc (Counter) Value() int { return 1 }\nfunc caller(values *[1]Counter, fixed *Fixed, parenthesized *([1]Counter)) int { for _, counter := range values { return counter.Value() }; for _, counter := range fixed { return counter.Value() }; for _, counter := range parenthesized { return counter.Value() }; return 0 }\n",
     )
     .unwrap();
 
