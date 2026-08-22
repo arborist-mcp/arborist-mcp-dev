@@ -2737,6 +2737,7 @@ func generic_conversion(value int) int { return Box[int](value).Value() }
 func factory_method(value int) int { return Factory(value).Value() }
 func parenthesized_factory_method(value int) int { return (Factory)(value).Value() }
 func shadowed_conversion(Scalar func(int) Result, value int) int { return Scalar(value).Value() }
+func shadowed_factory(Factory func(int) Result, value int) int { return Factory(value).Value() }
 func asserted_method(value any) int { return value.(Scalar).Value() }
 func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value() }
 "#;
@@ -2807,6 +2808,13 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
             .unwrap();
         assert!(shadowed_conversion.references_by_name.is_empty());
         assert!(shadowed_conversion.reference_facts.is_empty());
+
+        let shadowed_factory = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "shadowed_factory")
+            .unwrap();
+        assert!(shadowed_factory.references_by_name.is_empty());
+        assert!(shadowed_factory.reference_facts.is_empty());
 
         let asserted_method = symbols
             .iter()
