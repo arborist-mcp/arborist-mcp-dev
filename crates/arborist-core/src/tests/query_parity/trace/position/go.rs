@@ -4755,3 +4755,92 @@ fn traces_go_interface_factory_returns_across_same_package_files() {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn traces_go_interface_factory_returns_across_same_package_files_from_dirty_vfs() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let worker_path = dir.join("worker.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() error { return nil }\n",
+    )
+    .unwrap();
+    fs::write(&worker_path, "package metrics\n\n").unwrap();
+    let overlay = "package metrics\n\nfunc caller() error { return NewWorker().Run(1) }\n";
+    fs::write(
+        dir.join("factory.go"),
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Worker::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Worker::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn keeps_go_cross_file_interface_factory_returns_fail_closed_when_factory_is_ambiguous() {
+    let dir = temporary_dir();
+    let source_path = dir.join("caller.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\nfunc caller() error { return NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("first.go"),
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("second.go"),
+        "package metrics\n\ntype Other interface { Run(value int) error }\nfunc NewWorker() Other { return nil }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_cross_file_concrete_factory_methods_from_gaining_method_edges() {
+    let dir = temporary_dir();
+    let source_path = dir.join("caller.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\nfunc caller() int { return NewCounter().Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("counter.go"),
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewCounter() Counter { return Counter{} }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+    let factory = trace_symbol_graph(&dir, "NewCounter", TraceDirection::Callers).unwrap();
+    assert_eq!(factory.callers.len(), 1);
+    assert_eq!(factory.callers[0].symbol_id, "caller");
+}
