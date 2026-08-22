@@ -4844,3 +4844,22 @@ fn keeps_go_cross_file_concrete_factory_methods_from_gaining_method_edges() {
     assert_eq!(factory.callers.len(), 1);
     assert_eq!(factory.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn keeps_go_cross_file_named_result_factory_methods_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("caller.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\nfunc caller() error { return NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("factory.go"),
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() (worker Worker) { return nil }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
