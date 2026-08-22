@@ -14238,6 +14238,9 @@ fn resolve_go_factory_return_method_reference(
         return Ok(None);
     };
     if factory_name.contains('.') {
+        if go_indexed_function_returns_pointer(factory_symbol) {
+            return Ok(None);
+        }
         return resolve_go_imported_factory_return_method_reference(
             source_symbol,
             factory_name,
@@ -14338,6 +14341,28 @@ fn resolve_go_imported_factory_return_method_reference(
         })
         .collect::<Vec<_>>();
     Ok((interface_candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn go_indexed_function_returns_pointer(symbol: &IndexedSymbol) -> bool {
+    if symbol.node_kind != "function_declaration" {
+        return false;
+    }
+    let Some(signature) = symbol
+        .signature
+        .as_deref()
+        .and_then(|value| value.strip_prefix("func "))
+    else {
+        return false;
+    };
+    let Some(result) = signature.split_once(')').map(|(_, result)| result.trim()) else {
+        return false;
+    };
+    let result = if let Some(result) = result.strip_prefix('(') {
+        result.strip_suffix(')').map(str::trim).unwrap_or_default()
+    } else {
+        result
+    };
+    result.starts_with('*')
 }
 
 fn go_indexed_function_return_type(symbol: &IndexedSymbol) -> Option<String> {
