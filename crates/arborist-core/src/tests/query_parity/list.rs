@@ -550,6 +550,36 @@ fn list_symbols_discovery_context_uses_dirty_vfs_overrides() {
 }
 
 #[test]
+fn lists_go_interface_method_symbols_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\n",
+    )
+    .unwrap();
+
+    let live = list_symbols(&dir, 10).unwrap();
+    assert_eq!(live.total_symbols, 2);
+    assert!(
+        live.symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "Worker::Run")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = list_symbols_from_index(&db_path, 10).unwrap();
+    assert_eq!(persisted.total_symbols, 2);
+    assert!(
+        persisted
+            .symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "Worker::Run")
+    );
+}
+
+#[test]
 fn lists_go_symbols_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
