@@ -4652,3 +4652,25 @@ fn keeps_go_qualified_embedded_interface_methods_fail_closed() {
     let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
     assert!(live.callers.is_empty());
 }
+
+#[test]
+fn traces_go_embedded_interface_methods_when_embedding_has_comments() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Base interface { Run() error }\ntype Worker interface { Base // inherited\n}\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Base::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
