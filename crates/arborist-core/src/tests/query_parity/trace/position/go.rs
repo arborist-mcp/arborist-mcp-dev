@@ -3176,6 +3176,26 @@ fn traces_go_range_element_receivers_from_make_collections() {
 }
 
 #[test]
+fn keeps_go_shadowed_make_range_receivers_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc caller() int { make := func(int) []Counter { return nil }; for _, counter := range make(1) { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_range_element_receivers_from_named_collection_types() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

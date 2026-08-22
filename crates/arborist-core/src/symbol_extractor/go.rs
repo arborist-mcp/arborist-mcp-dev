@@ -617,20 +617,42 @@ fn go_range_element_type(
     collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
     local_type_alias_targets: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
+    go_range_element_type_with_bindings(
+        node,
+        source,
+        local_type_names,
+        collection_type_elements,
+        collection_type_definitions,
+        local_type_alias_targets,
+        None,
+    )
+}
+
+fn go_range_element_type_with_bindings(
+    node: Node<'_>,
+    source: &str,
+    local_type_names: &BTreeSet<String>,
+    collection_type_elements: &BTreeMap<String, String>,
+    collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_alias_targets: &BTreeMap<String, String>,
+    bindings: Option<&BTreeSet<String>>,
+) -> Result<Option<String>> {
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
         && node_text(function, source)?.trim() == "make"
+        && bindings.is_none_or(|names| !names.contains("make"))
         && let Some(arguments) = node.child_by_field_name("arguments")
     {
         let mut cursor = arguments.walk();
         if let Some(collection_type) = arguments.named_children(&mut cursor).next() {
-            return go_range_element_type(
+            return go_range_element_type_with_bindings(
                 collection_type,
                 source,
                 local_type_names,
                 collection_type_elements,
                 collection_type_definitions,
                 local_type_alias_targets,
+                bindings,
             );
         }
     }
@@ -1068,13 +1090,14 @@ fn collect_go_var_spec_types(
     }
 
     if let Some(type_node) = spec.child_by_field_name("type") {
-        if let Some(element_type) = go_range_element_type(
+        if let Some(element_type) = go_range_element_type_with_bindings(
             type_node,
             source,
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
             context.local_type_alias_targets,
+            Some(context.bindings),
         )? {
             for name in &names {
                 insert_go_local_collection_type(
@@ -1115,13 +1138,14 @@ fn collect_go_var_spec_types(
         return Ok(());
     }
     for (name, value) in names.into_iter().zip(values) {
-        if let Some(element_type) = go_range_element_type(
+        if let Some(element_type) = go_range_element_type_with_bindings(
             value,
             source,
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
             context.local_type_alias_targets,
+            Some(context.bindings),
         )? {
             insert_go_local_collection_type(
                 local_collection_types,
@@ -1182,13 +1206,14 @@ fn collect_go_short_variable_declaration_types(
         if name.is_empty() || name == "_" {
             continue;
         }
-        if let Some(element_type) = go_range_element_type(
+        if let Some(element_type) = go_range_element_type_with_bindings(
             value,
             source,
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
             context.local_type_alias_targets,
+            Some(context.bindings),
         )? {
             insert_go_local_collection_type(
                 local_collection_types,
