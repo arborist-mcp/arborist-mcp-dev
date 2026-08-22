@@ -123,9 +123,9 @@ mod tests {
             SourceQueryRoot::Workspace(&workspace),
             &path,
             "def helper():\n    return 2\n",
-            Some(100),
+            Some(1000),
             |context, deadline| {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(Duration::from_millis(1500));
                 context.trace_symbol_graph_with_deadline("helper", TraceDirection::Both, deadline)
             },
         )
@@ -153,9 +153,9 @@ mod tests {
             SourceQueryRoot::Workspace(&workspace),
             &path,
             "def helper():\n    return 2\n",
-            Some(100),
+            Some(1000),
             |context, deadline| {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(Duration::from_millis(1500));
                 context.list_symbols_with_deadline(10, None, None, deadline)
             },
         )
@@ -183,9 +183,9 @@ mod tests {
             SourceQueryRoot::Workspace(&workspace),
             &path,
             "def helper():\n    return 2\n",
-            Some(100),
+            Some(1000),
             |context, deadline| {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(Duration::from_millis(1500));
                 context.search_symbols_with_deadline("helper", 10, None, None, deadline)
             },
         )
@@ -213,9 +213,9 @@ mod tests {
             SourceQueryRoot::Workspace(&workspace),
             &path,
             "def helper():\n    return 2\n",
-            Some(100),
+            Some(1000),
             |context, deadline| {
-                thread::sleep(Duration::from_millis(150));
+                thread::sleep(Duration::from_millis(1500));
                 context.read_symbol_with_deadline("helper", deadline)
             },
         )
