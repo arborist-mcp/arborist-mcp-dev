@@ -652,6 +652,12 @@ fn go_range_key_type(
     {
         return Ok(Some(key_type));
     }
+    if node.kind() == "parenthesized_expression" {
+        let mut cursor = node.walk();
+        if let Some(inner) = node.named_children(&mut cursor).next() {
+            return go_range_key_type(inner, source, local_collection_types, context);
+        }
+    }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
         && node_text(function, source)?.trim() == "make"
@@ -768,6 +774,20 @@ fn go_range_element_type_with_bindings(
         if let Some(collection_type) = arguments.named_children(&mut cursor).next() {
             return go_range_element_type_with_bindings(
                 collection_type,
+                source,
+                local_type_names,
+                collection_type_elements,
+                collection_type_definitions,
+                local_type_alias_targets,
+                bindings,
+            );
+        }
+    }
+    if node.kind() == "parenthesized_expression" {
+        let mut cursor = node.walk();
+        if let Some(inner) = node.named_children(&mut cursor).next() {
+            return go_range_element_type_with_bindings(
+                inner,
                 source,
                 local_type_names,
                 collection_type_elements,
