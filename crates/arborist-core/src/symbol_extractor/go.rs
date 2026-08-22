@@ -2332,7 +2332,13 @@ fn go_imported_factory_call_name(
     let Some(mut function) = operand.child_by_field_name("function") else {
         return Ok(None);
     };
-    while matches!(function.kind(), "generic_type" | "parenthesized_expression") {
+    // Instantiation calls parse differently by position: `pkg.New[T](...)`
+    // yields an `index_expression` in expression position, while
+    // `(pkg.New[T])(...)` keeps a `generic_type` behind parentheses.
+    while matches!(
+        function.kind(),
+        "generic_type" | "parenthesized_expression" | "index_expression"
+    ) {
         let Some(inner) = function.named_child(0) else {
             return Ok(None);
         };
