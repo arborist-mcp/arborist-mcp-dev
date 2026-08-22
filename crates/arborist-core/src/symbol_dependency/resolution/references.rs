@@ -14386,11 +14386,13 @@ fn go_direct_embedded_interface_types(signature: Option<&str>) -> Vec<String> {
         return Vec::new();
     };
     body.split([';', '\n', '\r'])
-        .filter_map(|clause| {
-            let clause = clause.trim();
-            (go_simple_identifier(clause)).then(|| clause.to_string())
-        })
+        .filter_map(go_embedded_interface_name)
         .collect()
+}
+
+fn go_embedded_interface_name(clause: &str) -> Option<String> {
+    let clause = clause.split("//").next()?.split("/*").next()?.trim();
+    go_simple_identifier(clause).then(|| clause.to_string())
 }
 
 fn resolve_go_same_package_reference(
