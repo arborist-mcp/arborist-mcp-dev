@@ -13894,7 +13894,7 @@ fn go_interface_declaration_status(
             || !candidate
                 .signature
                 .as_deref()
-                .is_some_and(|signature| signature.contains("interface"))
+                .is_some_and(go_signature_declares_interface)
         {
             continue;
         }
@@ -13920,6 +13920,29 @@ fn go_interface_declaration_status(
     } else {
         GoNamedTypeDeclaration::Absent
     })
+}
+
+fn go_signature_declares_interface(signature: &str) -> bool {
+    let declaration = signature
+        .strip_prefix("type ")
+        .map_or(signature, str::trim_start);
+    let Some(name_end) = declaration
+        .char_indices()
+        .find_map(|(index, character)| character.is_whitespace().then_some(index))
+    else {
+        return false;
+    };
+    let mut type_expression = declaration[name_end..].trim_start();
+    if let Some(alias_target) = type_expression.strip_prefix('=') {
+        type_expression = alias_target.trim_start();
+    }
+    let Some(remainder) = type_expression.strip_prefix("interface") else {
+        return false;
+    };
+    remainder
+        .chars()
+        .next()
+        .is_none_or(|character| character == '{' || character.is_whitespace())
 }
 
 fn resolve_go_same_package_type_alias_method_reference(
