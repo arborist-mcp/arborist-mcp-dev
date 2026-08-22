@@ -3154,6 +3154,48 @@ fn traces_go_range_element_receivers_from_explicit_collection_types() {
 }
 
 #[test]
+fn traces_go_range_element_receivers_from_named_collection_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters []Counter\ntype Indexed map[string]*Counter\ntype Alias Counters\nfunc caller(values Alias, indexed Indexed) int { for _, counter := range values { return counter.Value() }; for _, counter := range indexed { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn keeps_go_named_collection_aliases_fail_closed_when_unresolved_or_cyclic() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Unknowns []Unknown\ntype LoopA LoopB\ntype LoopB LoopA\nfunc caller(values Unknowns, loop LoopA) int { for _, counter := range values { return counter.Value() }; for _, counter := range loop { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_local_collection_range_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
