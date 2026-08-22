@@ -3025,4 +3025,46 @@ func caller() error { return NewWorker().Run(1) }
             })
         );
     }
+
+    #[test]
+    fn indexes_go_imported_factory_method_reference_facts_with_factory_metadata() {
+        let source = r#"
+package main
+
+import svc "example.com/project/internal/service"
+
+func caller() error { return svc.NewWorker().Run(1) }
+"#;
+        let path = Path::new("main.go");
+        let document = crate::language::parse_document(path, source).unwrap();
+        let symbols =
+            index_go_symbols_with_deadline(path, source, document.tree.root_node(), None).unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+
+        assert_eq!(
+            caller.references_by_name,
+            [
+                "svc.NewWorker".to_string(),
+                "svc.NewWorker::Run".to_string()
+            ]
+            .into()
+        );
+        let method_fact = caller
+            .reference_facts
+            .iter()
+            .find(|fact| fact.spelling == "svc.NewWorker::Run")
+            .unwrap();
+        assert_eq!(
+            method_fact.language_details,
+            ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: false,
+                type_assertion: false,
+                factory_return: true,
+                factory_name: Some("svc.NewWorker".to_string()),
+            })
+        );
+    }
 }
