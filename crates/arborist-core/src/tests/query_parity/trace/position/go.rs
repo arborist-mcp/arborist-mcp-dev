@@ -3176,6 +3176,28 @@ fn traces_go_range_element_receivers_from_make_collections() {
 }
 
 #[test]
+fn traces_go_range_element_receivers_from_local_make_bindings() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters[T any] []T\nfunc caller() int { values := make([]Counter, 1); indexed := make(map[string]Counter); streams := make(chan Counter); generic := make(Counters[Counter], 1); for _, counter := range values { return counter.Value() }; for _, counter := range indexed { return counter.Value() }; for _, counter := range streams { return counter.Value() }; for _, counter := range generic { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn keeps_go_shadowed_make_range_receivers_fail_closed() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
