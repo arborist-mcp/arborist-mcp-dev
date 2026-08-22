@@ -124,6 +124,7 @@ struct GoLocalVariableType {
 #[derive(Clone)]
 struct GoCollectionTypeDefinition {
     parameters: Vec<String>,
+    key_type: Option<String>,
     element_type: Option<String>,
     target_type: Option<String>,
     target_arguments: Vec<String>,
@@ -131,6 +132,7 @@ struct GoCollectionTypeDefinition {
 
 #[derive(Clone)]
 struct GoLocalCollectionType {
+    key_type_name: Option<String>,
     element_type_name: String,
     available_after: usize,
     scope_range: (usize, usize),
@@ -374,17 +376,30 @@ fn go_named_parameter_collection_types(
         let Some(type_node) = parameter.child_by_field_name("type") else {
             continue;
         };
-        let Some(element_type_name) = go_range_element_type(
+        let element_type_name = go_range_element_type(
             type_node,
             source,
             local_type_names,
             collection_type_elements,
             collection_type_definitions,
             local_type_alias_targets,
-        )?
-        else {
+        )?;
+        let key_type_name = go_range_key_type(
+            type_node,
+            source,
+            &BTreeMap::new(),
+            &GoLocalVariableTypeContext {
+                local_type_names,
+                collection_type_elements,
+                collection_type_definitions,
+                local_type_alias_targets,
+                local_factory_return_types: &BTreeMap::new(),
+                bindings: &BTreeSet::new(),
+            },
+        )?;
+        if element_type_name.is_none() && key_type_name.is_none() {
             continue;
-        };
+        }
         let mut name_cursor = parameter.walk();
         for name in parameter.children_by_field_name("name", &mut name_cursor) {
             let name = node_text(name, source)?.trim();
@@ -394,7 +409,8 @@ fn go_named_parameter_collection_types(
             insert_go_local_collection_type(
                 &mut collection_types,
                 name.to_string(),
-                element_type_name.clone(),
+                key_type_name.clone(),
+                element_type_name.clone().unwrap_or_default(),
                 parameter.end_byte(),
                 scope_range,
             );
@@ -582,7 +598,7 @@ fn collect_go_range_clause_types(
     if names.is_empty() || names.len() > 2 {
         return Ok(());
     }
-    let key_type = go_range_key_type(right, source, context)?;
+    let key_type = go_range_key_type(right, source, local_collection_types, context)?;
     if let Some(key_type) = key_type {
         let name = &names[0];
         if !name.is_empty() && name != "_" {
@@ -628,8 +644,14 @@ fn collect_go_range_clause_types(
 fn go_range_key_type(
     node: Node<'_>,
     source: &str,
+    local_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
     context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<Option<String>> {
+    if node.kind() == "identifier"
+        && let Some(key_type) = go_local_collection_key_type(node, source, local_collection_types)
+    {
+        return Ok(Some(key_type));
+    }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
         && node_text(function, source)?.trim() == "make"
@@ -638,7 +660,7 @@ fn go_range_key_type(
     {
         let mut cursor = arguments.walk();
         if let Some(collection_type) = arguments.named_children(&mut cursor).next() {
-            return go_range_key_type(collection_type, source, context);
+            return go_range_key_type(collection_type, source, local_collection_types, context);
         }
     }
     let type_node = if node.kind() == "composite_literal" {
@@ -649,14 +671,49 @@ fn go_range_key_type(
     let Some(type_node) = type_node else {
         return Ok(None);
     };
-    if type_node.kind() == "pointer_type" || type_node.kind() == "parenthesized_type" {
+    if matches!(type_node.kind(), "pointer_type" | "parenthesized_type") {
         let mut cursor = type_node.walk();
         return Ok(type_node
             .named_children(&mut cursor)
             .next()
-            .map(|inner| go_range_key_type(inner, source, context))
+            .map(|inner| go_range_key_type(inner, source, local_collection_types, context))
             .transpose()?
             .flatten());
+    }
+    let (name, arguments) = if type_node.kind() == "type_identifier" {
+        (node_text(type_node, source)?.trim().to_string(), Vec::new())
+    } else if type_node.kind() == "generic_type" {
+        let Some(base_node) = type_node.child_by_field_name("type") else {
+            return Ok(None);
+        };
+        let Some(arguments_node) = type_node.child_by_field_name("type_arguments") else {
+            return Ok(None);
+        };
+        let mut cursor = arguments_node.walk();
+        let arguments = arguments_node
+            .named_children(&mut cursor)
+            .filter(|argument| argument.kind() == "type_elem")
+            .filter_map(|argument| argument.named_child(0))
+            .map(|argument| go_named_local_type(argument, source))
+            .collect::<Result<Option<Vec<_>>>>()?;
+        let Some(arguments) = arguments else {
+            return Ok(None);
+        };
+        (node_text(base_node, source)?.trim().to_string(), arguments)
+    } else {
+        (String::new(), Vec::new())
+    };
+    if !name.is_empty() {
+        if let Some(key_type) = go_resolve_collection_instantiation_key(
+            &name,
+            &arguments,
+            context.collection_type_definitions,
+            context.local_type_names,
+            context.local_type_alias_targets,
+            &mut BTreeSet::new(),
+        ) {
+            return Ok(Some(key_type));
+        }
     }
     let Some(key_node) = (type_node.kind() == "map_type")
         .then(|| type_node.child_by_field_name("key"))
@@ -965,35 +1022,49 @@ fn source_file_collection_type_definitions(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let (element_type, target_type, target_arguments) = if let Some(element_node) =
-                go_direct_collection_element_node(type_node)
-            {
-                (go_named_local_type(element_node, source)?, None, Vec::new())
-            } else if type_node.kind() == "generic_type" {
-                let Some(target_node) = type_node.child_by_field_name("type") else {
-                    continue;
+            let (key_type, element_type, target_type, target_arguments) =
+                if let Some(element_node) = go_direct_collection_element_node(type_node) {
+                    (
+                        go_direct_collection_key_node(type_node)
+                            .map(|node| go_named_local_type(node, source))
+                            .transpose()?
+                            .flatten(),
+                        go_named_local_type(element_node, source)?,
+                        None,
+                        Vec::new(),
+                    )
+                } else if type_node.kind() == "generic_type" {
+                    let Some(target_node) = type_node.child_by_field_name("type") else {
+                        continue;
+                    };
+                    let Some(arguments_node) = type_node.child_by_field_name("type_arguments")
+                    else {
+                        continue;
+                    };
+                    let mut argument_cursor = arguments_node.walk();
+                    let target_arguments = arguments_node
+                        .named_children(&mut argument_cursor)
+                        .filter(|argument| argument.kind() == "type_elem")
+                        .filter_map(|argument| argument.named_child(0))
+                        .map(|argument| go_named_local_type(argument, source))
+                        .collect::<Result<Option<Vec<_>>>>()?;
+                    let Some(target_arguments) = target_arguments else {
+                        continue;
+                    };
+                    (
+                        None,
+                        None,
+                        Some(node_text(target_node, source)?.trim().to_string()),
+                        target_arguments,
+                    )
+                } else {
+                    (
+                        None,
+                        None,
+                        go_named_local_type(type_node, source)?,
+                        Vec::new(),
+                    )
                 };
-                let Some(arguments_node) = type_node.child_by_field_name("type_arguments") else {
-                    continue;
-                };
-                let mut argument_cursor = arguments_node.walk();
-                let target_arguments = arguments_node
-                    .named_children(&mut argument_cursor)
-                    .filter(|argument| argument.kind() == "type_elem")
-                    .filter_map(|argument| argument.named_child(0))
-                    .map(|argument| go_named_local_type(argument, source))
-                    .collect::<Result<Option<Vec<_>>>>()?;
-                let Some(target_arguments) = target_arguments else {
-                    continue;
-                };
-                (
-                    None,
-                    Some(node_text(target_node, source)?.trim().to_string()),
-                    target_arguments,
-                )
-            } else {
-                (None, go_named_local_type(type_node, source)?, Vec::new())
-            };
             if element_type.is_none() && target_type.is_none() {
                 continue;
             }
@@ -1002,6 +1073,7 @@ fn source_file_collection_type_definitions(
                 .or_default()
                 .push(GoCollectionTypeDefinition {
                     parameters,
+                    key_type,
                     element_type,
                     target_type,
                     target_arguments,
@@ -1014,6 +1086,58 @@ fn source_file_collection_type_definitions(
             (definitions.len() == 1).then(|| (name, definitions[0].clone()))
         })
         .collect())
+}
+
+fn go_resolve_collection_instantiation_key(
+    name: &str,
+    arguments: &[String],
+    definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_names: &BTreeSet<String>,
+    local_type_alias_targets: &BTreeMap<String, String>,
+    visited: &mut BTreeSet<String>,
+) -> Option<String> {
+    let key = format!("{name}[{}]", arguments.join(","));
+    if !visited.insert(key) {
+        return None;
+    }
+    let definition = definitions.get(name)?;
+    if definition.parameters.len() != arguments.len() {
+        return None;
+    }
+    let substitutions = definition
+        .parameters
+        .iter()
+        .cloned()
+        .zip(arguments.iter().cloned())
+        .collect::<BTreeMap<_, _>>();
+    if let Some(key_type) = &definition.key_type {
+        let key_type = substitutions
+            .get(key_type)
+            .cloned()
+            .unwrap_or_else(|| key_type.clone());
+        let key_type =
+            go_resolve_local_type_alias(&key_type, local_type_names, local_type_alias_targets)?;
+        return local_type_names.contains(&key_type).then_some(key_type);
+    }
+    let target_type = definition.target_type.as_ref()?;
+    let target_arguments = definition
+        .target_arguments
+        .iter()
+        .map(|argument| {
+            substitutions
+                .get(argument)
+                .cloned()
+                .unwrap_or_else(|| argument.clone())
+        })
+        .collect::<Vec<_>>();
+    go_resolve_collection_instantiation_key(
+        target_type,
+        &target_arguments,
+        definitions,
+        local_type_names,
+        local_type_alias_targets,
+        visited,
+    )
 }
 
 fn go_resolve_collection_instantiation_element(
@@ -1077,6 +1201,12 @@ fn go_resolve_collection_instantiation_element(
         local_type_alias_targets,
         visited,
     )
+}
+
+fn go_direct_collection_key_node(node: Node<'_>) -> Option<Node<'_>> {
+    (node.kind() == "map_type")
+        .then(|| node.child_by_field_name("key"))
+        .flatten()
 }
 
 fn go_direct_collection_element_node(node: Node<'_>) -> Option<Node<'_>> {
@@ -1182,6 +1312,7 @@ fn collect_go_var_spec_types(
     }
 
     if let Some(type_node) = spec.child_by_field_name("type") {
+        let key_type = go_range_key_type(type_node, source, local_collection_types, context)?;
         if let Some(element_type) = go_range_element_type_with_bindings(
             type_node,
             source,
@@ -1195,6 +1326,7 @@ fn collect_go_var_spec_types(
                 insert_go_local_collection_type(
                     local_collection_types,
                     name.clone(),
+                    key_type.clone(),
                     element_type.clone(),
                     spec.end_byte(),
                     scope_range,
@@ -1230,6 +1362,7 @@ fn collect_go_var_spec_types(
         return Ok(());
     }
     for (name, value) in names.into_iter().zip(values) {
+        let key_type = go_range_key_type(value, source, local_collection_types, context)?;
         if let Some(element_type) = go_range_element_type_with_bindings(
             value,
             source,
@@ -1242,6 +1375,7 @@ fn collect_go_var_spec_types(
             insert_go_local_collection_type(
                 local_collection_types,
                 name.clone(),
+                key_type,
                 element_type,
                 spec.end_byte(),
                 scope_range,
@@ -1295,6 +1429,7 @@ fn collect_go_short_variable_declaration_types(
         return Ok(());
     }
     for (name, value) in names.into_iter().zip(values) {
+        let key_type = go_range_key_type(value, source, local_collection_types, context)?;
         if name.is_empty() || name == "_" {
             continue;
         }
@@ -1310,6 +1445,7 @@ fn collect_go_short_variable_declaration_types(
             insert_go_local_collection_type(
                 local_collection_types,
                 name.clone(),
+                key_type,
                 element_type,
                 declaration.end_byte(),
                 scope_range,
@@ -1449,6 +1585,7 @@ fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
 fn insert_go_local_collection_type(
     local_collection_types: &mut BTreeMap<String, Vec<GoLocalCollectionType>>,
     name: String,
+    key_type_name: Option<String>,
     element_type_name: String,
     available_after: usize,
     scope_range: (usize, usize),
@@ -1459,10 +1596,38 @@ fn insert_go_local_collection_type(
         return;
     }
     entries.push(GoLocalCollectionType {
+        key_type_name,
         element_type_name,
         available_after,
         scope_range,
     });
+}
+
+fn go_local_collection_key_type(
+    operand: Node<'_>,
+    source: &str,
+    local_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
+) -> Option<String> {
+    let name = node_text(operand, source).ok()?.trim();
+    let candidates = local_collection_types.get(name)?;
+    let mut candidates = candidates
+        .iter()
+        .filter(|entry| !entry.element_type_name.is_empty())
+        .filter(|entry| {
+            entry.available_after <= operand.start_byte()
+                && entry.scope_range.0 <= operand.start_byte()
+                && operand.end_byte() <= entry.scope_range.1
+        })
+        .filter_map(|entry| entry.key_type_name.as_ref().map(|key| (entry, key)))
+        .collect::<Vec<_>>();
+    let best_scope_size = candidates
+        .iter()
+        .map(|(entry, _)| entry.scope_range.1.saturating_sub(entry.scope_range.0))
+        .min()?;
+    candidates.retain(|(entry, _)| {
+        entry.scope_range.1.saturating_sub(entry.scope_range.0) == best_scope_size
+    });
+    (candidates.len() == 1).then(|| candidates[0].1.clone())
 }
 
 fn go_local_collection_element_type(
