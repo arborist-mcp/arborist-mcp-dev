@@ -3287,6 +3287,31 @@ fn traces_go_map_range_key_receivers_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_go_nested_parenthesized_range_sources() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\nfunc (Counter) Value() int { return 2 }\nfunc caller() int { for key := range (((map[Key]Counter{}))) { return key.Value() }; for _, counter := range (((make([]Counter, 1)))) { return counter.Value() }; for _, counter := range (((make(chan Counter)))) { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let key = trace_symbol_graph(&dir, "Key::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(key.callers.len(), 1);
+    let counter = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(counter.callers.len(), 1);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let key =
+        trace_symbol_graph_from_index(&db_path, "Key::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(key.callers.len(), 1);
+    let counter =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(counter.callers.len(), 1);
+}
+
+#[test]
 fn traces_go_parenthesized_map_range_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
