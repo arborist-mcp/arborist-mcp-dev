@@ -703,17 +703,17 @@ fn go_range_key_type(
     } else {
         (String::new(), Vec::new())
     };
-    if !name.is_empty() {
-        if let Some(key_type) = go_resolve_collection_instantiation_key(
+    if !name.is_empty()
+        && let Some(key_type) = go_resolve_collection_instantiation_key(
             &name,
             &arguments,
             context.collection_type_definitions,
             context.local_type_names,
             context.local_type_alias_targets,
             &mut BTreeSet::new(),
-        ) {
-            return Ok(Some(key_type));
-        }
+        )
+    {
+        return Ok(Some(key_type));
     }
     let Some(key_node) = (type_node.kind() == "map_type")
         .then(|| type_node.child_by_field_name("key"))
