@@ -108,6 +108,7 @@ enum GoDirectMethodReference {
         method_path: String,
         factory_name: String,
     },
+    FactoryCall(String),
     TypeConversion {
         method_path: String,
         conversion_call_start: usize,
@@ -158,6 +159,7 @@ struct GoDirectCallContext<'a> {
     parameter_types: &'a BTreeMap<String, String>,
     local_variable_types: &'a BTreeMap<String, Vec<GoLocalVariableType>>,
     local_factory_return_types: &'a BTreeMap<String, String>,
+    local_interface_type_names: &'a BTreeSet<String>,
     function_body_range: (usize, usize),
     body_bindings: &'a BTreeSet<String>,
 }
@@ -238,6 +240,7 @@ fn collect_direct_local_calls(
         &local_type_names,
         &local_type_alias_targets,
     )?;
+    let local_interface_type_names = source_file_interface_type_names(symbol_node, source)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
     let parameter_collection_types = go_named_parameter_collection_types(
@@ -274,6 +277,7 @@ fn collect_direct_local_calls(
         parameter_types: &parameter_types,
         local_variable_types: &local_variable_types,
         local_factory_return_types: &local_factory_return_types,
+        local_interface_type_names: &local_interface_type_names,
         function_body_range: (body.start_byte(), body.end_byte()),
         body_bindings: &body_bindings,
     };
@@ -1920,6 +1924,45 @@ fn go_single_function_result_type(result: Node<'_>, source: &str) -> Result<Opti
         .map(Option::flatten)
 }
 
+fn source_file_interface_type_names(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut interface_names = BTreeSet::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        let specs = match child.kind() {
+            "type_alias" => vec![child],
+            "type_declaration" => {
+                let mut declaration_cursor = child.walk();
+                child
+                    .named_children(&mut declaration_cursor)
+                    .filter(|spec| matches!(spec.kind(), "type_spec" | "type_alias"))
+                    .collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        };
+        for spec in specs {
+            let (Some(name_node), Some(type_node)) = (
+                spec.child_by_field_name("name"),
+                spec.child_by_field_name("type"),
+            ) else {
+                continue;
+            };
+            let name = node_text(name_node, source)?.trim();
+            if !name.is_empty() && type_node.kind() == "interface_type" {
+                interface_names.insert(name.to_string());
+            }
+        }
+    }
+    Ok(interface_names)
+}
+
 fn source_file_function_return_types(
     symbol_node: Node<'_>,
     source: &str,
@@ -2194,6 +2237,9 @@ fn go_direct_method_reference(
             factory_name,
         }));
     }
+    if let Some(factory_name) = go_factory_name_for_receiver(operand, source, context) {
+        return Ok(Some(GoDirectMethodReference::FactoryCall(factory_name)));
+    }
     let Some((type_name, conversion_call_start)) = go_type_conversion_receiver(operand, source)?
     else {
         return Ok(None);
@@ -2234,7 +2280,27 @@ fn go_factory_return_receiver(
     let Some(return_type) = context.local_factory_return_types.get(&function_name) else {
         return Ok(None);
     };
+    if !context.local_interface_type_names.contains(return_type) {
+        return Ok(None);
+    }
     Ok(Some((return_type.clone(), function_name)))
+}
+
+fn go_factory_name_for_receiver(
+    operand: Node<'_>,
+    source: &str,
+    context: &GoDirectCallContext<'_>,
+) -> Option<String> {
+    if operand.kind() != "call_expression" {
+        return None;
+    }
+    let function = operand.child_by_field_name("function")?;
+    let function_name = go_local_function_name(function, source).ok()??;
+    (!context.bindings.contains(&function_name)
+        && context
+            .local_factory_return_types
+            .contains_key(&function_name))
+    .then_some(function_name)
 }
 
 fn go_type_assertion_receiver(operand: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -2374,6 +2440,9 @@ fn collect_direct_local_calls_from_node(
                             factory_name,
                         } => {
                             references.references_by_name.insert(method_path);
+                            references.references_by_name.insert(factory_name);
+                        }
+                        GoDirectMethodReference::FactoryCall(factory_name) => {
                             references.references_by_name.insert(factory_name);
                         }
                         GoDirectMethodReference::TypeConversion {

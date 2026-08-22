@@ -14228,7 +14228,7 @@ fn resolve_go_same_package_method_reference(
     {
         return Ok(None);
     }
-    resolve_go_same_package_reference(
+    let direct = resolve_go_same_package_reference(
         source_symbol,
         GoSamePackageReferenceTarget {
             reference_name,
@@ -14239,7 +14239,158 @@ fn resolve_go_same_package_method_reference(
         file_overrides,
         go_import_contexts_by_file,
         deadline,
+    )?;
+    if direct.is_some() {
+        return Ok(direct);
+    }
+    resolve_go_direct_embedded_interface_method_reference(
+        source_symbol,
+        receiver_type,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_go_direct_embedded_interface_method_reference(
+    source_symbol: &IndexedSymbol,
+    receiver_type: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if !matches!(
+        go_interface_declaration_status(
+            source_symbol,
+            receiver_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        ),
+        Ok(GoNamedTypeDeclaration::Unique)
+    ) {
+        return Ok(None);
+    }
+
+    let Some(caller_package_name) = go_package_name_for_source_file(
+        &source_symbol.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(caller_directory) = Path::new(&source_symbol.file_path)
+        .parent()
+        .map(normalize_path)
+    else {
+        return Ok(None);
+    };
+    let declarations = semantic_path_index
+        .get(receiver_type)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            matches!(candidate.node_kind.as_str(), "type_spec" | "type_alias")
+                && candidate.semantic_path == receiver_type
+                && is_production_go_source_file(&candidate.file_path)
+                && Path::new(&candidate.file_path)
+                    .parent()
+                    .map(normalize_path)
+                    .as_deref()
+                    == Some(caller_directory.as_str())
+        })
+        .collect::<Vec<_>>();
+    if declarations.len() != 1 {
+        return Ok(None);
+    }
+    let declaration = &raw_symbols[declarations[0]];
+    let Some(package_name) = go_package_name_for_source_file(
+        &declaration.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if package_name != caller_package_name {
+        return Ok(None);
+    }
+
+    let parent_types = go_direct_embedded_interface_types(declaration.signature.as_deref());
+    let mut resolved = BTreeSet::new();
+    for parent_type in parent_types {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go embedded interface method")?;
+        }
+        if !matches!(
+            go_interface_declaration_status(
+                source_symbol,
+                &parent_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            ),
+            Ok(GoNamedTypeDeclaration::Unique)
+        ) {
+            continue;
+        }
+        let parent_path = format!("{parent_type}::{method_name}");
+        let parent_indexes = semantic_path_index
+            .get(&parent_path)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(symbol_id) = resolve_go_same_package_reference(
+            source_symbol,
+            GoSamePackageReferenceTarget {
+                reference_name: &parent_path,
+                node_kind: "method_declaration",
+                candidate_indexes: &parent_indexes,
+            },
+            raw_symbols,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )? {
+            resolved.insert(symbol_id);
+        }
+    }
+    Ok((resolved.len() == 1).then(|| resolved.into_iter().next().unwrap()))
+}
+
+fn go_direct_embedded_interface_types(signature: Option<&str>) -> Vec<String> {
+    let Some(signature) = signature else {
+        return Vec::new();
+    };
+    let Some(body) = signature
+        .split_once("interface")
+        .and_then(|(_, remainder)| remainder.split_once('{'))
+        .and_then(|(_, remainder)| remainder.rsplit_once('}'))
+        .map(|(body, _)| body)
+    else {
+        return Vec::new();
+    };
+    body.split(|character: char| character == ';' || character == '\n' || character == '\r')
+        .filter_map(|clause| {
+            let clause = clause.trim();
+            (go_simple_identifier(clause)).then(|| clause.to_string())
+        })
+        .collect()
 }
 
 fn resolve_go_same_package_reference(
