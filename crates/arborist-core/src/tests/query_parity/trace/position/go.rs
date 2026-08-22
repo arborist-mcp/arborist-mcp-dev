@@ -3198,6 +3198,26 @@ fn traces_go_generic_named_collection_range_receivers() {
 }
 
 #[test]
+fn keeps_go_generic_collection_ranges_fail_closed_when_arguments_are_unknown_or_ambiguous() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters[T any] []T\ntype Loop[T any] Loop[T]\nfunc caller(unknown Counters[Missing], loop Loop[Counter]) int { for _, counter := range unknown { return counter.Value() }; for _, counter := range loop { return counter.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_named_collection_range_receivers_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
