@@ -2273,6 +2273,36 @@ fn traces_go_imported_interface_factory_returns() {
 }
 
 #[test]
+fn traces_go_imported_interface_factory_returns_with_declared_package_name() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport \"example.com/project/internal/service\"\n\nfunc caller() error { return service.NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+#[test]
 fn keeps_go_imported_concrete_factory_methods_fail_closed() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");
