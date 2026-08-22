@@ -485,6 +485,27 @@ func (counter *Counter) Increment(amount int) int { return counter.value + amoun
 }
 
 #[test]
+fn builds_go_interface_method_skeleton_symbols() {
+    let source = r#"
+package metrics
+
+type Worker interface {
+    Run(value int) error
+}
+"#;
+    let skeleton = get_semantic_skeleton(Path::new("metrics.go"), source, 2, &[]).unwrap();
+
+    assert_eq!(skeleton.available_paths, vec!["Worker", "Worker::Run"]);
+    let run = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Worker::Run")
+        .unwrap();
+    assert_eq!(run.parameters, vec!["value int"]);
+    assert_eq!(run.return_type.as_deref(), Some("error"));
+}
+
+#[test]
 fn builds_kotlin_skeleton_through_public_entrypoint() {
     let source = r#"
 package demo.tools
