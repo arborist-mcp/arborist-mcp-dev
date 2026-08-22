@@ -140,6 +140,7 @@ struct GoLocalVariableTypeContext<'a> {
     local_type_names: &'a BTreeSet<String>,
     collection_type_elements: &'a BTreeMap<String, String>,
     collection_type_definitions: &'a BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_alias_targets: &'a BTreeMap<String, String>,
     local_factory_return_types: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
 }
@@ -238,6 +239,7 @@ fn collect_direct_local_calls(
         &local_type_names,
         &collection_type_elements,
         &collection_type_definitions,
+        &local_type_alias_targets,
         (body.start_byte(), body.end_byte()),
     )?;
     let mut bindings = BTreeSet::new();
@@ -251,6 +253,7 @@ fn collect_direct_local_calls(
         &parameter_collection_types,
         &collection_type_elements,
         &collection_type_definitions,
+        &local_type_alias_targets,
     )?;
     let mut body_bindings = BTreeSet::new();
     collect_body_bindings(body, source, &mut body_bindings)?;
@@ -353,6 +356,7 @@ fn go_named_parameter_collection_types(
     local_type_names: &BTreeSet<String>,
     collection_type_elements: &BTreeMap<String, String>,
     collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_alias_targets: &BTreeMap<String, String>,
     scope_range: (usize, usize),
 ) -> Result<BTreeMap<String, Vec<GoLocalCollectionType>>> {
     let Some(parameters) = symbol_node.child_by_field_name("parameters") else {
@@ -373,6 +377,7 @@ fn go_named_parameter_collection_types(
             local_type_names,
             collection_type_elements,
             collection_type_definitions,
+            local_type_alias_targets,
         )?
         else {
             continue;
@@ -443,6 +448,7 @@ fn go_function_body_local_variable_types(
     parameter_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
     collection_type_elements: &BTreeMap<String, String>,
     collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_alias_targets: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, Vec<GoLocalVariableType>>> {
     let mut local_variable_types = BTreeMap::new();
     let mut local_collection_types = parameter_collection_types.clone();
@@ -452,6 +458,7 @@ fn go_function_body_local_variable_types(
         local_type_names,
         collection_type_elements,
         collection_type_definitions,
+        local_type_alias_targets,
         local_factory_return_types,
         bindings,
     };
@@ -591,6 +598,7 @@ fn collect_go_range_clause_types(
         context.local_type_names,
         context.collection_type_elements,
         context.collection_type_definitions,
+        context.local_type_alias_targets,
     )?
     .or_else(|| go_local_collection_element_type(right, source, local_collection_types));
     let Some(element_type) = element_type else {
@@ -617,6 +625,7 @@ fn go_range_element_type(
     local_type_names: &BTreeSet<String>,
     collection_type_elements: &BTreeMap<String, String>,
     collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
+    local_type_alias_targets: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
     let type_node = if node.kind() == "composite_literal" {
         node.child_by_field_name("type")
@@ -640,6 +649,7 @@ fn go_range_element_type(
             collection_type_definitions,
             local_type_names,
             collection_type_elements,
+            local_type_alias_targets,
             &mut BTreeSet::new(),
         ));
     }
@@ -667,6 +677,7 @@ fn go_range_element_type(
             collection_type_definitions,
             local_type_names,
             collection_type_elements,
+            local_type_alias_targets,
             &mut BTreeSet::new(),
         ));
     }
@@ -890,6 +901,7 @@ fn go_resolve_collection_instantiation_element(
     definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
     local_type_names: &BTreeSet<String>,
     collection_type_elements: &BTreeMap<String, String>,
+    local_type_alias_targets: &BTreeMap<String, String>,
     visited: &mut BTreeSet<String>,
 ) -> Option<String> {
     let key = format!("{name}[{}]", arguments.join(","));
@@ -941,6 +953,7 @@ fn go_resolve_collection_instantiation_element(
         definitions,
         local_type_names,
         collection_type_elements,
+        local_type_alias_targets,
         visited,
     )
 }
@@ -1054,6 +1067,7 @@ fn collect_go_var_spec_types(
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
+            context.local_type_alias_targets,
         )? {
             for name in &names {
                 insert_go_local_collection_type(
@@ -1100,6 +1114,7 @@ fn collect_go_var_spec_types(
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
+            context.local_type_alias_targets,
         )? {
             insert_go_local_collection_type(
                 local_collection_types,
@@ -1166,6 +1181,7 @@ fn collect_go_short_variable_declaration_types(
             context.local_type_names,
             context.collection_type_elements,
             context.collection_type_definitions,
+            context.local_type_alias_targets,
         )? {
             insert_go_local_collection_type(
                 local_collection_types,
