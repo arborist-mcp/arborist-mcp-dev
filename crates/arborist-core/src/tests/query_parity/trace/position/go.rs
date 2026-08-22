@@ -4674,3 +4674,18 @@ fn traces_go_embedded_interface_methods_when_embedding_has_comments() {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn traces_go_embedded_interface_method_when_other_parent_lacks_method() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Base interface { Run() error }\ntype Other interface { Stop() error }\ntype Worker interface { Base; Other }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+}
