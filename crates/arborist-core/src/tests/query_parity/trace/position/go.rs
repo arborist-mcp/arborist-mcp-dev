@@ -3267,6 +3267,26 @@ fn traces_go_named_and_generic_map_range_key_receivers() {
 }
 
 #[test]
+fn keeps_go_map_range_key_receivers_fail_closed_when_type_resolution_is_uncertain() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\ntype Generic[K comparable] map[K]Counter\ntype CyclicA CyclicB\ntype CyclicB CyclicA\ntype Ambiguous map[Key]Counter\ntype Ambiguous map[string]Counter\nfunc caller(unknown Generic[Missing], cyclic CyclicA, ambiguous Ambiguous) int { for key := range unknown { return key.Value() }; for key := range cyclic { return key.Value() }; for key := range ambiguous { return key.Value() }; return 0 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Key::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Key::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_go_range_element_receivers_from_make_collections() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
