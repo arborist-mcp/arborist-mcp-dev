@@ -424,12 +424,13 @@ fn resolve_reference_path_with_deadline<'a>(
             .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
             .collect::<Vec<_>>();
         if candidates.len() == 1 {
-            let receiver_is_unique =
-                reference_name
+            let candidate = &raw_symbols[candidates[0]];
+            let interface_method_is_unambiguous = candidate.node_kind != "method_elem"
+                || reference_name
                     .split_once("::")
-                    .is_none_or(|(receiver_type, _)| {
+                    .is_some_and(|(receiver_type, _)| {
                         matches!(
-                            go_named_type_declaration_status(
+                            go_interface_declaration_status(
                                 source_symbol,
                                 receiver_type,
                                 raw_symbols,
@@ -441,8 +442,8 @@ fn resolve_reference_path_with_deadline<'a>(
                             Ok(GoNamedTypeDeclaration::Unique)
                         )
                     });
-            if receiver_is_unique {
-                return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+            if interface_method_is_unambiguous {
+                return Ok(Some(candidate.symbol_id.clone()));
             }
         }
         if let Some((receiver_type, method_name)) = reference_name.split_once("::")
@@ -13851,6 +13852,76 @@ fn go_named_type_declaration_status(
     })
 }
 
+fn go_interface_declaration_status(
+    source_symbol: &IndexedSymbol,
+    receiver_type: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<GoNamedTypeDeclaration> {
+    let Some(caller_package_name) = go_package_name_for_source_file(
+        &source_symbol.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(GoNamedTypeDeclaration::Ambiguous);
+    };
+    let Some(caller_directory) = Path::new(&source_symbol.file_path)
+        .parent()
+        .map(normalize_path)
+    else {
+        return Ok(GoNamedTypeDeclaration::Ambiguous);
+    };
+
+    let mut declaration_count = 0;
+    for index in semantic_path_index.get(receiver_type).into_iter().flatten() {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go interface method receiver")?;
+        }
+        let candidate = &raw_symbols[*index];
+        if !matches!(candidate.node_kind.as_str(), "type_spec" | "type_alias")
+            || candidate.semantic_path != receiver_type
+            || !is_production_go_source_file(&candidate.file_path)
+            || Path::new(&candidate.file_path)
+                .parent()
+                .map(normalize_path)
+                .as_deref()
+                != Some(caller_directory.as_str())
+            || !candidate
+                .signature
+                .as_deref()
+                .is_some_and(|signature| signature.contains("interface"))
+        {
+            continue;
+        }
+        let Some(candidate_package_name) = go_package_name_for_source_file(
+            &candidate.file_path,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if candidate_package_name == caller_package_name {
+            declaration_count += 1;
+            if declaration_count > 1 {
+                return Ok(GoNamedTypeDeclaration::Ambiguous);
+            }
+        }
+    }
+
+    Ok(if declaration_count == 1 {
+        GoNamedTypeDeclaration::Unique
+    } else {
+        GoNamedTypeDeclaration::Absent
+    })
+}
+
 fn resolve_go_same_package_type_alias_method_reference(
     source_symbol: &IndexedSymbol,
     reference_name: &str,
@@ -14111,24 +14182,29 @@ fn resolve_go_same_package_method_reference(
     {
         return Ok(None);
     }
-    if !matches!(
-        go_named_type_declaration_status(
-            source_symbol,
-            receiver_type,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            go_import_contexts_by_file,
-            deadline,
-        ),
-        Ok(GoNamedTypeDeclaration::Unique)
-    ) {
-        return Ok(None);
-    }
     let candidate_indexes = semantic_path_index
         .get(reference_name)
         .cloned()
         .unwrap_or_default();
+    let has_interface_method_candidate = candidate_indexes
+        .iter()
+        .any(|index| raw_symbols[*index].node_kind == "method_elem");
+    if has_interface_method_candidate
+        && !matches!(
+            go_interface_declaration_status(
+                source_symbol,
+                receiver_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            ),
+            Ok(GoNamedTypeDeclaration::Unique)
+        )
+    {
+        return Ok(None);
+    }
     resolve_go_same_package_reference(
         source_symbol,
         GoSamePackageReferenceTarget {
@@ -14199,7 +14275,10 @@ fn resolve_go_same_package_reference(
         }
     }
 
-    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()))
 }
 
 fn is_production_go_source_file(file_path: &str) -> bool {
