@@ -3159,7 +3159,11 @@ fn traces_go_pointer_array_range_receivers_from_dirty_vfs_overrides() {
     let caller_path = dir.join("caller.go");
     let method_path = dir.join("counter.go");
     let db_path = dir.join("symbols.db");
-    fs::write(&caller_path, "package metrics\n\nfunc stale() int { return 0 }\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
     fs::write(
         &method_path,
         "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
