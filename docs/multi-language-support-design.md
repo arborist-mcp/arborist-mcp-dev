@@ -151,7 +151,7 @@ fn require_capability(
 | Python, C, C++ | Preserve current behavior | Migration only; no intentional reduction. |
 | JavaScript/TypeScript | Query, skeleton, symbols, conservative direct-call trace including static local named imports, named re-export chains, default imports that name a module's default export, namespace member calls that follow the bound module's named and star re-export chains and default exports, star re-export chains, and static local module dependency refresh; language-specific patch binding validation follows in a later adapter slice. | Dynamic imports, bundler aliases, framework injection, rich type-driven dispatch. |
 | Rust | Query, skeleton, symbols, module dependencies, patch targeting; selected direct-call trace | Macro expansion, trait-method dispatch, complete Cargo feature resolution. |
-| Go | Query, skeleton, symbols, package imports, direct-call trace, patch targeting | Interface dispatch and build-tag-aware workspace modes. |
+| Go | Query, skeleton, symbols, package imports, direct-call trace including bounded same-file interface method specifications and unique same-file factory-result method calls, patch targeting | General interface dispatch, interface embedding/implementation dispatch, and build-tag-aware workspace modes. |
 | Java | Query, skeleton, symbols, package/import dependencies, direct-call trace, patch targeting | Full Maven/Gradle classpath and type hierarchy resolution. |
 | Configuration/template languages | Query and selected structured references | General symbol graph and automatic code patching. |
 
