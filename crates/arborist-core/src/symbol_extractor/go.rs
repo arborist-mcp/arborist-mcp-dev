@@ -2305,12 +2305,13 @@ fn go_factory_return_receiver(
     if context.local_type_names.contains(&function_name) {
         return Ok(None);
     }
-    let method_receiver_name = context
-        .local_factory_return_types
-        .get(&function_name)
-        .filter(|return_type| context.local_interface_type_names.contains(*return_type))
-        .cloned()
-        .unwrap_or_else(|| function_name.clone());
+    let method_receiver_name = match context.local_factory_return_types.get(&function_name) {
+        Some(return_type) if context.local_interface_type_names.contains(return_type) => {
+            return_type.clone()
+        }
+        Some(_) => return Ok(None),
+        None => function_name.clone(),
+    };
     Ok(Some((method_receiver_name, function_name)))
 }
 
