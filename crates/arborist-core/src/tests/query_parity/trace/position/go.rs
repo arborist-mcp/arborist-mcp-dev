@@ -4882,3 +4882,22 @@ fn keeps_go_cross_file_multi_result_factory_methods_fail_closed() {
     let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
     assert!(live.callers.is_empty());
 }
+
+#[test]
+fn keeps_go_cross_file_factory_returns_fail_closed_when_factory_name_is_shadowed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("caller.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc caller(NewWorker func() Worker) error { return NewWorker().Run(1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("factory.go"),
+        "package metrics\nfunc NewWorker() Worker { return nil }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
