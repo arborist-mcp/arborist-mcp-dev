@@ -3251,7 +3251,7 @@ fn traces_go_named_and_generic_map_range_key_receivers() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\nfunc (Counter) Value() int { return 2 }\ntype Entries map[Key]Counter\ntype Alias Entries\ntype Generic[T any] map[Key]T\ntype GenericAlias[T any] = Generic[T]\ntype Concrete = GenericAlias[Counter]\nfunc caller(entries Entries, aliases Alias, generic Generic[Counter], concrete Concrete) int { for key := range entries { return key.Value() }; for key := range aliases { return key.Value() }; for key := range generic { return key.Value() }; for key := range concrete { return key.Value() }; return 0 }\n",
+        "package metrics\n\ntype Key struct{}\ntype Counter struct{}\nfunc (Key) Value() int { return 1 }\nfunc (Counter) Value() int { return 2 }\ntype Entries map[Key]Counter\ntype Alias Entries\ntype Generic[T any] map[Key]T\ntype GenericAlias[T any] = Generic[T]\ntype Concrete = GenericAlias[Counter]\nfunc caller(entries Entries, aliases Alias, generic Generic[Counter], concrete Concrete) int { local := Entries{}; var explicit Entries; for key := range entries { return key.Value() }; for key := range aliases { return key.Value() }; for key := range generic { return key.Value() }; for key := range concrete { return key.Value() }; for key := range local { return key.Value() }; for key := range explicit { return key.Value() }; return 0 }\n",
     )
     .unwrap();
 
