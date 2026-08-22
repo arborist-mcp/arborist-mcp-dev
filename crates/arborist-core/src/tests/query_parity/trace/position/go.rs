@@ -4515,3 +4515,69 @@ fn keeps_go_directly_embedded_interface_method_calls_fail_closed_for_ambiguous_p
     let right = trace_symbol_graph(&dir, "Right::Run", TraceDirection::Callers).unwrap();
     assert!(right.callers.is_empty());
 }
+
+#[test]
+fn traces_go_directly_embedded_interface_methods_across_same_package_files() {
+    let dir = temporary_dir();
+    let base_path = dir.join("base.go");
+    let worker_path = dir.join("worker.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &base_path,
+        "package metrics\n\ntype Base interface { Run() error }\n",
+    )
+    .unwrap();
+    fs::write(
+        &worker_path,
+        "package metrics\n\ntype Worker interface { Base }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Base::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn traces_go_directly_embedded_interface_methods_across_same_package_files_from_dirty_vfs() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let base_path = dir.join("base.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() error { return nil }\n",
+    )
+    .unwrap();
+    fs::write(&base_path, "package metrics\n\n").unwrap();
+    let overlay = "package metrics\n\ntype Base interface { Run() error }\ntype Worker interface { Base }\nfunc caller(worker Worker) error { return worker.Run() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Base::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Base::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
