@@ -3160,7 +3160,7 @@ fn traces_go_range_element_receivers_from_named_collection_types() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters []Counter\ntype Indexed map[string]*Counter\ntype Alias Counters\ntype DirectAlias = []*Counter\nfunc caller(values Alias, indexed Indexed, direct DirectAlias) int { for _, counter := range values { return counter.Value() }; for _, counter := range indexed { return counter.Value() }; for _, counter := range direct { return counter.Value() }; return 0 }\n",
+        "package metrics\n\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\ntype Counters []Counter\ntype Indexed map[string]*Counter\ntype Alias Counters\ntype DirectAlias = []*Counter\ntype Fixed [1]Counter\ntype Stream chan Counter\nfunc caller(values Alias, indexed Indexed, direct DirectAlias, fixed Fixed, stream Stream) int { for _, counter := range values { return counter.Value() }; for _, counter := range indexed { return counter.Value() }; for _, counter := range direct { return counter.Value() }; for _, counter := range fixed { return counter.Value() }; for _, counter := range stream { return counter.Value() }; return 0 }\n",
     )
     .unwrap();
 
