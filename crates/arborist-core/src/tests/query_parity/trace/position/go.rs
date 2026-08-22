@@ -1689,6 +1689,31 @@ fn traces_go_interface_typed_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn keeps_go_generic_local_factory_calls_fail_closed_when_shadowed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker[T any]() Worker { return nil }\nfunc caller() error { NewWorker := func() Worker { return nil }; return NewWorker[int]().Run(1) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+    let factory_live = trace_symbol_graph(&dir, "NewWorker", TraceDirection::Callers).unwrap();
+    assert!(factory_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "NewWorker", TraceDirection::Callers).unwrap();
+    assert!(factory_persisted.callers.is_empty());
+}
+
+#[test]
 fn keeps_go_interface_factory_calls_fail_closed_for_ambiguous_factory_returns() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
