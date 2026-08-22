@@ -104,6 +104,10 @@ struct GoDirectReferences {
 enum GoDirectMethodReference {
     Plain(String),
     TypeAssertion(String),
+    FactoryReturn {
+        method_path: String,
+        factory_name: String,
+    },
     TypeConversion {
         method_path: String,
         conversion_call_start: usize,
@@ -153,6 +157,7 @@ struct GoDirectCallContext<'a> {
     method_receiver: Option<&'a GoMethodReceiver>,
     parameter_types: &'a BTreeMap<String, String>,
     local_variable_types: &'a BTreeMap<String, Vec<GoLocalVariableType>>,
+    local_factory_return_types: &'a BTreeMap<String, String>,
     function_body_range: (usize, usize),
     body_bindings: &'a BTreeSet<String>,
 }
@@ -268,6 +273,7 @@ fn collect_direct_local_calls(
         method_receiver: method_receiver.as_ref(),
         parameter_types: &parameter_types,
         local_variable_types: &local_variable_types,
+        local_factory_return_types: &local_factory_return_types,
         function_body_range: (body.start_byte(), body.end_byte()),
         body_bindings: &body_bindings,
     };
@@ -2179,6 +2185,15 @@ fn go_direct_method_reference(
             "{type_name}::{method_name}"
         ))));
     }
+    if let Some((type_name, factory_name)) = go_factory_return_receiver(operand, source, context)? {
+        if go_type_name_is_shadowed(&type_name, context.bindings) {
+            return Ok(None);
+        }
+        return Ok(Some(GoDirectMethodReference::FactoryReturn {
+            method_path: format!("{type_name}::{method_name}"),
+            factory_name,
+        }));
+    }
     let Some((type_name, conversion_call_start)) = go_type_conversion_receiver(operand, source)?
     else {
         return Ok(None);
@@ -2197,6 +2212,29 @@ fn go_type_name_is_shadowed(type_name: &str, bindings: &BTreeSet<String>) -> boo
         || type_name
             .split_once('.')
             .is_some_and(|(package_name, _)| bindings.contains(package_name))
+}
+
+fn go_factory_return_receiver(
+    operand: Node<'_>,
+    source: &str,
+    context: &GoDirectCallContext<'_>,
+) -> Result<Option<(String, String)>> {
+    if operand.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let Some(function) = operand.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    let Some(function_name) = go_local_function_name(function, source)? else {
+        return Ok(None);
+    };
+    if context.bindings.contains(&function_name) {
+        return Ok(None);
+    }
+    let Some(return_type) = context.local_factory_return_types.get(&function_name) else {
+        return Ok(None);
+    };
+    Ok(Some((return_type.clone(), function_name)))
 }
 
 fn go_type_assertion_receiver(operand: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -2330,6 +2368,13 @@ fn collect_direct_local_calls_from_node(
                             references
                                 .type_assertion_method_references
                                 .insert(method_path);
+                        }
+                        GoDirectMethodReference::FactoryReturn {
+                            method_path,
+                            factory_name,
+                        } => {
+                            references.references_by_name.insert(method_path);
+                            references.references_by_name.insert(factory_name);
                         }
                         GoDirectMethodReference::TypeConversion {
                             method_path,
@@ -2705,8 +2750,6 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
             ("pointer_conversion", "Scalar::Value"),
             ("parenthesized_conversion", "Scalar::Value"),
             ("generic_conversion", "Box::Value"),
-            ("factory_method", "Factory::Value"),
-            ("parenthesized_factory_method", "Factory::Value"),
         ] {
             let caller = symbols
                 .iter()
@@ -2731,6 +2774,32 @@ func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value
                 "{caller_path}"
             );
         }
+
+        let factory_method = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "factory_method")
+            .unwrap();
+        assert_eq!(
+            factory_method.references_by_name,
+            ["Factory".to_string(), "Result::Value".to_string()].into()
+        );
+        assert_eq!(
+            factory_method
+                .reference_facts
+                .iter()
+                .map(|fact| fact.spelling.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Factory", "Result::Value"]
+        );
+
+        let parenthesized_factory_method = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "parenthesized_factory_method")
+            .unwrap();
+        assert_eq!(
+            parenthesized_factory_method.references_by_name,
+            ["Factory".to_string(), "Result::Value".to_string()].into()
+        );
 
         let shadowed_conversion = symbols
             .iter()
