@@ -4689,3 +4689,41 @@ fn traces_go_embedded_interface_method_when_other_parent_lacks_method() {
     assert_eq!(live.callers.len(), 1);
     assert_eq!(live.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn traces_go_embedded_interface_method_with_absent_sibling_from_dirty_vfs() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let stale_path = dir.join("stale.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() error { return nil }\n",
+    )
+    .unwrap();
+    fs::write(&stale_path, "package metrics\n").unwrap();
+    let overlay = "package metrics\n\ntype Base interface { Run() error }\ntype Other interface { Stop() error }\ntype Worker interface { Base; Other }\nfunc caller(worker Worker) error { return worker.Run() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Base::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Base::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
