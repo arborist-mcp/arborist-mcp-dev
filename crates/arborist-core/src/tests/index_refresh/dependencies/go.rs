@@ -64,3 +64,40 @@ fn refreshes_go_same_package_direct_call_dependents() {
     assert_eq!(stats.rebuilt_files, 3);
     assert_eq!(stats.reused_files, 0);
 }
+
+#[test]
+fn refreshes_go_embedded_interface_dependents_across_same_package_files() {
+    let dir = temporary_dir();
+    let base = dir.join("base.go");
+    let worker = dir.join("worker.go");
+    let unrelated = dir.join("unrelated.go");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &base,
+        "package metrics\ntype Base interface { Run() error }\n",
+    )
+    .unwrap();
+    fs::write(
+        &worker,
+        "package metrics\ntype Worker interface { Base }\nfunc Caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package metrics\nfunc Unrelated() int { return 0 }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &base,
+        "package metrics\ntype Base interface { Run() error; Stop() error }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &base).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 0);
+}
