@@ -578,9 +578,9 @@ for response shapes, error behavior, and examples.
   context validation and multi-file edit previews.
 - Session-scoped VFS with open/change/close, virtual patching, commit/discard,
   and incremental Tree-sitter edits.
-- Python/C workspace symbol graph indexing, listing, searching, reading,
+- Multi-language workspace symbol graph indexing, listing, searching, reading,
   tracing, bounded neighborhood context, and optional cooperative budgets for
-  direct read and trace queries.
+  direct read and trace queries across the supported languages.
 - JavaScript, TypeScript, and TSX Tree-sitter parsing, query execution,
   semantic skeletons, conservative direct-call tracing through local named imports,
   named re-export chains, default imports that name a module's default export,
