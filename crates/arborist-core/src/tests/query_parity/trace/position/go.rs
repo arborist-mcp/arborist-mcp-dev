@@ -4624,3 +4624,31 @@ fn keeps_go_cross_file_embedded_interface_methods_fail_closed_when_parent_is_amb
     let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
     assert!(live.callers.is_empty());
 }
+
+#[test]
+fn keeps_go_multilevel_embedded_interface_methods_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Root interface { Run() error }\ntype Middle interface { Root }\ntype Worker interface { Middle }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Root::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
+
+#[test]
+fn keeps_go_qualified_embedded_interface_methods_fail_closed() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Base interface { Run() error }\ntype Worker interface { other.Base }\nfunc caller(worker Worker) error { return worker.Run() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Base::Run", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+}
