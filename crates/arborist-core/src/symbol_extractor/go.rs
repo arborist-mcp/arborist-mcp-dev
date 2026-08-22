@@ -244,16 +244,19 @@ fn collect_direct_local_calls(
     )?;
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
+    let variable_type_context = GoLocalVariableTypeContext {
+        local_type_names: &local_type_names,
+        collection_type_elements: &collection_type_elements,
+        collection_type_definitions: &collection_type_definitions,
+        local_type_alias_targets: &local_type_alias_targets,
+        local_factory_return_types: &local_factory_return_types,
+        bindings: &bindings,
+    };
     let local_variable_types = go_function_body_local_variable_types(
         body,
         source,
-        &local_type_names,
-        &local_factory_return_types,
-        &bindings,
         &parameter_collection_types,
-        &collection_type_elements,
-        &collection_type_definitions,
-        &local_type_alias_targets,
+        &variable_type_context,
     )?;
     let mut body_bindings = BTreeSet::new();
     collect_body_bindings(body, source, &mut body_bindings)?;
@@ -442,26 +445,13 @@ fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
 fn go_function_body_local_variable_types(
     body: Node<'_>,
     source: &str,
-    local_type_names: &BTreeSet<String>,
-    local_factory_return_types: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
     parameter_collection_types: &BTreeMap<String, Vec<GoLocalCollectionType>>,
-    collection_type_elements: &BTreeMap<String, String>,
-    collection_type_definitions: &BTreeMap<String, GoCollectionTypeDefinition>,
-    local_type_alias_targets: &BTreeMap<String, String>,
+    context: &GoLocalVariableTypeContext<'_>,
 ) -> Result<BTreeMap<String, Vec<GoLocalVariableType>>> {
     let mut local_variable_types = BTreeMap::new();
     let mut local_collection_types = parameter_collection_types.clone();
     let mut ambiguous_names = BTreeSet::new();
     let function_body_range = (body.start_byte(), body.end_byte());
-    let context = GoLocalVariableTypeContext {
-        local_type_names,
-        collection_type_elements,
-        collection_type_definitions,
-        local_type_alias_targets,
-        local_factory_return_types,
-        bindings,
-    };
     collect_go_local_variable_types_in_scope(
         body,
         source,
@@ -469,7 +459,7 @@ fn go_function_body_local_variable_types(
         &mut local_variable_types,
         &mut local_collection_types,
         &mut ambiguous_names,
-        &context,
+        context,
     )?;
     for name in ambiguous_names {
         local_variable_types.remove(&name);
@@ -924,7 +914,7 @@ fn go_resolve_collection_instantiation_element(
             .cloned()
             .unwrap_or_else(|| element_type.clone());
         let element_type =
-            go_resolve_local_type_alias(&element_type, local_type_names, &BTreeMap::new())?;
+            go_resolve_local_type_alias(&element_type, local_type_names, local_type_alias_targets)?;
         return local_type_names
             .contains(&element_type)
             .then_some(element_type);
