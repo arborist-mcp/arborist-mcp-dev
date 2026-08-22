@@ -2329,9 +2329,21 @@ fn go_imported_factory_call_name(
     if operand.kind() != "call_expression" {
         return Ok(None);
     }
-    let Some(function) = operand.child_by_field_name("function") else {
+    let Some(mut function) = operand.child_by_field_name("function") else {
         return Ok(None);
     };
+    while matches!(function.kind(), "generic_type" | "parenthesized_expression") {
+        let Some(inner) = function.named_child(0) else {
+            return Ok(None);
+        };
+        if inner.kind() == function.kind()
+            && inner.start_byte() == function.start_byte()
+            && inner.end_byte() == function.end_byte()
+        {
+            return Ok(None);
+        }
+        function = inner;
+    }
     if function.kind() != "selector_expression" {
         return Ok(None);
     }
