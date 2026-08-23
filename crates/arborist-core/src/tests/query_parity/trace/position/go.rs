@@ -846,6 +846,31 @@ fn traces_go_grouped_var_factory_receivers() {
 }
 
 #[test]
+fn traces_go_grouped_var_generic_factory_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\ntype Counter struct{}\nfunc (Counter) Value() int { return 1 }\nfunc NewWorker[T any]() Worker { return nil }\nfunc NewCounter() Counter { return Counter{} }\nfunc caller() int { var (\nworker = NewWorker[int]()\ncounter = NewCounter()\n); return worker.Run(1) + counter.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+    let counter_live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(counter_live.callers.len(), 1);
+    assert_eq!(counter_live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_named_result_factory_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
