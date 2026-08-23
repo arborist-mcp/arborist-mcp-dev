@@ -419,6 +419,14 @@ accept an optional cooperative `timeout_ms` budget capped at `300000`
 milliseconds; omitting it preserves the existing behavior. Search matches are
 case-insensitive and can include matched-field metadata for ranking.
 
+When the basic `list_symbols` tool receives `file_path` without `source` or
+`index_db_path`, it uses a single-file fast path: the current VFS/disk snapshot
+for that path is parsed directly and unrelated workspace files are not scanned.
+The result reports `indexed_files: 1` and contains local symbol metadata only;
+it does not provide cross-file dependency or reference resolution. Workspace-wide
+behavior remains available when `file_path` is omitted, and the context/list
+variants retain their existing workspace semantics.
+
 ## Source Overlays
 
 One-shot skeleton, query, patch, trace-context, and position-based read/trace
