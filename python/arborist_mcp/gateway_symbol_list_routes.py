@@ -32,9 +32,16 @@ class GatewaySymbolListRoutes:
         else:
             payload = self._call_with_optional_timeout(
                 core.list_symbols_json,
-                (workspace_root, limit, index_db_path, file_path_contains, node_kind),
+                (
+                    workspace_root,
+                    limit,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    None,
+                ),
                 timeout_ms,
-                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 

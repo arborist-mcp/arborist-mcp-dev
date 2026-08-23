@@ -1,6 +1,7 @@
 use arborist_core::{
     list_symbols_from_index_filtered_with_timeout,
     list_symbols_from_index_with_source_filtered_with_timeout,
+    list_symbols_in_file_with_source_filtered_with_timeout,
     list_symbols_with_source_filtered_with_timeout,
 };
 use pyo3::prelude::*;
@@ -78,6 +79,23 @@ impl ArboristCore {
                 node_kind.as_deref(),
                 timeout_ms,
             ),
+            (None, None) if context.file_path().is_some() => {
+                let file_path = context.required_file_path()?;
+                let snapshot = self
+                    .vfs
+                    .borrow_mut()
+                    .read_file_with_timeout(file_path, timeout_ms)
+                    .map_err(to_py_error)?;
+                list_symbols_in_file_with_source_filtered_with_timeout(
+                    context.workspace_root(),
+                    file_path,
+                    &snapshot.source,
+                    limit,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
             (None, None) => self.vfs.borrow_mut().list_symbols_filtered_with_timeout(
                 context.workspace_root(),
                 limit,

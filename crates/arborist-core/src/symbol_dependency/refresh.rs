@@ -213,7 +213,7 @@ fn raw_symbol_map(symbols: &[IndexedSymbol]) -> BTreeMap<String, IndexedSymbol> 
     map
 }
 
-fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
+pub(crate) fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
     SymbolMeta::new(SymbolMetaInit {
         symbol_id: symbol.symbol_id.clone(),
         semantic_path: symbol.semantic_path.clone(),
