@@ -15,10 +15,12 @@ completed item can land in its own commit unless two changes are inseparable.
 - Multi-language work now has a Phase 1 registry: descriptors, capabilities,
   extension routing, grammar selection, and supported-language reporting for
   Python, C, and C++ share one source of truth while retaining existing paths.
-- The remaining strategic gaps are a first JavaScript/TypeScript adapter,
-  property testing beyond the existing fuzz targets, and broader cancellation
-  coverage for native symbol/trace operations beyond Tree-sitter parse and
-  query execution.
+- The remaining strategic gaps are broader property testing beyond the
+  existing fuzz targets and the new `proptest` suites (language position,
+  path normalization, and VFS edit invariants are covered; patch-preview
+  and persisted-index query properties remain open), plus cancellation
+  coverage for index persistence transactions, which now accept optional
+  cooperative deadlines like the surrounding scan and load paths.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -751,6 +753,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Harden Go patch binding validation for local module imports: resolve only
   uniquely parsed production packages, fail closed on invalid or mismatched
   package directories, and consume the caller's deadline while scanning them.
+- [x] Add proptest-based property coverage for UTF-8 position helpers, path
+  normalization idempotence, VFS byte-edit range semantics, and
+  position-edit/byte-edit equivalence.
+- [x] Extend cooperative deadline coverage to full-rebuild and incremental
+  index persistence transactions.
 
 ## Suggested Commit Sequence
 
