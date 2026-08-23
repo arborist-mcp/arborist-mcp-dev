@@ -479,6 +479,19 @@ entry open with a pending retry instead of losing synchronization state.
 Individual blocking reads, parses, tree traversals, writes, and index operations
 remain non-preemptible.
 
+The lifecycle operations have intentionally different ownership semantics:
+
+- `commit_virtual_file` persists the current buffer, then keeps the virtual entry
+  open and clean. The gateway only permits commits for paths inside its server
+  workspace.
+- `discard_virtual_file` reloads the current disk source, drops buffered edits,
+  and keeps the virtual entry open; it does not write to disk.
+- `did_close` always removes the virtual entry. `persist=true` commits before
+  removal, while `persist=false` discards before removal.
+- `read_virtual_file` is a snapshot/open operation rather than an existence
+  check. If the disk path does not exist, it returns an empty source snapshot and
+  creates the corresponding virtual entry.
+
 ## Patch And Preview Tools
 
 `preview_patch_ast_node` and `preview_patch_ast_node_at_position` run the same

@@ -126,4 +126,24 @@ def _tool_description(tool_name: str, category: str) -> str:
         "index": "Build, refresh, register, or inspect persisted symbol indexes.",
         "trace": "Read trace, graph, or trace-backed validation context.",
     }
-    return f"{category_descriptions[category]} Legacy JSON-RPC method: arborist/{method_name}."
+    base = f"{category_descriptions[category]} Legacy JSON-RPC method: arborist/{method_name}."
+    special_descriptions = {
+        "arborist/commit_virtual_file": (
+            " The path must be inside the server workspace. Commit writes the current "
+            "virtual source to disk and keeps the virtual entry open and clean."
+        ),
+        "arborist/discard_virtual_file": (
+            " Discard restores the current disk source without writing it, and keeps "
+            "the virtual entry open."
+        ),
+        "arborist/did_close": (
+            " With persist=true, the current virtual source is committed before the "
+            "entry is closed; with persist=false, buffered changes are discarded "
+            "before the entry is closed."
+        ),
+        "arborist/read_virtual_file": (
+            " Reading a missing disk file returns an empty virtual snapshot and "
+            "creates a virtual entry; this is not an existence-check operation."
+        ),
+    }
+    return base + special_descriptions.get(tool_name, "")

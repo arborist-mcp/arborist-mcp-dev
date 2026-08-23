@@ -57,6 +57,13 @@ Unknown tool names and malformed `tools/call` envelopes are JSON-RPC `-32602`
 errors. Tool argument validation failures, core validation failures, and core
 runtime errors are returned as MCP tool results with `isError: true`.
 
+These are two protocol-level error envelopes, not two interchangeable result
+shapes: legacy `arborist/*` failures use the JSON-RPC response `error` object
+(with a numeric `code` and `message`), while a recognized MCP `tools/call` that
+fails returns `isError: true` and a text item in `content`. Callers should inspect
+the envelope for the protocol they are using instead of expecting every tool to
+return a successful result object such as `{ "error": ... }`.
+
 ## Tool Catalog
 
 `tools/list` is generated from the gateway's tool catalog and is the source of

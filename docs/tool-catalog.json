@@ -39976,7 +39976,7 @@
   {
     "name": "arborist/did_close",
     "title": "Did Close",
-    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_close.",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_close. With persist=true, the current virtual source is committed before the entry is closed; with persist=false, buffered changes are discarded before the entry is closed.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -40143,7 +40143,7 @@
   {
     "name": "arborist/read_virtual_file",
     "title": "Read Virtual File",
-    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/read_virtual_file.",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/read_virtual_file. Reading a missing disk file returns an empty virtual snapshot and creates a virtual entry; this is not an existence-check operation.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -41222,7 +41222,7 @@
   {
     "name": "arborist/commit_virtual_file",
     "title": "Commit Virtual File",
-    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/commit_virtual_file.",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/commit_virtual_file. The path must be inside the server workspace. Commit writes the current virtual source to disk and keeps the virtual entry open and clean.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -41307,7 +41307,7 @@
   {
     "name": "arborist/discard_virtual_file",
     "title": "Discard Virtual File",
-    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/discard_virtual_file.",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/discard_virtual_file. Discard restores the current disk source without writing it, and keeps the virtual entry open.",
     "inputSchema": {
       "type": "object",
       "properties": {

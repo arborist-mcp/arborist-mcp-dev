@@ -101,7 +101,19 @@ build and the Python suites. It is the fastest everyday loop for core work;
 reserve the full `rust`/`inner-loop`/`check.ps1` gates for checkpoints before
 committing or pushing. Pass `-Jobs N` to `test.ps1` to cap Cargo's parallel
 build jobs (for example `-Jobs 2`) when you want to keep the machine
-responsive while tests run.
+responsive while tests run. On machines with about 4 GiB of RAM, use a
+bounded Cargo job count to reduce peak memory during the Rust/PyO3 build:
+
+```powershell
+$env:CARGO_BUILD_JOBS = "2"
+.\scripts\test.ps1 -Suite gateway-native -Jobs 2
+```
+
+This is a practical constrained-memory configuration, not a measured hard
+minimum for every workspace or toolchain. Full release builds may need more
+memory. For large workspaces, symbol-index resource usage can also be bounded
+with the core scan limits `max_files` and `max_file_bytes` where those options
+are exposed.
 
 The Rust unit suite is large and a few C++ trace scenarios are slow, so prefer
 a targeted filter during development and run the full suite at checkpoints:
