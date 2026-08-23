@@ -2359,11 +2359,26 @@ fn go_imported_factory_call_name(
     source: &str,
     context: &GoDirectCallContext<'_>,
 ) -> Result<Option<String>> {
-    if operand.kind() != "call_expression" {
-        return Ok(None);
-    }
-    let Some(mut function) = operand.child_by_field_name("function") else {
-        return Ok(None);
+    let mut function = match operand.kind() {
+        "call_expression" => {
+            let Some(function) = operand.child_by_field_name("function") else {
+                return Ok(None);
+            };
+            function
+        }
+        // Argument-bearing instantiations such as `svc.NewWorker[int](1)`
+        // parse as type conversions whose type is the instantiated
+        // qualified generic.
+        "type_conversion_expression" => {
+            let Some(type_node) = operand.child_by_field_name("type") else {
+                return Ok(None);
+            };
+            if type_node.kind() != "generic_type" {
+                return Ok(None);
+            }
+            type_node
+        }
+        _ => return Ok(None),
     };
     // Instantiation calls parse differently by position: `pkg.New[T](...)`
     // yields an `index_expression` in expression position, while
@@ -2383,16 +2398,30 @@ fn go_imported_factory_call_name(
         }
         function = inner;
     }
-    if function.kind() != "selector_expression" {
-        return Ok(None);
-    }
-    let Some(package) = function.child_by_field_name("operand") else {
+    let (package_node, name_node, name_kind, package_kind) = match function.kind() {
+        "selector_expression" => (
+            function.child_by_field_name("operand"),
+            function.child_by_field_name("field"),
+            "field_identifier",
+            "identifier",
+        ),
+        // Type-position instantiations keep a qualified type whose
+        // fields are the imported package and the instantiated name.
+        "qualified_type" => (
+            function.child_by_field_name("package"),
+            function.child_by_field_name("name"),
+            "type_identifier",
+            "package_identifier",
+        ),
+        _ => (None, None, "", ""),
+    };
+    let Some(package) = package_node else {
         return Ok(None);
     };
-    let Some(name) = function.child_by_field_name("field") else {
+    let Some(name) = name_node else {
         return Ok(None);
     };
-    if package.kind() != "identifier" || name.kind() != "field_identifier" {
+    if package.kind() != package_kind || name.kind() != name_kind {
         return Ok(None);
     }
     let package_name = node_text(package, source)?.trim();
