@@ -6,6 +6,7 @@ use rusqlite::{Connection, params};
 
 use super::core::{persisted_byte_range, raw_symbol_row_map, reference_names, symbol_row_key};
 use super::metadata::persisted_fingerprint;
+use crate::deadline::DeadlineCheck;
 use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::IndexedSymbol;
@@ -20,9 +21,13 @@ pub(crate) struct SymbolRefreshPersistence<'a> {
     pub(crate) changed_file_paths: &'a BTreeSet<String>,
     pub(crate) impacted_paths: &'a BTreeSet<String>,
     pub(crate) indexed_files: usize,
+    pub(crate) deadline: Option<&'a dyn DeadlineCheck>,
 }
 
 pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
+    if let Some(deadline) = context.deadline {
+        deadline.check("opening symbol index database")?;
+    }
     let connection = Connection::open(context.db_path)?;
     ensure_symbol_tables(&connection)?;
 
@@ -35,10 +40,16 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         .collect();
 
     let tx = connection.unchecked_transaction()?;
+    if let Some(deadline) = context.deadline {
+        deadline.check("persisting symbol index metadata")?;
+    }
     persist_symbol_index_metadata(&tx, context.workspace_root, context.indexed_files)?;
     {
         let mut delete_statement = tx.prepare("DELETE FROM symbols WHERE file_path = ?1")?;
         for changed_file_path in context.changed_file_paths {
+            if let Some(deadline) = context.deadline {
+                deadline.check("deleting stale symbol rows")?;
+            }
             delete_statement.execute([changed_file_path])?;
         }
     }
@@ -54,6 +65,9 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         )?;
 
         for symbol in &changed_symbols {
+            if let Some(deadline) = context.deadline {
+                deadline.check("writing refreshed symbol rows")?;
+            }
             let raw_symbol = raw_symbol_rows
                 .get(&symbol_row_key(symbol))
                 .ok_or_else(|| anyhow!("missing raw symbol for {}", symbol.semantic_path))?;
@@ -88,6 +102,9 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         )?;
 
         for impacted_path in context.impacted_paths {
+            if let Some(deadline) = context.deadline {
+                deadline.check("updating impacted symbol rows")?;
+            }
             let Some(symbol) = context.resolved_symbols_by_id.get(impacted_path) else {
                 continue;
             };
@@ -103,6 +120,9 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
     }
 
     for changed_file_path in context.changed_file_paths {
+        if let Some(deadline) = context.deadline {
+            deadline.check("writing persisted file states")?;
+        }
         tx.execute(
             "DELETE FROM file_state WHERE file_path = ?1",
             [changed_file_path],

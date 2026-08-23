@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use rusqlite::{Connection, params};
 
 use super::metadata::persisted_fingerprint;
+use crate::deadline::DeadlineCheck;
 use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
@@ -16,11 +17,18 @@ pub(crate) fn persist_symbol_index(
     symbols: &[SymbolMeta],
     file_states: &[PersistedFileState],
     indexed_files: usize,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("opening symbol index database")?;
+    }
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
 
     let tx = connection.unchecked_transaction()?;
+    if let Some(deadline) = deadline {
+        deadline.check("persisting symbol index metadata")?;
+    }
     persist_symbol_index_metadata(&tx, workspace_root, indexed_files)?;
     tx.execute("DELETE FROM symbols", [])?;
     tx.execute("DELETE FROM file_state", [])?;
@@ -36,6 +44,9 @@ pub(crate) fn persist_symbol_index(
         )?;
 
         for symbol in symbols {
+            if let Some(deadline) = deadline {
+                deadline.check("writing persisted symbol rows")?;
+            }
             let raw_symbol = raw_symbol_rows
                 .get(&symbol_row_key(symbol))
                 .ok_or_else(|| anyhow!("missing raw symbol for {}", symbol.semantic_path))?;
@@ -66,6 +77,9 @@ pub(crate) fn persist_symbol_index(
             tx.prepare("INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)")?;
 
         for file_state in file_states {
+            if let Some(deadline) = deadline {
+                deadline.check("writing persisted file states")?;
+            }
             statement.execute(params![
                 file_state.file_path,
                 persisted_fingerprint(file_state.fingerprint)?

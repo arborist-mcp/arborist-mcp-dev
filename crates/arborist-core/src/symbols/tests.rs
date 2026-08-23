@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
@@ -14,6 +14,7 @@ use crate::index_store::{
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_workspace::transitive_local_file_dependents;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -54,6 +55,7 @@ fn persist_symbol_index_rolls_back_metadata_on_row_failure() {
         &symbols,
         &file_states,
         1,
+        None,
     )
     .expect_err("invalid rows should abort the full persistence transaction");
 
@@ -102,6 +104,7 @@ fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
         &[symbol],
         &[],
         1,
+        None,
     )
     .expect_err("duplicate raw symbol rows should be rejected");
 
@@ -129,6 +132,7 @@ fn persist_symbol_index_round_trips_full_u64_fingerprint() {
         &[symbol],
         &file_states,
         1,
+        None,
     )
     .expect("full-range fingerprints should persist");
 
@@ -157,6 +161,7 @@ fn persist_symbol_refresh_round_trips_full_u64_fingerprint() {
             fingerprint: 1,
         }],
         1,
+        None,
     )
     .expect("initial index should persist");
 
@@ -170,6 +175,7 @@ fn persist_symbol_refresh_round_trips_full_u64_fingerprint() {
         changed_file_paths: &BTreeSet::from([normalized_file.clone()]),
         impacted_paths: &BTreeSet::new(),
         indexed_files: 1,
+        deadline: None,
     })
     .expect("full-range refresh fingerprints should persist");
 
@@ -204,10 +210,49 @@ fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
         changed_file_paths: &changed_file_paths,
         impacted_paths: &impacted_paths,
         indexed_files: 1,
+        deadline: None,
     })
     .expect_err("invalid rows should abort the full refresh transaction");
 
     assert!(error.to_string().contains("start 8 is after end 4"));
+    assert_eq!(indexed_files_metadata(&db_path), "7");
+}
+
+#[test]
+fn persist_symbol_refresh_checks_expired_deadline_before_writes() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    seed_indexed_files_metadata(&db_path, "7");
+
+    let raw_symbols = vec![valid_indexed_symbol(&normalized_file)];
+    let symbols = vec![valid_symbol_meta(&normalized_file)];
+    let deadline = WorkspaceScanDeadline {
+        deadline: Some(Instant::now() - Duration::from_millis(1)),
+        timeout_ms: Some(1),
+    };
+
+    let error = persist_symbol_refresh(SymbolRefreshPersistence {
+        db_path: &db_path,
+        workspace_root: &workspace,
+        raw_symbols: &raw_symbols,
+        symbols: &symbols,
+        resolved_symbols_by_id: &BTreeMap::new(),
+        file_states: &BTreeMap::from([(normalized_file.clone(), 1)]),
+        changed_file_paths: &BTreeSet::from([normalized_file]),
+        impacted_paths: &BTreeSet::new(),
+        indexed_files: 1,
+        deadline: Some(&deadline),
+    })
+    .expect_err("expired deadline should stop before any persistence work");
+
+    assert!(
+        error
+            .to_string()
+            .contains("workspace scan timeout exceeded")
+    );
     assert_eq!(indexed_files_metadata(&db_path), "7");
 }
 

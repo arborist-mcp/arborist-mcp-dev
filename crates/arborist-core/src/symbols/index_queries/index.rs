@@ -98,6 +98,7 @@ fn rebuild_symbol_index_with_deadline(
         &resolved_symbols,
         &file_states,
         indexed_files,
+        Some(deadline),
     )?;
 
     let result = SymbolIndexStats {
@@ -326,6 +327,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         changed_file_paths: &changed_file_paths,
         impacted_paths: &impacted_paths,
         indexed_files,
+        deadline: Some(&deadline),
     })?;
 
     let result = SymbolIndexStats {
