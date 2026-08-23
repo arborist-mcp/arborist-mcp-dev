@@ -112,4 +112,42 @@ proptest! {
 
         prop_assert_eq!(snapshot.source, format!("{second}{first}{source}"));
     }
+
+    #[test]
+    fn single_position_edit_matches_equivalent_byte_edit(
+        (source, start, end, replacement) in byte_edit_strategy(),
+    ) {
+        prop_assume!(
+            source.is_char_boundary(start) && source.is_char_boundary(end)
+        );
+
+        let position_edits_file = temp_file(&source);
+        let mut position_vfs = VirtualFileSystem::new();
+        position_vfs.read_file(&position_edits_file).unwrap();
+
+        position_vfs
+            .apply_position_edits(
+                &position_edits_file,
+                &[PositionEdit {
+                    start: position_at(&source, start),
+                    end: position_at(&source, end),
+                    new_text: replacement.clone(),
+                }],
+            )
+            .unwrap();
+
+        let byte_edit_file = temp_file(&source);
+        let mut byte_vfs = VirtualFileSystem::new();
+        byte_vfs.read_file(&byte_edit_file).unwrap();
+        byte_vfs
+            .apply_edit(&byte_edit_file, start, end, &replacement)
+            .unwrap();
+
+        let from_positions = position_vfs.read_file(&position_edits_file).unwrap();
+        let from_bytes = byte_vfs.read_file(&byte_edit_file).unwrap();
+        let expected = format!("{}{replacement}{}", &source[..start], &source[end..]);
+
+        prop_assert_eq!(from_positions.source.clone(), expected);
+        prop_assert_eq!(from_positions.source, from_bytes.source);
+    }
 }
