@@ -11,6 +11,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 mod commit_timeout;
 mod cpp_trace;
+mod edit_properties;
 mod edit_timeout;
 mod edits;
 mod lifecycle;
