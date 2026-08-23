@@ -425,6 +425,32 @@ class GatewaySymbolRouteReadTestsMixin:
                 ),
             },
             {
+                "core_method": "list_symbols_json",
+                "rpc_method": "arborist/list_symbols",
+                "request_id": 176,
+                "params": {
+                    "workspace_root": ".",
+                    "limit": 25,
+                    "file_path": "graph_b.py",
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+                "payload": self.make_list_result(),
+                "expected_call": (
+                    ".",
+                    25,
+                    None,
+                    "graph",
+                    "function_definition",
+                    "graph_b.py",
+                    None,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["total_symbols"], 1),
+                    self.assertEqual(result["symbols"][0]["semantic_path"], "helper"),
+                ),
+            },
+            {
                 "core_method": "list_symbols_context_json",
                 "rpc_method": "arborist/list_symbols_context",
                 "request_id": 61,
