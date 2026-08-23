@@ -2299,13 +2299,21 @@ fn go_factory_return_receiver(
     source: &str,
     context: &GoDirectCallContext<'_>,
 ) -> Result<Option<(String, String)>> {
-    if operand.kind() != "call_expression" {
-        return Ok(None);
-    }
-    let Some(function) = operand.child_by_field_name("function") else {
-        return Ok(None);
+    let function_name = match operand.kind() {
+        "call_expression" => {
+            let Some(function) = operand.child_by_field_name("function") else {
+                return Ok(None);
+            };
+            go_local_function_name(function, source)?
+        }
+        // Instantiation calls with arguments such as `NewWorker[int](1)`
+        // parse as type conversions whose type is the instantiated
+        // generic; when the name declares a local factory return type the
+        // conversion shape is really a factory call.
+        "type_conversion_expression" => go_generic_conversion_function_name(operand, source)?,
+        _ => None,
     };
-    let Some(function_name) = go_local_function_name(function, source)? else {
+    let Some(function_name) = function_name else {
         return Ok(None);
     };
     if context.bindings.contains(&function_name) {
@@ -2319,9 +2327,31 @@ fn go_factory_return_receiver(
             return_type.clone()
         }
         Some(_) => return Ok(None),
-        None => function_name.clone(),
+        None => {
+            if operand.kind() == "type_conversion_expression" {
+                return Ok(None);
+            }
+            function_name.clone()
+        }
     };
     Ok(Some((method_receiver_name, function_name)))
+}
+
+fn go_generic_conversion_function_name(operand: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(type_node) = operand.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    if type_node.kind() != "generic_type" {
+        return Ok(None);
+    }
+    let Some(inner) = type_node.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    if inner.kind() != "type_identifier" {
+        return Ok(None);
+    }
+    let name = node_text(inner, source)?.trim();
+    Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
 fn go_imported_factory_call_name(
@@ -2386,11 +2416,18 @@ fn go_factory_name_for_receiver(
     source: &str,
     context: &GoDirectCallContext<'_>,
 ) -> Option<String> {
-    if operand.kind() != "call_expression" {
-        return None;
-    }
-    let function = operand.child_by_field_name("function")?;
-    let function_name = go_local_function_name(function, source).ok()??;
+    let function_name = match operand.kind() {
+        "call_expression" => {
+            let function = operand.child_by_field_name("function")?;
+            go_local_function_name(function, source).ok()?
+        }
+        // See go_generic_conversion_function_name: argument-bearing
+        // instantiation calls parse as type conversions.
+        "type_conversion_expression" => {
+            go_generic_conversion_function_name(operand, source).ok()?
+        }
+        _ => None,
+    }?;
     (!context.bindings.contains(&function_name)
         && context
             .local_factory_return_types

@@ -1382,6 +1382,50 @@ fn traces_go_parenthesized_factory_initialized_local_receivers() {
 }
 
 #[test]
+fn traces_go_generic_factory_with_arguments_and_var_initializers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker[T any](seed int) Worker { return nil }\nfunc directCaller() error { return NewWorker[int](1).Run(2) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "directCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "directCaller");
+}
+
+#[test]
+fn traces_go_generic_factory_var_typed_initializers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Worker interface { Run(value int) error }\nfunc NewWorker[T any](seed int) Worker { return nil }\nfunc varCaller() error { var worker Worker = NewWorker[string](3); return worker.Run(4) }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "varCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Worker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "varCaller");
+}
+
+#[test]
 fn traces_go_generic_factory_initialized_local_receivers() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
