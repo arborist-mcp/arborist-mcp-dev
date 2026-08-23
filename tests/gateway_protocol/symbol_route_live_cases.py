@@ -801,6 +801,37 @@ class GatewaySymbolRouteLiveTestsMixin:
                 any(symbol["semantic_path"] == "helper" for symbol in result["callees"])
             )
 
+    def test_list_symbols_file_target_skips_unrelated_workspace_parse(self) -> None:
+        with self.temp_workspace(
+            {
+                "target.py": "def target():\n    return 1\n",
+                "unrelated.py": "def broken(:\n",
+            }
+        ) as workspace:
+            target = workspace.joinpath("target.py")
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/list_symbols",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(target),
+                        "limit": 10,
+                    },
+                    request_id=87,
+                ),
+                request_id=87,
+            )
+
+            assert isinstance(result, dict)
+            self.assertEqual(result["indexed_files"], 1)
+            self.assertEqual(result["total_symbols"], 1)
+            self.assertEqual(result["symbols"][0]["semantic_path"], "target")
+            self.assertEqual(
+                result["symbols"][0]["file_path"],
+                str(target).replace("\\", "/"),
+            )
+
     def test_list_symbols_accepts_unsaved_source_with_file_anchor(self) -> None:
         with self.temp_workspace(
             {
