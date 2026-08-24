@@ -17,8 +17,11 @@ completed item can land in its own commit unless two changes are inseparable.
   Python, C, and C++ share one source of truth while retaining existing paths.
 - Property coverage now extends beyond the original fuzz targets to language
   position/path/VFS invariants, patch-preview unified-diff structure, and
-  workspace edit preview diff invariants. Cooperative deadline coverage now
-  includes full-rebuild and incremental index persistence transactions.
+  workspace edit preview diff invariants. Model-layer property coverage now
+  includes symbol base-name extraction, kind-rank tiers, point ordering, shared
+  validation helpers, and semantic-skeleton path/symbol alignment. Cooperative
+  deadline coverage now includes full-rebuild and incremental index persistence
+  transactions.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
