@@ -22,6 +22,7 @@ mod index;
 mod misc;
 mod patch;
 mod position;
+mod skeleton_properties;
 mod symbols;
 mod trace;
 mod validation;
