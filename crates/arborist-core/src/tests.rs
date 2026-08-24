@@ -52,6 +52,7 @@ mod c_patching;
 mod c_symbol_graph;
 mod csharp_patching;
 mod go_patching;
+mod index_properties;
 mod index_refresh;
 mod java_patching;
 mod javascript_patching;
