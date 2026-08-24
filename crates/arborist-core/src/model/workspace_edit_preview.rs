@@ -60,6 +60,20 @@ impl WorkspaceEditPreviewResult {
                     "invalid workspace_edit_preview.files[{index}].changed: expected changed to match unified_diff presence"
                 );
             }
+            // Defense in depth: a non-empty diff must contain at least one
+            // changed line; an empty hunk header would report a spurious
+            // content difference.
+            if file.changed
+                && !file
+                    .unified_diff
+                    .lines()
+                    .skip(3)
+                    .any(|line| line.starts_with('-') || line.starts_with('+'))
+            {
+                bail!(
+                    "invalid workspace_edit_preview.files[{index}].unified_diff: non-empty diff must contain changed lines"
+                );
+            }
             file.validation
                 .validate_syntax_only_output(&format!("{field}.validation"))?;
             changed |= file.changed;

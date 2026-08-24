@@ -227,3 +227,47 @@ fn virtual_edit_validation_rejects_non_default_commit_gate() {
             .contains("virtual_edit.validation.commit_gate")
     );
 }
+
+#[test]
+fn workspace_edit_preview_rejects_empty_hunk_diff_with_changed_flag() {
+    let result = WorkspaceEditPreviewResult {
+        changed: true,
+        files: vec![WorkspaceEditPreviewFile {
+            file: "sample.py".to_string(),
+            source: "def top_level() -> int:\n    return 2\n".to_string(),
+            unified_diff: "--- a/sample.py\n+++ b/sample.py\n@@ -1,0 +1,0 @@\n".to_string(),
+            changed: true,
+            validation: PatchValidationReport::default(),
+        }],
+    };
+
+    let error = result
+        .validate_public_output()
+        .expect_err("empty-hunk diff must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("non-empty diff must contain changed lines")
+    );
+}
+
+#[test]
+fn workspace_edit_preview_accepts_valid_diff_with_changed_lines() {
+    let result = WorkspaceEditPreviewResult {
+        changed: true,
+        files: vec![WorkspaceEditPreviewFile {
+            file: "sample.py".to_string(),
+            source: "def top_level() -> int:\n    return 2\n".to_string(),
+            unified_diff:
+                "--- a/sample.py\n+++ b/sample.py\n@@ -1,1 +1,1 @@\n-    return 1\n+    return 2\n"
+                    .to_string(),
+            changed: true,
+            validation: PatchValidationReport::default(),
+        }],
+    };
+
+    result
+        .validate_public_output()
+        .expect("valid diff with changed lines must be accepted");
+}
