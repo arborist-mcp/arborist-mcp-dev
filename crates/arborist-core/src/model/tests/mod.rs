@@ -22,6 +22,7 @@ pub(super) use super::{
 mod context_properties;
 mod index;
 mod misc;
+mod neighborhood_properties;
 mod patch;
 mod position;
 mod query_capture_properties;
