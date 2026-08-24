@@ -26,6 +26,7 @@ mod neighborhood_properties;
 mod patch;
 mod position;
 mod query_capture_properties;
+mod search_properties;
 mod skeleton_properties;
 mod symbols;
 mod trace;
