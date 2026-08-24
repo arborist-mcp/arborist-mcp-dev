@@ -14,7 +14,9 @@ pub(super) use super::{
     VirtualFileSnapshot, VirtualFileStatus, WorkspaceEditPreviewFile, WorkspaceEditPreviewResult,
 };
 
-pub(super) use super::point_is_after;
+pub(super) use super::{
+    ensure_nonblank, ensure_nonblank_strings, ensure_unique_strings, point_is_after,
+};
 
 mod index;
 mod misc;
@@ -22,3 +24,4 @@ mod patch;
 mod position;
 mod symbols;
 mod trace;
+mod validation;
