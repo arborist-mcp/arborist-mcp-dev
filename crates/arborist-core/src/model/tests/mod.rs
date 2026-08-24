@@ -21,6 +21,7 @@ pub(super) use super::{
 
 mod context_properties;
 mod index;
+mod index_health_properties;
 mod list_properties;
 mod misc;
 mod neighborhood_properties;
