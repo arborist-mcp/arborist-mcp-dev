@@ -15,12 +15,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - Multi-language work now has a Phase 1 registry: descriptors, capabilities,
   extension routing, grammar selection, and supported-language reporting for
   Python, C, and C++ share one source of truth while retaining existing paths.
-- The remaining strategic gaps are broader property testing beyond the
-  existing fuzz targets and the new `proptest` suites (language position,
-  path normalization, and VFS edit invariants are covered; patch-preview
-  and persisted-index query properties remain open), plus cancellation
-  coverage for index persistence transactions, which now accept optional
-  cooperative deadlines like the surrounding scan and load paths.
+- Property coverage now extends beyond the original fuzz targets to language
+  position/path/VFS invariants, patch-preview unified-diff structure, and
+  workspace edit preview diff invariants. Cooperative deadline coverage now
+  includes full-rebuild and incremental index persistence transactions.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -756,6 +754,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add proptest-based property coverage for UTF-8 position helpers, path
   normalization idempotence, VFS byte-edit range semantics, and
   position-edit/byte-edit equivalence.
+- [x] Add proptest-based patch-preview unified-diff property coverage
+  (identity, single/multi-line replacement, insertion/deletion, trailing-newline).
+- [x] Add defense-in-depth public output validation to PatchPreviewResult and
+  WorkspaceEditPreviewResult rejecting empty-hunk diffs with changed=true.
 - [x] Extend cooperative deadline coverage to full-rebuild and incremental
   index persistence transactions.
 
