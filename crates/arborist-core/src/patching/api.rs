@@ -489,6 +489,11 @@ fn unified_diff_with_deadline(
 
     let old_changed = &old_lines[prefix_len..old_lines.len() - suffix_len];
     let new_changed = &new_lines[prefix_len..new_lines.len() - suffix_len];
+    if old_changed.is_empty() && new_changed.is_empty() {
+        // Sources can differ only by a trailing line break; .lines() erases
+        // that difference, so no changed lines remain to emit.
+        return Ok(String::new());
+    }
     let old_start = prefix_len + 1;
     let new_start = prefix_len + 1;
     let path = normalize_path(path).trim_start_matches('/').to_string();

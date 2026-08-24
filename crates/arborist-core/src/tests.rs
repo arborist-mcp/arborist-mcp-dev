@@ -60,6 +60,7 @@ mod language_fixtures;
 mod language_invariants;
 mod language_properties;
 mod patch_bindings;
+mod patch_preview_properties;
 mod patch_preview_timeout;
 mod patch_replay;
 mod patch_timeout;
