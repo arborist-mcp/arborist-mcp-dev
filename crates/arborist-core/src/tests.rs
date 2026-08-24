@@ -77,6 +77,7 @@ mod trace_regressions;
 mod trace_semantics;
 mod tree_query;
 mod workspace_edit_preview;
+mod workspace_edit_properties;
 
 use support::temporary_dir;
 
