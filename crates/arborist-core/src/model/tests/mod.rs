@@ -34,4 +34,5 @@ mod search_properties;
 mod skeleton_properties;
 mod symbols;
 mod trace;
+mod trace_validation_properties;
 mod validation;
