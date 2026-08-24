@@ -658,3 +658,77 @@ fn discovery_context_patch_validation_rejects_missing_read_for_applied_patch() {
 
     assert!(error.to_string().contains("read"));
 }
+
+#[test]
+fn patch_preview_rejects_empty_hunk_diff_with_changed_flag() {
+    let result = PatchPreviewResult {
+        patch: PatchAstNodeResult {
+            file: "sample.py".to_string(),
+            target_path: "top_level".to_string(),
+            resolved_path: "top_level".to_string(),
+            resolved_symbol_id: "top_level".to_string(),
+            applied: true,
+            bypass_applied: false,
+            updated_source: "def top_level() -> int:\n    return 2\n".to_string(),
+            validation: PatchValidationReport {
+                commit_gate: PatchCommitGateReport {
+                    status: "allowed".to_string(),
+                    allowed: true,
+                    reason: "ok".to_string(),
+                    bypass_reason: None,
+                    blocking_decisions: Vec::new(),
+                    evidence_invariants: Vec::new(),
+                    syntax_error_count: 0,
+                },
+                ..PatchValidationReport::default()
+            },
+        },
+        unified_diff: "--- a/sample.py\n+++ b/sample.py\n@@ -1,0 +1,0 @@\n".to_string(),
+        changed: true,
+    };
+
+    let error = result
+        .validate_public_output()
+        .expect_err("empty-hunk diff must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("non-empty diff must contain changed lines")
+    );
+}
+
+#[test]
+fn patch_preview_accepts_valid_diff_with_changed_lines() {
+    let result = PatchPreviewResult {
+        patch: PatchAstNodeResult {
+            file: "sample.py".to_string(),
+            target_path: "top_level".to_string(),
+            resolved_path: "top_level".to_string(),
+            resolved_symbol_id: "top_level".to_string(),
+            applied: true,
+            bypass_applied: false,
+            updated_source: "def top_level() -> int:\n    return 2\n".to_string(),
+            validation: PatchValidationReport {
+                commit_gate: PatchCommitGateReport {
+                    status: "allowed".to_string(),
+                    allowed: true,
+                    reason: "ok".to_string(),
+                    bypass_reason: None,
+                    blocking_decisions: Vec::new(),
+                    evidence_invariants: Vec::new(),
+                    syntax_error_count: 0,
+                },
+                ..PatchValidationReport::default()
+            },
+        },
+        unified_diff:
+            "--- a/sample.py\n+++ b/sample.py\n@@ -1,1 +1,1 @@\n-    return 1\n+    return 2\n"
+                .to_string(),
+        changed: true,
+    };
+
+    result
+        .validate_public_output()
+        .expect("valid diff with changed lines must be accepted");
+}

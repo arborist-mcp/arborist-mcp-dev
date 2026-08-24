@@ -145,6 +145,18 @@ impl PatchPreviewResult {
         if self.changed == self.unified_diff.is_empty() {
             bail!("invalid patch_preview.changed: expected changed to match unified_diff presence");
         }
+        // Defense in depth: a non-empty diff must contain at least one
+        // changed line. An empty hunk header with no -/+ lines would report
+        // changed=true while exposing no visible content difference.
+        if self.changed
+            && !self
+                .unified_diff
+                .lines()
+                .skip(3)
+                .any(|line| line.starts_with('-') || line.starts_with('+'))
+        {
+            bail!("invalid patch_preview.unified_diff: non-empty diff must contain changed lines");
+        }
         Ok(())
     }
 }
