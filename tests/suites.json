@@ -25,6 +25,11 @@
       "description": "Run MCP lifecycle, resources/tools listing, and param validation contract tests.",
       "requires_extension": false
     },
+    "batch-jsonrpc": {
+      "module": "tests.test_batch_and_jsonrpc",
+      "description": "Run batch call validation and JSON-RPC response contract tests.",
+      "requires_extension": false
+    },
     "index-watch-native": {
       "module": "tests.test_index_watch_native",
       "description": "Run index watch --once tests against the synced native extension.",
@@ -40,6 +45,7 @@
         "benchmark-workflow",
         "index-watch",
         "mcp-surface",
+        "batch-jsonrpc",
         "gateway-fast"
       ]
     },
@@ -58,6 +64,7 @@
         "benchmark-workflow",
         "index-watch",
         "mcp-surface",
+        "batch-jsonrpc",
         "index-watch-native",
         "gateway"
       ]
