@@ -30,6 +30,11 @@
       "description": "Run batch call validation and JSON-RPC response contract tests.",
       "requires_extension": false
     },
+    "core-helpers": {
+      "module": "tests.test_core_helpers_and_notifications",
+      "description": "Run native-core payload helper and JSON-RPC notification predicate tests.",
+      "requires_extension": false
+    },
     "index-watch-native": {
       "module": "tests.test_index_watch_native",
       "description": "Run index watch --once tests against the synced native extension.",
@@ -46,6 +51,7 @@
         "index-watch",
         "mcp-surface",
         "batch-jsonrpc",
+        "core-helpers",
         "gateway-fast"
       ]
     },
@@ -65,6 +71,7 @@
         "index-watch",
         "mcp-surface",
         "batch-jsonrpc",
+        "core-helpers",
         "index-watch-native",
         "gateway"
       ]

@@ -42,6 +42,7 @@ class TestWorkflowTests(unittest.TestCase):
                 "tests.test_index_watch",
                 "tests.test_mcp_surface",
                 "tests.test_batch_and_jsonrpc",
+                "tests.test_core_helpers_and_notifications",
                 *GATEWAY_GROUP_MODULES["gateway-fast"],
             ),
         )
@@ -56,6 +57,7 @@ class TestWorkflowTests(unittest.TestCase):
                 "tests.test_index_watch",
                 "tests.test_mcp_surface",
                 "tests.test_batch_and_jsonrpc",
+                "tests.test_core_helpers_and_notifications",
                 "tests.test_index_watch_native",
                 *GATEWAY_GROUP_MODULES["gateway"],
             ),
@@ -214,7 +216,7 @@ class TestWorkflowTests(unittest.TestCase):
         )
         lines = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
         self.assertEqual(lines[0], "rust    <- rust")
-        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 9 module(s)]")
+        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 10 module(s)]")
         self.assertEqual(
             lines[2:],
             [f"          {module_name}" for module_name in GROUP_MODULES["python-fast"]],
