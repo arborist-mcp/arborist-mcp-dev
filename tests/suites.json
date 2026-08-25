@@ -20,6 +20,11 @@
       "description": "Run pure-Python index watch reconciliation and CLI tests.",
       "requires_extension": false
     },
+    "mcp-surface": {
+      "module": "tests.test_mcp_surface",
+      "description": "Run MCP lifecycle, resources/tools listing, and param validation contract tests.",
+      "requires_extension": false
+    },
     "index-watch-native": {
       "module": "tests.test_index_watch_native",
       "description": "Run index watch --once tests against the synced native extension.",
@@ -34,6 +39,7 @@
         "test-workflow",
         "benchmark-workflow",
         "index-watch",
+        "mcp-surface",
         "gateway-fast"
       ]
     },
@@ -51,6 +57,7 @@
         "test-workflow",
         "benchmark-workflow",
         "index-watch",
+        "mcp-surface",
         "index-watch-native",
         "gateway"
       ]
