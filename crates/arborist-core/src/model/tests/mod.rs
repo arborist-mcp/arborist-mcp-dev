@@ -19,6 +19,7 @@ pub(super) use super::{
     ensure_nonblank, ensure_nonblank_strings, ensure_unique_strings, point_is_after,
 };
 
+mod commit_gate_properties;
 mod context_properties;
 mod index;
 mod index_health_properties;
