@@ -35,6 +35,11 @@
       "description": "Run native-core payload helper and JSON-RPC notification predicate tests.",
       "requires_extension": false
     },
+    "index-watch-edges": {
+      "module": "tests.test_index_watch_runtime_edges",
+      "description": "Run index watch runtime failure wrapping, health summary, and loop semantics tests.",
+      "requires_extension": false
+    },
     "index-watch-native": {
       "module": "tests.test_index_watch_native",
       "description": "Run index watch --once tests against the synced native extension.",
@@ -49,6 +54,7 @@
         "test-workflow",
         "benchmark-workflow",
         "index-watch",
+        "index-watch-edges",
         "mcp-surface",
         "batch-jsonrpc",
         "core-helpers",
@@ -69,6 +75,7 @@
         "test-workflow",
         "benchmark-workflow",
         "index-watch",
+        "index-watch-edges",
         "mcp-surface",
         "batch-jsonrpc",
         "core-helpers",
