@@ -1,18 +1,18 @@
 pub(super) use super::{
-    DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
-    PatchAstNodeResult, PatchCommitGateReport, PatchPreviewResult, PatchTraceValidationResult,
-    PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-    SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexHealth,
-    SymbolIndexMigrationPlan, SymbolIndexStats, SymbolListContextResult,
+    DisambiguationContext, DiscoveryContextPatchResult, GraphBackedPatchResult,
+    NeighborhoodContextPatchResult, PatchAstNodeResult, PatchCommitGateReport, PatchPreviewResult,
+    PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit, QueryCaptureResult,
+    RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult,
+    SymbolIndexHealth, SymbolIndexMigrationPlan, SymbolIndexStats, SymbolListContextResult,
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
     SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
     SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
     SymbolSummary, TraceBackedPatchResult, TraceDirection, TraceEvidenceKeys,
     TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationBindingDecision,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus, WorkspaceEditPreviewFile,
-    WorkspaceEditPreviewResult,
+    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationAmbiguity,
+    ValidationBinding, ValidationBindingDecision, ValidationIssue, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus, WorkspaceEditPreviewFile, WorkspaceEditPreviewResult,
 };
 
 pub(super) use super::{
@@ -27,6 +27,7 @@ mod list_properties;
 mod misc;
 mod neighborhood_properties;
 mod patch;
+mod patch_validation_properties;
 mod position;
 mod query_capture_properties;
 mod replay_properties;
