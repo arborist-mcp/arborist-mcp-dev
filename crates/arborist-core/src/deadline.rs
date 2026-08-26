@@ -156,4 +156,57 @@ mod tests {
         assert_eq!(ceil_duration_millis(Duration::from_millis(1)), 1);
         assert_eq!(ceil_duration_millis(Duration::from_micros(1_001)), 2);
     }
+
+    #[test]
+    fn remaining_timeout_ms_labels_expired_deadlines_with_operation_and_phase() {
+        let deadline = CooperativeDeadline::expired_for_tests(3, "symbol index refresh");
+        let error = deadline
+            .remaining_timeout_ms("loading resolved symbols")
+            .expect_err("expired deadline should expose no remaining budget");
+        assert!(
+            error
+                .to_string()
+                .contains("symbol index refresh timeout exceeded during loading resolved symbols")
+        );
+        assert!(error.to_string().contains("timeout_ms=3"));
+    }
+
+    #[test]
+    fn remaining_timeout_ms_reports_none_for_unbounded_deadlines() {
+        let deadline = CooperativeDeadline::new(None, 10, "semantic skeleton").unwrap();
+        assert_eq!(deadline.remaining_timeout_ms("parsing").unwrap(), None);
+    }
+
+    #[test]
+    fn remaining_timeout_ms_stays_within_configured_budget() {
+        for configured_ms in [1u64, 5, 10] {
+            let deadline =
+                CooperativeDeadline::new(Some(configured_ms), 10, "semantic skeleton").unwrap();
+            let remaining = deadline
+                .remaining_timeout_ms("parsing")
+                .expect("fresh deadline should expose a budget")
+                .expect("configured deadline should expose Some budget");
+            assert!(remaining >= 1);
+            assert!(remaining <= configured_ms);
+        }
+    }
+
+    #[test]
+    fn remaining_timeout_ms_agrees_with_check_at_expiry_boundary() {
+        // check() Ok implies a usable positive-or-unbounded budget; once
+        // check() fails, remaining_timeout_ms must fail too. A zero budget can
+        // never escape because ceil rounding yields at least 1ms before the
+        // deadline passes.
+        let fresh = CooperativeDeadline::new(Some(10), 10, "semantic skeleton").unwrap();
+        assert!(fresh.check("phase").is_ok());
+        match fresh.remaining_timeout_ms("phase") {
+            Ok(None) => {}
+            Ok(Some(remaining)) => assert!(remaining >= 1),
+            Err(error) => panic!("fresh deadline must not report expiry: {error}"),
+        }
+
+        let expired = CooperativeDeadline::expired_for_tests(2, "semantic skeleton");
+        assert!(expired.check("phase").is_err());
+        assert!(expired.remaining_timeout_ms("phase").is_err());
+    }
 }

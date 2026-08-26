@@ -1,7 +1,14 @@
 use std::fs;
 
 use super::support::temporary_dir;
-use crate::symbol_index_workspace::transitive_local_file_dependents;
+use crate::symbol_index_workspace::{
+    expanded_refresh_file_paths, transitive_local_file_dependents,
+};
+use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
+
+fn scan_deadline() -> WorkspaceScanDeadline {
+    WorkspaceScanDeadline::new(WorkspaceScanLimits::default()).unwrap()
+}
 
 fn write_c_source(path: &std::path::Path, includes: &[&str]) {
     let mut source = String::new();
@@ -98,5 +105,85 @@ fn transitive_dependents_are_deterministic_across_runs() {
     assert_eq!(first.len(), 2);
     assert!(first.contains(&dir.join("user0_0.c")));
     assert!(first.contains(&dir.join("user0_1.c")));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn expanded_refresh_paths_include_self_even_without_dependents() {
+    let dir = temporary_dir();
+    write_c_source(&dir.join("base.h"), &[]);
+
+    let deadline = scan_deadline();
+    let refresh_paths = expanded_refresh_file_paths(
+        &dir,
+        &dir.join("base.h"),
+        WorkspaceScanLimits::default(),
+        &deadline,
+    )
+    .unwrap();
+
+    assert_eq!(refresh_paths, vec![dir.join("base.h")]);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn expanded_refresh_paths_union_self_with_transitive_dependents() {
+    let dir = temporary_dir();
+    // base.h <- mid.h <- top.c: the expanded set is {self} ∪ dependents.
+    write_c_source(&dir.join("base.h"), &[]);
+    write_c_source(&dir.join("mid.h"), &["base.h"]);
+    write_c_source(&dir.join("top.c"), &["mid.h"]);
+
+    let deadline = scan_deadline();
+    let refresh_paths = expanded_refresh_file_paths(
+        &dir,
+        &dir.join("base.h"),
+        WorkspaceScanLimits::default(),
+        &deadline,
+    )
+    .unwrap();
+
+    let names: Vec<String> = refresh_paths
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "base.h".to_string(),
+            "mid.h".to_string(),
+            "top.c".to_string(),
+        ]
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn expanded_refresh_paths_gate_expansion_by_language_adapter() {
+    let dir = temporary_dir();
+    // An unsupported extension fails language detection outright...
+    write_c_source(&dir.join("base.h"), &[]);
+
+    let deadline = scan_deadline();
+    let error = expanded_refresh_file_paths(
+        &dir,
+        &dir.join("missing.xyz"),
+        WorkspaceScanLimits::default(),
+        &deadline,
+    )
+    .expect_err("unsupported extensions should fail language detection");
+    assert!(error.to_string().contains("unsupported file extension"));
+
+    // ...while a supported adapter without incremental file dependencies
+    // (Python) refreshes exactly the requested file.
+    fs::write(dir.join("helper.py"), "def helper():\n    return 1\n").unwrap();
+    let python_paths = expanded_refresh_file_paths(
+        &dir,
+        &dir.join("helper.py"),
+        WorkspaceScanLimits::default(),
+        &deadline,
+    )
+    .unwrap();
+    assert_eq!(python_paths, vec![dir.join("helper.py")]);
     fs::remove_dir_all(dir).unwrap();
 }
