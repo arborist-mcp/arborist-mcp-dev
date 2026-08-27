@@ -90,10 +90,10 @@ def _validate_health_payload(
             f"unsupported `migration.action`: {action}"
         )
     reason = migration.get("reason")
-    if not isinstance(reason, str):
+    if not isinstance(reason, str) or not reason.strip():
         raise IndexWatchError(
             f"invalid health payload from {operation}: "
-            "`migration.reason` must be a string"
+            "`migration.reason` must be a non-empty string"
         )
     required = migration.get("required")
     if not isinstance(required, bool):
@@ -173,6 +173,17 @@ def _validate_health_payload(
         raise IndexWatchError(
             f"invalid health payload from {operation}: "
             "unhealthy indexes must report at least one issue"
+        )
+    indexed_files = health.get("indexed_files")
+    file_state_entries = health.get("file_state_entries")
+    if (
+        indexed_files is not None
+        and file_state_entries is not None
+        and indexed_files != file_state_entries
+    ):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "`indexed_files` must equal `file_state_entries`"
         )
     if not exists and (
         health.get("schema_version") is not None

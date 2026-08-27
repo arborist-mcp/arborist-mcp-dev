@@ -707,7 +707,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Validate index-watch refresh statistics against the persisted-index
   stats contract before emitting a refreshed event.
 - [x] Validate index-watch health metadata and migration-plan invariants
-  against the persisted-index health contract before making repair decisions.
+  against the persisted-index health contract before making repair decisions,
+  including persisted file-count conservation and nonblank migration reasons.
 
 ### P2: Multi-Language Foundation
 
