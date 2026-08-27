@@ -736,6 +736,8 @@ completed item can land in its own commit unless two changes are inseparable.
   unpaired surrogate makes the original response impossible to encode.
 - [x] Convert non-UTF-8 JSON-RPC input text into a parse error instead of
   allowing the request-size guard to raise before the gateway can respond.
+- [x] Convert invalid UTF-8 bytes raised by stdio text decoding into a
+  JSON-RPC parse error before stopping the affected input stream.
 
 ### P2: Multi-Language Foundation
 

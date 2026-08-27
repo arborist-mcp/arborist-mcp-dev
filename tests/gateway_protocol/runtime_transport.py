@@ -263,6 +263,27 @@ class GatewayRuntimeTransportTestsMixin:
         response = gateway_module.json.loads(stdout.getvalue())
         self.assertEqual(response["error"]["code"], -32700)
 
+    def test_stdio_invalid_utf8_bytes_emit_parse_error_without_initializing_gateway(
+        self,
+    ) -> None:
+        stdin = io.TextIOWrapper(io.BytesIO(b"\xff\n"), encoding="utf-8")
+        stdout = io.StringIO()
+
+        with mock.patch.object(
+            gateway_module.ArboristGateway,
+            "__init__",
+            side_effect=AssertionError("gateway should not initialize"),
+        ):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("not valid UTF-8 text", response["error"]["message"])
+
     def test_once_invalid_json_prints_parse_error_response(self) -> None:
         with mock.patch.object(gateway_module.ArboristGateway, "__init__", return_value=None):
             with mock.patch("pathlib.Path.read_text", return_value="{bad json}"):

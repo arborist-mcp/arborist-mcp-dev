@@ -65,6 +65,7 @@ def run_stdio(
     *,
     gateway_factory: Callable[[], Any],
     parse_request: Callable[[str], tuple[Any | None, dict[str, Any] | None]],
+    parse_error_response: Callable[[str], dict[str, Any]],
     is_notification: Callable[[Any], bool],
     serialize_response: Callable[[dict[str, Any], int | None], str],
     write_response: Callable[[str], bool],
@@ -72,7 +73,19 @@ def run_stdio(
     gateway: Any | None = None
 
     while True:
-        raw_line = _read_stdio_line()
+        try:
+            raw_line = _read_stdio_line()
+        except UnicodeDecodeError:
+            # A text decoder may consume the malformed byte sequence while
+            # raising, so the stream can no longer be safely re-synchronized.
+            # Emit the protocol error before stopping instead of leaking the
+            # decoder exception to the process boundary.
+            response = parse_error_response(
+                "invalid JSON: request is not valid UTF-8 text"
+            )
+            if not write_response(serialize_response(response) + "\n"):
+                return 0
+            return 0
         if raw_line is None:
             break
         line = raw_line.strip()

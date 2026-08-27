@@ -100,6 +100,7 @@ def run_stdio() -> int:
     return _run_stdio(
         gateway_factory=ArboristGateway,
         parse_request=parse_request_json,
+        parse_error_response=lambda message: error_response(None, -32700, message),
         is_notification=is_notification_request,
         serialize_response=_serialize_response,
         write_response=_write_response,
