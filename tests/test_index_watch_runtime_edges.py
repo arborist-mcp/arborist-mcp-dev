@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 
 from arborist_mcp.index_watch import (
@@ -171,6 +172,58 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_files=20,
                 max_file_bytes=None,
             )
+
+
+class OrderedWatchTargetTests(unittest.TestCase):
+    def test_rejects_duplicate_workspace_roots(self) -> None:
+        targets = (
+            IndexWatchTarget("workspace", "one.db"),
+            IndexWatchTarget("workspace", "two.db"),
+        )
+
+        with self.assertRaisesRegex(
+            IndexWatchError, "duplicate workspace_root `workspace`"
+        ):
+            _ordered_watch_targets(targets)
+
+    def test_rejects_duplicate_database_paths(self) -> None:
+        targets = (
+            IndexWatchTarget("one", "symbols.db"),
+            IndexWatchTarget("two", "symbols.db"),
+        )
+
+        with self.assertRaisesRegex(IndexWatchError, "duplicate db_path `symbols.db`"):
+            _ordered_watch_targets(targets)
+
+    def test_rejects_path_aliases_for_duplicate_targets(self) -> None:
+        targets = (
+            IndexWatchTarget("workspace", "indexes/../symbols.db"),
+            IndexWatchTarget("workspace/.", "symbols.db"),
+        )
+
+        with self.assertRaisesRegex(IndexWatchError, "duplicate workspace_root"):
+            _ordered_watch_targets(targets)
+
+    def test_rejects_database_path_aliases(self) -> None:
+        targets = (
+            IndexWatchTarget("workspace-a", "indexes/../symbols.db"),
+            IndexWatchTarget("workspace-b", "symbols.db"),
+        )
+
+        with self.assertRaisesRegex(IndexWatchError, "duplicate db_path"):
+            _ordered_watch_targets(targets)
+
+    @unittest.skipUnless(
+        os.name == "nt", "case-insensitive path semantics require Windows"
+    )
+    def test_rejects_case_insensitive_duplicate_database_paths_on_windows(self) -> None:
+        targets = (
+            IndexWatchTarget("one", "Symbols.db"),
+            IndexWatchTarget("two", "symbols.db"),
+        )
+
+        with self.assertRaisesRegex(IndexWatchError, "duplicate db_path `symbols.db`"):
+            _ordered_watch_targets(targets)
 
     def test_unrepairable_index_falls_back_to_issue_then_default_reason(self) -> None:
         class UnrepairableCore(FailingCore):

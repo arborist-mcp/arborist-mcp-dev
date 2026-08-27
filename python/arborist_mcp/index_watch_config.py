@@ -51,6 +51,11 @@ def _target_sort_key(target: IndexWatchTarget) -> tuple[str, str, str, str]:
     )
 
 
+def _target_identity_path(value: str) -> str:
+    """Return the filesystem identity used to detect duplicate watch targets."""
+    return os.path.normcase(str(Path(value).resolve(strict=False)))
+
+
 def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
     try:
         with config_path.open("rb") as handle:
@@ -117,12 +122,12 @@ def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
             values[key] = _resolve_path(value, config_path.parent)
 
         target = IndexWatchTarget(values["workspace_root"], values["db_path"])
-        workspace_key = os.path.normcase(target.workspace_root)
+        workspace_key = _target_identity_path(target.workspace_root)
         if workspace_key in seen_workspaces:
             raise IndexWatchError(
                 f"invalid watch config: duplicate workspace_root `{target.workspace_root}`"
             )
-        database_key = os.path.normcase(target.db_path)
+        database_key = _target_identity_path(target.db_path)
         if database_key in seen_databases:
             raise IndexWatchError(
                 f"invalid watch config: duplicate db_path `{target.db_path}`"
@@ -140,6 +145,25 @@ def _ordered_watch_targets(
 ) -> tuple[IndexWatchTarget, ...]:
     if not targets:
         raise IndexWatchError("index watch requires at least one target")
+
+    seen_workspaces: set[str] = set()
+    seen_databases: set[str] = set()
+    for target in targets:
+        workspace_key = _target_identity_path(target.workspace_root)
+        if workspace_key in seen_workspaces:
+            raise IndexWatchError(
+                "index watch does not allow duplicate workspace_root "
+                f"`{target.workspace_root}`"
+            )
+        database_key = _target_identity_path(target.db_path)
+        if database_key in seen_databases:
+            raise IndexWatchError(
+                "index watch does not allow duplicate db_path "
+                f"`{target.db_path}`"
+            )
+        seen_workspaces.add(workspace_key)
+        seen_databases.add(database_key)
+
     return tuple(sorted(targets, key=_target_sort_key))
 
 
