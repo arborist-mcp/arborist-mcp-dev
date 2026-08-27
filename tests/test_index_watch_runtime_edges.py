@@ -175,6 +175,21 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
 
 
 class OrderedWatchTargetTests(unittest.TestCase):
+    def test_rejects_malformed_target_fields_before_path_normalization(self) -> None:
+        malformed_targets = (
+            (IndexWatchTarget("", "symbols.db"), "workspace_root"),
+            (IndexWatchTarget("workspace", ""), "db_path"),
+            (IndexWatchTarget("workspace", 7), "db_path"),
+        )
+
+        for target, field_name in malformed_targets:
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(
+                    IndexWatchError,
+                    rf"index watch target 0\.{field_name} must be a non-empty string",
+                ):
+                    _ordered_watch_targets((target,))
+
     def test_rejects_duplicate_workspace_roots(self) -> None:
         targets = (
             IndexWatchTarget("workspace", "one.db"),

@@ -148,7 +148,14 @@ def _ordered_watch_targets(
 
     seen_workspaces: set[str] = set()
     seen_databases: set[str] = set()
-    for target in targets:
+    for index, target in enumerate(targets):
+        for field_name in ("workspace_root", "db_path"):
+            value = getattr(target, field_name, None)
+            if not isinstance(value, str) or not value.strip():
+                raise IndexWatchError(
+                    "index watch target "
+                    f"{index}.{field_name} must be a non-empty string"
+                )
         workspace_key = _target_identity_path(target.workspace_root)
         if workspace_key in seen_workspaces:
             raise IndexWatchError(
