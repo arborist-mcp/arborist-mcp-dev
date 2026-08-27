@@ -119,7 +119,9 @@ def serialize_response(response: dict[str, Any], indent: int | None = None) -> s
             -32000,
             f"failed to serialize response: {exc}",
         )
-        return json.dumps(fallback, ensure_ascii=False, allow_nan=False, indent=indent)
+        # ASCII escaping keeps the recovery envelope writable even when the
+        # original response contains an unpaired surrogate.
+        return json.dumps(fallback, ensure_ascii=True, allow_nan=False, indent=indent)
 
 
 def write_response(payload: str) -> bool:

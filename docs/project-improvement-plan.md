@@ -732,6 +732,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Avoid re-validating each nested batch result through both the exact tool
   schema and the generic batch `anyOf` schema while preserving name/result
   pairing and error behavior.
+- [x] Keep JSON-RPC serialization fallback envelopes UTF-8 safe when an
+  unpaired surrogate makes the original response impossible to encode.
 
 ### P2: Multi-Language Foundation
 

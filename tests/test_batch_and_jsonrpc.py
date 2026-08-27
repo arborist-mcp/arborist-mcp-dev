@@ -139,6 +139,16 @@ class ErrorResponseContractTests(unittest.TestCase):
         self.assertIn("-32000", payload)
         self.assertIn("failed to serialize response", payload)
 
+    def test_serialize_response_fallback_is_utf8_safe_for_lone_surrogates(self) -> None:
+        payload = serialize_response(
+            {"jsonrpc": "2.0", "id": 2, "result": {"value": "\ud800"}}
+        )
+
+        payload.encode("utf-8")
+        response = json.loads(payload)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("failed to serialize response", response["error"]["message"])
+
     def test_serialize_response_round_trips_normal_payloads(self) -> None:
         response = {"jsonrpc": "2.0", "id": 3, "result": {"ok": True}}
         self.assertEqual(
