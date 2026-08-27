@@ -717,6 +717,8 @@ completed item can land in its own commit unless two changes are inseparable.
   equivalent path spellings cannot bypass duplicate-entry validation.
 - [x] Enforce required-field presence for index-watch health responses,
   including fields whose values are nullable in the native schema.
+- [x] Check MCP `tools/call` result top-level types and object-array items
+  against the advertised output schemas before returning a successful result.
 
 ### P2: Multi-Language Foundation
 

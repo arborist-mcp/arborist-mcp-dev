@@ -22,6 +22,45 @@ class GatewayRuntimeToolsTestsMixin:
         self.assertNotIn("structuredContent", result)
         self.assertIn("Out of range float values", result["content"][0]["text"])
 
+    def test_tools_call_rejects_result_shape_mismatch(self) -> None:
+        cases = (
+            (
+                "arborist/get_semantic_skeleton",
+                {"file_path": "sample.py"},
+                [],
+                "expected object payload",
+            ),
+            (
+                "arborist/list_symbol_indexes",
+                {},
+                {},
+                "expected array payload",
+            ),
+            (
+                "arborist/unregister_symbol_index",
+                {},
+                1,
+                "expected boolean payload",
+            ),
+            (
+                "arborist/list_symbol_indexes",
+                {},
+                [None],
+                "expected object item at index 0",
+            ),
+        )
+
+        for tool_name, arguments, tool_result, expected_message in cases:
+            with self.subTest(tool_name=tool_name, tool_result=tool_result):
+                result = tools_call(
+                    {"name": tool_name, "arguments": arguments},
+                    lambda _tool_name, _arguments, result=tool_result: result,
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertIn(expected_message, result["content"][0]["text"])
+                self.assertNotIn("structuredContent", result)
+
     def test_tools_call_invokes_read_tool(self) -> None:
         core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
 
