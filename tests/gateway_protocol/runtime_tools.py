@@ -8,6 +8,59 @@ from arborist_mcp.tool_result_schemas import JsonRpcError
 from tests.gateway_protocol.helpers import make_recording_json_core
 
 
+def _valid_semantic_skeleton_result() -> dict[str, object]:
+    return {
+        "file": "sample.py",
+        "skeleton": "",
+        "available_paths": [],
+        "available_symbols": [],
+    }
+
+
+def _valid_trace_symbol_graph_result() -> dict[str, object]:
+    symbol = {
+        "symbol_id": "top_level",
+        "semantic_path": "top_level",
+        "scope_path": None,
+        "file_path": "sample.py",
+        "node_kind": "function_definition",
+        "origin_type": "local",
+        "evidence_key": "sample.py::top_level",
+        "byte_range": [0, 1],
+        "signature": None,
+        "parameters": [],
+        "return_type": None,
+        "docstring": None,
+        "dependencies": [],
+        "references": [],
+    }
+    return {
+        "symbol": symbol,
+        "callers": [],
+        "callees": [],
+        "evidence_keys": {
+            "symbol": "sample.py::top_level",
+            "callers": [],
+            "callees": [],
+        },
+        "indexed_files": 1,
+    }
+
+
+def _valid_trace_symbol_neighborhood_result() -> dict[str, object]:
+    graph = _valid_trace_symbol_graph_result()
+    return {
+        "symbol": graph["symbol"],
+        "direction": "both",
+        "max_depth": 1,
+        "max_nodes": 10,
+        "truncated": False,
+        "indexed_files": 1,
+        "nodes": [],
+        "edges": [],
+    }
+
+
 class GatewayRuntimeToolsTestsMixin:
     def test_tools_call_returns_mcp_error_for_non_serializable_tool_result(self) -> None:
         result = tools_call(
@@ -84,6 +137,85 @@ class GatewayRuntimeToolsTestsMixin:
             (
                 [{"name": "arborist/get_semantic_skeleton", "result": []}],
                 "has invalid result",
+            ),
+        )
+
+        for tool_result, expected_message in cases:
+            with self.subTest(tool_result=tool_result):
+                result = tools_call(
+                    {"name": "arborist/batch", "arguments": {"calls": []}},
+                    lambda _tool_name, _arguments, result=tool_result: result,
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertIn(expected_message, result["content"][0]["text"])
+                self.assertNotIn("structuredContent", result)
+
+    def test_tools_call_rejects_malformed_batch_nested_result_schema(self) -> None:
+        cases = (
+            (
+                [{"name": "arborist/get_semantic_skeleton", "result": {}}],
+                "result is missing required field `file`",
+            ),
+            (
+                [
+                    {
+                        "name": "arborist/get_semantic_skeleton",
+                        "result": {
+                            **_valid_semantic_skeleton_result(),
+                            "future_field": True,
+                        },
+                    }
+                ],
+                "result has unexpected field `future_field`",
+            ),
+            (
+                [
+                    {
+                        "name": "arborist/get_semantic_skeleton",
+                        "result": {
+                            **_valid_semantic_skeleton_result(),
+                            "available_paths": [1],
+                        },
+                    }
+                ],
+                "result.available_paths[0] must be a string",
+            ),
+            (
+                [
+                    {
+                        "name": "arborist/get_semantic_skeleton",
+                        "result": {
+                            **_valid_semantic_skeleton_result(),
+                            "available_symbols": [
+                                {
+                                    "symbol_id": "top_level",
+                                    "semantic_path": "top_level",
+                                    "scope_path": None,
+                                    "node_kind": "function_definition",
+                                    "byte_range": [0],
+                                    "signature": None,
+                                    "parameters": [],
+                                    "return_type": None,
+                                    "docstring": None,
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "result.available_symbols[0].byte_range must contain at least 2 items",
+            ),
+            (
+                [
+                    {
+                        "name": "arborist/trace_symbol_neighborhood",
+                        "result": {
+                            **_valid_trace_symbol_neighborhood_result(),
+                            "direction": "sideways",
+                        },
+                    }
+                ],
+                "result.direction must be one of ['callers', 'callees', 'both']",
             ),
         )
 
@@ -210,9 +342,11 @@ class GatewayRuntimeToolsTestsMixin:
         )
 
     def test_tools_call_invokes_read_only_batch(self) -> None:
+        skeleton = _valid_semantic_skeleton_result()
+        trace = _valid_trace_symbol_graph_result()
         core = make_recording_json_core(
-            get_semantic_skeleton_json={"kind": "module"},
-            trace_symbol_graph_json={"symbol": "top_level"},
+            get_semantic_skeleton_json=skeleton,
+            trace_symbol_graph_json=trace,
         )
 
         result = self.assert_jsonrpc_ok(
@@ -249,11 +383,11 @@ class GatewayRuntimeToolsTestsMixin:
             [
                 {
                     "name": "arborist/get_semantic_skeleton",
-                    "result": {"kind": "module"},
+                    "result": skeleton,
                 },
                 {
                     "name": "arborist/trace_symbol_graph",
-                    "result": {"symbol": "top_level"},
+                    "result": trace,
                 },
             ],
         )
@@ -264,7 +398,9 @@ class GatewayRuntimeToolsTestsMixin:
         )
 
     def test_tools_call_propagates_batch_timeout_to_inner_tool(self) -> None:
-        core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
+        core = make_recording_json_core(
+            get_semantic_skeleton_json=_valid_semantic_skeleton_result()
+        )
 
         result = self.assert_jsonrpc_ok(
             self.call_gateway(
@@ -319,7 +455,11 @@ class GatewayRuntimeToolsTestsMixin:
 
         def execute(name: str, arguments: dict[str, object]) -> object:
             observed.append((name, arguments))
-            return [] if name == "arborist/list_symbol_indexes" else {"ok": True}
+            if name == "arborist/list_symbol_indexes":
+                return []
+            if name == "arborist/get_semantic_skeleton":
+                return _valid_semantic_skeleton_result()
+            return _valid_trace_symbol_graph_result()
 
         result = batch_tools(
             calls,
@@ -641,4 +781,3 @@ class GatewayRuntimeToolsTestsMixin:
             contains="invalid JSON from arborist core",
         )
         self.assertIn("expected object item", response["error"]["message"])
-

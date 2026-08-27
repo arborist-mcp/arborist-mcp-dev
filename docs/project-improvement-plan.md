@@ -723,6 +723,9 @@ completed item can land in its own commit unless two changes are inseparable.
   malformed inner results cannot hide inside an otherwise valid batch envelope.
 - [x] Validate MCP batch result-item required fields, unknown fields, supported
   tool names, and nested result shapes before returning the batch response.
+- [x] Deeply validate nested batch result payloads against their advertised
+  required fields, property types, bounds, enums, and nested array/object
+  schemas while preserving the shallow compatibility checks for direct tools.
 
 ### P2: Multi-Language Foundation
 

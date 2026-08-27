@@ -77,7 +77,7 @@ def batch_tools(
                 )
 
         result = execute_tool(call.name, arguments)
-        validate_tool_result_shape(call.name, result)
+        validate_tool_result_shape(call.name, result, deep=True)
         if deadline is not None:
             deadline.remaining_timeout_ms(index, "after")
         results.append({"name": call.name, "result": result})

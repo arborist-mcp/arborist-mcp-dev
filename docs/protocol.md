@@ -144,6 +144,13 @@ blocking step inside an inner tool remains non-preemptible. Expiration uses
 JSON-RPC code `-32000` for legacy calls, returns an MCP tool error through
 `tools/call`, and never returns a partial result array.
 
+Successful batch results contain one `{ "name": ..., "result": ... }` item per
+inner call. The gateway checks each item against the advertised nested result
+schema, including required fields, property types, bounds, enums, and nested
+arrays or objects. A malformed nested result is rejected before
+`structuredContent` is exposed; MCP callers receive `isError: true`, while
+legacy callers receive a JSON-RPC `-32000` error.
+
 `get_semantic_skeleton` accepts an optional cooperative `timeout_ms` budget
 capped at `300000`. It covers path setup, file-backed source reads, parsing
 boundaries, Python query iteration, C/C++ symbol collection, skeleton rendering,
