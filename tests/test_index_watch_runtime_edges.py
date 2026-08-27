@@ -21,16 +21,27 @@ def health_payload(
 ) -> str:
     return json.dumps(
         {
+            "response_schema_version": "4",
+            "db_path": "symbols.db",
             "ok": ok,
             "exists": True,
             "schema_version": "1",
             "expected_schema_version": "1",
+            "workspace_root": ".",
+            "indexed_files": 1,
+            "indexed_symbols": 1,
+            "file_state_entries": 1,
+            "fresh_file_count": 1,
             "issues": [] if ok else [reason],
             "stale_files": [],
             "missing_files": [],
             "unreadable_files": [],
             "unindexed_files": [],
-            "migration": {"action": action, "reason": reason},
+            "migration": {
+                "required": action != "none",
+                "action": action,
+                "reason": reason,
+            },
         }
     )
 
@@ -240,7 +251,7 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
-    def test_migration_without_issues_uses_fail_closed_reason(self) -> None:
+    def test_migration_rejects_unhealthy_payload_without_issues(self) -> None:
         class IncompleteMigrationCore(FailingCore):
             def __init__(self) -> None:
                 super().__init__("migrate", "unused")
@@ -255,21 +266,33 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
             ) -> str:
                 return json.dumps(
                     {
+                        "response_schema_version": "4",
+                        "db_path": "symbols.db",
                         "ok": False,
                         "exists": True,
+                        "schema_version": "1",
                         "expected_schema_version": "1",
+                        "workspace_root": ".",
+                        "indexed_files": 1,
+                        "indexed_symbols": 1,
+                        "file_state_entries": 1,
+                        "fresh_file_count": 1,
                         "issues": [],
                         "stale_files": [],
                         "missing_files": [],
                         "unreadable_files": [],
                         "unindexed_files": [],
-                        "migration": {"action": "manual", "reason": "not healthy"},
+                        "migration": {
+                            "required": True,
+                            "action": "manual",
+                            "reason": "not healthy",
+                        },
                     }
                 )
 
         with self.assertRaisesRegex(
             IndexWatchError,
-            "migration completed unsuccessfully: migration did not produce a healthy index",
+            "invalid health payload from migrate_symbol_index: unhealthy indexes must report at least one issue",
         ):
             reconcile_index(
                 IncompleteMigrationCore(),
@@ -439,11 +462,23 @@ class OrderedWatchTargetTests(unittest.TestCase):
         def payload(migration: dict[str, object], issues: list[str]) -> str:
             return json.dumps(
                 {
+                    "response_schema_version": "4",
+                    "db_path": "symbols.db",
                     "ok": False,
                     "exists": True,
                     "schema_version": "1",
                     "expected_schema_version": "1",
-                    "migration": migration,
+                    "workspace_root": ".",
+                    "indexed_files": 1,
+                    "indexed_symbols": 1,
+                    "file_state_entries": 1,
+                    "fresh_file_count": 1,
+                    "migration": {
+                        **migration,
+                        "required": migration.get(
+                            "required", migration.get("action") != "none"
+                        ),
+                    },
                     "issues": issues,
                     "stale_files": [],
                     "missing_files": [],
@@ -470,7 +505,7 @@ class OrderedWatchTargetTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(
             IndexWatchError,
-            "cannot repair this index: index is unhealthy$",
+            "invalid health payload from inspect_symbol_index: unhealthy indexes must report at least one issue",
         ):
             reconcile_index(
                 UnrepairableCore(
@@ -501,7 +536,11 @@ class OrderedWatchTargetTests(unittest.TestCase):
                         "missing_files": [],
                         "unreadable_files": [],
                         "unindexed_files": [],
-                        "migration": {"action": "rebuild", "reason": "stale"},
+                        "migration": {
+                            "required": True,
+                            "action": "rebuild",
+                            "reason": "stale",
+                        },
                     }
                 )
 
@@ -532,7 +571,7 @@ class OrderedWatchTargetTests(unittest.TestCase):
                         "missing_files": [],
                         "unreadable_files": [],
                         "unindexed_files": [],
-                        "migration": {"action": "manual", "reason": "repair"},
+                        "migration": {"required": True, "action": "manual", "reason": "repair"},
                     }
                 )
 
@@ -547,6 +586,43 @@ class OrderedWatchTargetTests(unittest.TestCase):
                 max_files=20,
                 max_file_bytes=None,
             )
+
+    def test_inspect_rejects_malformed_migration_required_flag(self) -> None:
+        class MalformedHealthCore:
+            def __init__(self, migration: dict[str, object]) -> None:
+                self._migration = migration
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=False, action="rebuild", reason="stale"))
+                payload["migration"] = self._migration
+                return json.dumps(payload)
+
+        cases = (
+            ({"action": "rebuild", "reason": "stale"}, "must be a boolean"),
+            (
+                {"required": False, "action": "rebuild", "reason": "stale"},
+                "optional migration must use action `none`",
+            ),
+            (
+                {"required": True, "action": "none", "reason": "current"},
+                "required migration must use a concrete action",
+            ),
+        )
+        for migration, expected in cases:
+            with self.subTest(migration=migration):
+                with self.assertRaisesRegex(
+                    IndexWatchError,
+                    rf"invalid health payload from inspect_symbol_index: .*{expected}",
+                ):
+                    reconcile_index(
+                        MalformedHealthCore(migration),
+                        workspace_root="workspace",
+                        db_path="symbols.db",
+                        max_files=20,
+                        max_file_bytes=None,
+                    )
 
     def test_inspect_rejects_missing_migration_fields(self) -> None:
         class MalformedHealthCore:

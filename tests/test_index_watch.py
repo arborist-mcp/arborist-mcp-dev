@@ -41,16 +41,27 @@ def health_payload(
 ) -> str:
     return json.dumps(
         {
+            "response_schema_version": "4",
+            "db_path": "symbols.db",
             "ok": ok,
             "exists": True,
             "schema_version": "1",
             "expected_schema_version": "1",
+            "workspace_root": ".",
+            "indexed_files": max(1, len(unreadable_files)),
+            "indexed_symbols": 1,
+            "file_state_entries": max(1, len(unreadable_files)),
+            "fresh_file_count": 0 if unreadable_files else 1,
             "issues": [] if ok else [reason],
             "stale_files": [],
             "missing_files": [],
             "unreadable_files": list(unreadable_files),
             "unindexed_files": [],
-            "migration": {"action": action, "reason": reason},
+            "migration": {
+                "required": action != "none",
+                "action": action,
+                "reason": reason,
+            },
         }
     )
 

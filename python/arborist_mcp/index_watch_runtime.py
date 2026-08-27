@@ -13,6 +13,9 @@ from .index_watch_config import (
 )
 
 
+_SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION = "4"
+
+
 class IndexWatchCore(Protocol):
     def inspect_symbol_index_json(
         self, db_path: str, timeout_ms: int | None = None
@@ -92,11 +95,150 @@ def _validate_health_payload(
             f"invalid health payload from {operation}: "
             "`migration.reason` must be a string"
         )
+    required = migration.get("required")
+    if not isinstance(required, bool):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "`migration.required` must be a boolean"
+        )
+    if required is False and action != "none":
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "optional migration must use action `none`"
+        )
+    if required is True and action == "none":
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "required migration must use a concrete action"
+        )
     if health["ok"] is True and (not exists or action != "none"):
         raise IndexWatchError(
             f"invalid health payload from {operation}: "
             "healthy indexes must be existing indexes with migration action `none`"
         )
+    response_schema_version = health.get("response_schema_version")
+    if response_schema_version != _SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION:
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "`response_schema_version` does not match the supported response schema"
+        )
+    db_path = health.get("db_path")
+    if not isinstance(db_path, str) or not db_path.strip():
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `db_path` must be a non-empty string"
+        )
+
+    for field_name in (
+        "workspace_root",
+        "indexed_files",
+        "indexed_symbols",
+        "file_state_entries",
+        "fresh_file_count",
+    ):
+        value = health.get(field_name)
+        if field_name == "workspace_root":
+            valid = value is None or (isinstance(value, str) and bool(value.strip()))
+            expected = "a non-empty string or null"
+        else:
+            valid = value is None or (
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            )
+            expected = "a non-negative integer or null"
+        if not valid:
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                f"`{field_name}` must be {expected}"
+            )
+
+    if health["ok"] is True and (
+        health.get("issues")
+        or required
+        or health.get("schema_version") != expected_schema_version
+        or health.get("workspace_root") is None
+        or any(
+            health.get(field_name) is None
+            for field_name in (
+                "indexed_files",
+                "indexed_symbols",
+                "file_state_entries",
+                "fresh_file_count",
+            )
+        )
+    ):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "healthy indexes must report a complete current inspection"
+        )
+    if health["ok"] is False and not health["issues"]:
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "unhealthy indexes must report at least one issue"
+        )
+    if not exists and (
+        health.get("schema_version") is not None
+        or health.get("workspace_root") is not None
+        or any(
+            health.get(field_name) is not None
+            for field_name in (
+                "indexed_files",
+                "indexed_symbols",
+                "file_state_entries",
+                "fresh_file_count",
+            )
+        )
+        or any(
+            health.get(field_name)
+            for field_name in (
+                "stale_files",
+                "missing_files",
+                "unreadable_files",
+                "unindexed_files",
+            )
+        )
+    ):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "missing indexes must not report loaded metadata"
+        )
+    if not exists and action != "rebuild":
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "missing indexes must recommend rebuild"
+        )
+    fresh_file_count = health.get("fresh_file_count")
+    file_state_entries = health.get("file_state_entries")
+    if fresh_file_count is not None:
+        if file_state_entries is None:
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                "`fresh_file_count` requires `file_state_entries`"
+            )
+        if (
+            fresh_file_count
+            + len(health["stale_files"])
+            + len(health["missing_files"])
+            + len(health["unreadable_files"])
+            != file_state_entries
+        ):
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                "freshness counts must equal `file_state_entries`"
+            )
+
+    freshness_paths: set[str] = set()
+    for field_name in (
+        "stale_files",
+        "missing_files",
+        "unreadable_files",
+        "unindexed_files",
+    ):
+        for value in health[field_name]:
+            if value in freshness_paths:
+                raise IndexWatchError(
+                    f"invalid health payload from {operation}: "
+                    "freshness file paths must be unique"
+                )
+            freshness_paths.add(value)
 
 
 def _validate_refresh_stats_payload(

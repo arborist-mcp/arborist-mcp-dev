@@ -706,6 +706,8 @@ completed item can land in its own commit unless two changes are inseparable.
   decisions, so malformed native responses cannot be treated as healthy.
 - [x] Validate index-watch refresh statistics against the persisted-index
   stats contract before emitting a refreshed event.
+- [x] Validate index-watch health metadata and migration-plan invariants
+  against the persisted-index health contract before making repair decisions.
 
 ### P2: Multi-Language Foundation
 
