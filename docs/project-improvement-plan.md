@@ -713,6 +713,8 @@ completed item can land in its own commit unless two changes are inseparable.
   database path before emitting repair or refresh events.
 - [x] Reject unknown fields in index-watch health, migration, and refresh
   responses so the Python boundary matches the native serde contract.
+- [x] Compare index-watch freshness paths by normalized filesystem identity so
+  equivalent path spellings cannot bypass duplicate-entry validation.
 
 ### P2: Multi-Language Foundation
 

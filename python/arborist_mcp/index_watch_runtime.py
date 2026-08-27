@@ -311,13 +311,20 @@ def _validate_health_payload(
         "unreadable_files",
         "unindexed_files",
     ):
-        for value in health[field_name]:
-            if value in freshness_paths:
+        for index, value in enumerate(health[field_name]):
+            try:
+                path_identity = _target_identity_path(value)
+            except (OSError, RuntimeError, ValueError):
+                raise IndexWatchError(
+                    f"invalid health payload from {operation}: "
+                    f"`{field_name}[{index}]` must be a valid path"
+                ) from None
+            if path_identity in freshness_paths:
                 raise IndexWatchError(
                     f"invalid health payload from {operation}: "
                     "freshness file paths must be unique"
                 )
-            freshness_paths.add(value)
+            freshness_paths.add(path_identity)
 
 
 def _validate_refresh_stats_payload(

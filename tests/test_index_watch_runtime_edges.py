@@ -198,6 +198,33 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_inspect_rejects_equivalent_duplicate_freshness_paths(self) -> None:
+        class DuplicateFreshnessPathCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(
+                    health_payload(ok=False, action="rebuild", reason="stale")
+                )
+                payload["indexed_files"] = 2
+                payload["file_state_entries"] = 2
+                payload["fresh_file_count"] = 0
+                payload["stale_files"] = ["./src/example.py", "src/example.py"]
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: freshness file paths must be unique",
+        ):
+            reconcile_index(
+                DuplicateFreshnessPathCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+                dry_run=True,
+            )
+
     def test_inspect_rejects_missing_migration_metadata(self) -> None:
         class MalformedHealthCore:
             def inspect_symbol_index_json(
