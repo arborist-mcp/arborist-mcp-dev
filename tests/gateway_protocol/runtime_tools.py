@@ -201,6 +201,15 @@ class GatewayRuntimeToolsTestsMixin:
                 [{"name": "arborist/get_semantic_skeleton", "result": []}],
                 "has invalid result",
             ),
+            (
+                [
+                    {
+                        "name": "arborist/get_semantic_skeleton",
+                        "result": _valid_trace_symbol_graph_result(),
+                    }
+                ],
+                "result is missing required field `file`",
+            ),
         )
 
         for tool_result, expected_message in cases:

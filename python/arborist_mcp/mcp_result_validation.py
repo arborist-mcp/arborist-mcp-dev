@@ -19,7 +19,14 @@ def validate_tool_result_shape(
 ) -> None:
     """Keep structured results aligned with their advertised top-level type."""
     if deep:
-        _validate_shallow_result_shape(tool_name, tool_result)
+        _validate_shallow_result_shape(
+            tool_name,
+            tool_result,
+            validate_batch_items=False,
+        )
+        if tool_name == "arborist/batch":
+            _validate_batch_items(tool_result)
+            return
         schema = TOOL_RESULT_SCHEMAS.get(tool_name, {"type": "object"})
         try:
             _validate_result_schema(schema, tool_result, "result")
@@ -33,7 +40,12 @@ def validate_tool_result_shape(
     _validate_shallow_result_shape(tool_name, tool_result)
 
 
-def _validate_shallow_result_shape(tool_name: str, tool_result: Any) -> None:
+def _validate_shallow_result_shape(
+    tool_name: str,
+    tool_result: Any,
+    *,
+    validate_batch_items: bool = True,
+) -> None:
     """Check only the compatibility-preserving top-level result shape."""
     schema = TOOL_RESULT_SCHEMAS.get(tool_name)
     expected_type = schema.get("type", "object") if schema is not None else "object"
@@ -60,7 +72,7 @@ def _validate_shallow_result_shape(tool_name: str, tool_result: Any) -> None:
                         -32000,
                         f"invalid result from {tool_name}: expected object item at index {index}",
                     )
-                if tool_name == "arborist/batch":
+                if tool_name == "arborist/batch" and validate_batch_items:
                     _validate_batch_item(item, index)
         return
 
@@ -262,3 +274,8 @@ def _validate_batch_item(item: dict[str, Any], index: int) -> None:
             f"invalid result from arborist/batch: object item at index {index} "
             f"has invalid result: {exc}",
         ) from exc
+
+
+def _validate_batch_items(tool_result: list[Any]) -> None:
+    for index, item in enumerate(tool_result):
+        _validate_batch_item(item, index)
