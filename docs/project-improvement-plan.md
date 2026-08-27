@@ -711,6 +711,8 @@ completed item can land in its own commit unless two changes are inseparable.
   including persisted file-count conservation and nonblank migration reasons.
 - [x] Verify index-watch health and refresh responses belong to the requested
   database path before emitting repair or refresh events.
+- [x] Reject unknown fields in index-watch health, migration, and refresh
+  responses so the Python boundary matches the native serde contract.
 
 ### P2: Multi-Language Foundation
 

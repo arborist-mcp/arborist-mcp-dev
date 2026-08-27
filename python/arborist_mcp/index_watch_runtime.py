@@ -16,6 +16,38 @@ from .index_watch_config import (
 
 _SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION = "4"
 
+_HEALTH_FIELDS = frozenset(
+    {
+        "response_schema_version",
+        "db_path",
+        "exists",
+        "ok",
+        "schema_version",
+        "expected_schema_version",
+        "migration",
+        "workspace_root",
+        "indexed_files",
+        "indexed_symbols",
+        "file_state_entries",
+        "fresh_file_count",
+        "stale_files",
+        "missing_files",
+        "unreadable_files",
+        "unindexed_files",
+        "issues",
+    }
+)
+_MIGRATION_FIELDS = frozenset({"required", "action", "reason"})
+_REFRESH_STATS_FIELDS = frozenset(
+    {
+        "db_path",
+        "indexed_files",
+        "indexed_symbols",
+        "rebuilt_files",
+        "reused_files",
+    }
+)
+
 
 class IndexWatchCore(Protocol):
     def inspect_symbol_index_json(
@@ -36,12 +68,27 @@ class IndexWatchCore(Protocol):
     ) -> str: ...
 
 
+def _reject_unknown_fields(
+    payload: dict[str, Any],
+    expected_fields: frozenset[str],
+    operation: str,
+    object_name: str,
+) -> None:
+    unexpected = sorted(set(payload) - expected_fields)
+    if unexpected:
+        raise IndexWatchError(
+            f"invalid {object_name} payload from {operation}: "
+            f"unexpected field `{unexpected[0]}`"
+        )
+
+
 def _validate_health_payload(
     health: dict[str, Any],
     operation: str,
     *,
     expected_db_path: str | None = None,
 ) -> None:
+    _reject_unknown_fields(health, _HEALTH_FIELDS, operation, "health")
     if not isinstance(health.get("ok"), bool):
         raise IndexWatchError(
             f"invalid health payload from {operation}: `ok` must be a boolean"
@@ -81,6 +128,12 @@ def _validate_health_payload(
         raise IndexWatchError(
             f"invalid health payload from {operation}: `migration` must be an object"
         )
+    _reject_unknown_fields(
+        migration,
+        _MIGRATION_FIELDS,
+        operation,
+        "health migration",
+    )
     action = migration.get("action")
     if not isinstance(action, str) or not action.strip():
         raise IndexWatchError(
@@ -273,6 +326,7 @@ def _validate_refresh_stats_payload(
     *,
     expected_db_path: str | None = None,
 ) -> None:
+    _reject_unknown_fields(stats, _REFRESH_STATS_FIELDS, operation, "stats")
     db_path = stats.get("db_path")
     if not isinstance(db_path, str) or not db_path.strip():
         raise IndexWatchError(

@@ -156,6 +156,48 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_inspect_rejects_unknown_health_field(self) -> None:
+        class UnknownHealthFieldCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=True, action="none"))
+                payload["future_field"] = True
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: unexpected field `future_field`",
+        ):
+            reconcile_index(
+                UnknownHealthFieldCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_inspect_rejects_unknown_migration_field(self) -> None:
+        class UnknownMigrationFieldCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=True, action="none"))
+                payload["migration"]["future_field"] = True
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health migration payload from inspect_symbol_index: unexpected field `future_field`",
+        ):
+            reconcile_index(
+                UnknownMigrationFieldCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
     def test_inspect_rejects_missing_migration_metadata(self) -> None:
         class MalformedHealthCore:
             def inspect_symbol_index_json(
@@ -322,6 +364,40 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
         ):
             reconcile_index(
                 MalformedStatsCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_refresh_rejects_unknown_stats_field(self) -> None:
+        class UnknownStatsFieldCore(FailingCore):
+            def __init__(self) -> None:
+                super().__init__("refresh", "unused")
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="rebuild", reason="stale")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                return json.dumps(
+                    {
+                        "db_path": "symbols.db",
+                        "indexed_files": 1,
+                        "indexed_symbols": 1,
+                        "rebuilt_files": 1,
+                        "reused_files": 0,
+                        "future_field": True,
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid stats payload from refresh_symbol_index: unexpected field `future_field`",
+        ):
+            reconcile_index(
+                UnknownStatsFieldCore(),
                 workspace_root="workspace",
                 db_path="symbols.db",
                 max_files=20,
