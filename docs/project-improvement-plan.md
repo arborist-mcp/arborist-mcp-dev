@@ -721,6 +721,8 @@ completed item can land in its own commit unless two changes are inseparable.
   against the advertised output schemas before returning a successful result.
 - [x] Apply MCP result-shape checks to each nested `arborist/batch` call so
   malformed inner results cannot hide inside an otherwise valid batch envelope.
+- [x] Validate MCP batch result-item required fields, unknown fields, supported
+  tool names, and nested result shapes before returning the batch response.
 
 ### P2: Multi-Language Foundation
 

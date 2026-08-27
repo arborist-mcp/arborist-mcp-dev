@@ -61,6 +61,43 @@ class GatewayRuntimeToolsTestsMixin:
                 self.assertIn(expected_message, result["content"][0]["text"])
                 self.assertNotIn("structuredContent", result)
 
+    def test_tools_call_rejects_malformed_batch_result_items(self) -> None:
+        cases = (
+            (
+                [{"name": "arborist/get_semantic_skeleton"}],
+                "missing field `result`",
+            ),
+            (
+                [
+                    {
+                        "name": "arborist/get_semantic_skeleton",
+                        "result": {},
+                        "extra": True,
+                    }
+                ],
+                "has unexpected field `extra`",
+            ),
+            (
+                [{"name": "arborist/batch", "result": []}],
+                "has unsupported tool name `arborist/batch`",
+            ),
+            (
+                [{"name": "arborist/get_semantic_skeleton", "result": []}],
+                "has invalid result",
+            ),
+        )
+
+        for tool_result, expected_message in cases:
+            with self.subTest(tool_result=tool_result):
+                result = tools_call(
+                    {"name": "arborist/batch", "arguments": {"calls": []}},
+                    lambda _tool_name, _arguments, result=tool_result: result,
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertIn(expected_message, result["content"][0]["text"])
+                self.assertNotIn("structuredContent", result)
+
     def test_batch_rejects_inner_result_shape_mismatch(self) -> None:
         with self.assertRaisesRegex(
             JsonRpcError,
