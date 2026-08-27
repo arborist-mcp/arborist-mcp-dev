@@ -177,6 +177,30 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_inspect_rejects_missing_nullable_health_field(self) -> None:
+        class MissingHealthFieldCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(
+                    health_payload(ok=False, action="rebuild", reason="stale")
+                )
+                del payload["workspace_root"]
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: missing field `workspace_root`",
+        ):
+            reconcile_index(
+                MissingHealthFieldCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+                dry_run=True,
+            )
+
     def test_inspect_rejects_unknown_migration_field(self) -> None:
         class UnknownMigrationFieldCore:
             def inspect_symbol_index_json(

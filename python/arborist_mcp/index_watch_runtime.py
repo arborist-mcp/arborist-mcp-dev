@@ -82,6 +82,20 @@ def _reject_unknown_fields(
         )
 
 
+def _reject_missing_fields(
+    payload: dict[str, Any],
+    expected_fields: frozenset[str],
+    operation: str,
+    object_name: str,
+) -> None:
+    missing = sorted(expected_fields - set(payload))
+    if missing:
+        raise IndexWatchError(
+            f"invalid {object_name} payload from {operation}: "
+            f"missing field `{missing[0]}`"
+        )
+
+
 def _validate_health_payload(
     health: dict[str, Any],
     operation: str,
@@ -325,6 +339,7 @@ def _validate_health_payload(
                     "freshness file paths must be unique"
                 )
             freshness_paths.add(path_identity)
+    _reject_missing_fields(health, _HEALTH_FIELDS, operation, "health")
 
 
 def _validate_refresh_stats_payload(

@@ -715,6 +715,8 @@ completed item can land in its own commit unless two changes are inseparable.
   responses so the Python boundary matches the native serde contract.
 - [x] Compare index-watch freshness paths by normalized filesystem identity so
   equivalent path spellings cannot bypass duplicate-entry validation.
+- [x] Enforce required-field presence for index-watch health responses,
+  including fields whose values are nullable in the native schema.
 
 ### P2: Multi-Language Foundation
 
