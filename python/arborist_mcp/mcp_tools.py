@@ -41,7 +41,7 @@ def tools_call(params: dict[str, Any], execute_tool: ToolExecutor) -> dict[str, 
         spec = tool_spec(tool_name)
         reject_unexpected_params(arguments, spec.params)
         tool_result = execute_tool(tool_name, arguments)
-        validate_tool_result_shape(tool_name, tool_result)
+        validate_tool_result_shape(tool_name, tool_result, deep=True)
         return mcp_tool_result(tool_result)
     except JsonRpcError as exc:
         return mcp_tool_error(str(exc))

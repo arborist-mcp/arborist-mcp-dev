@@ -53,6 +53,11 @@ Minimal MCP messages:
 
 Successful `tools/call` responses return the raw Arborist result as JSON text in
 `content[0].text` and as structured JSON under `structuredContent.result`.
+Before a successful response is exposed, the gateway validates the result
+against the tool's advertised output schema, including required fields,
+property types, bounds, enums, and nested arrays or objects. A malformed
+result is returned as an MCP tool error with `isError: true` and does not
+include `structuredContent`.
 Unknown tool names and malformed `tools/call` envelopes are JSON-RPC `-32602`
 errors. Tool argument validation failures, core validation failures, and core
 runtime errors are returned as MCP tool results with `isError: true`.
@@ -145,9 +150,8 @@ JSON-RPC code `-32000` for legacy calls, returns an MCP tool error through
 `tools/call`, and never returns a partial result array.
 
 Successful batch results contain one `{ "name": ..., "result": ... }` item per
-inner call. The gateway checks each item against the advertised nested result
-schema, including required fields, property types, bounds, enums, and nested
-arrays or objects. A malformed nested result is rejected before
+inner call. The same output-schema validation is applied to each nested result
+and its batch envelope. A malformed nested result is rejected before
 `structuredContent` is exposed; MCP callers receive `isError: true`, while
 legacy callers receive a JSON-RPC `-32000` error.
 

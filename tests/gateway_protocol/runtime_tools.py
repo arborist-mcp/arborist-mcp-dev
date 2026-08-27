@@ -61,19 +61,82 @@ def _valid_trace_symbol_neighborhood_result() -> dict[str, object]:
     }
 
 
+def _valid_patch_ast_node_result() -> dict[str, object]:
+    return {
+        "file": "sample.py",
+        "target_path": "top_level",
+        "resolved_path": "top_level",
+        "resolved_symbol_id": "sample.py::top_level",
+        "applied": True,
+        "bypass_applied": False,
+        "updated_source": "def top_level():\n    return 1\n",
+        "validation": {
+            "syntax_errors": [],
+            "unresolved_identifiers": [],
+            "resolved_identifiers": [],
+            "ambiguous_identifiers": [],
+            "binding_decisions": [],
+            "commit_gate": {
+                "status": "allowed",
+                "allowed": True,
+                "reason": "patch accepted",
+                "bypass_reason": None,
+                "blocking_decisions": [],
+                "evidence_invariants": [],
+                "syntax_error_count": 0,
+            },
+        },
+    }
+
+
 class GatewayRuntimeToolsTestsMixin:
     def test_tools_call_returns_mcp_error_for_non_serializable_tool_result(self) -> None:
         result = tools_call(
             {
-                "name": "arborist/get_semantic_skeleton",
-                "arguments": {"file_path": "sample.py"},
+                "name": "arborist/export_patch_diagnostics_sarif",
+                "arguments": {},
             },
-            lambda _tool_name, _arguments: {"invalid": float("nan")},
+            lambda _tool_name, _arguments: {
+                "version": "2.1.0",
+                "$schema": "https://example.test/sarif.json",
+                "runs": [{}],
+                "invalid": float("nan"),
+            },
         )
 
         self.assertTrue(result["isError"])
         self.assertNotIn("structuredContent", result)
         self.assertIn("Out of range float values", result["content"][0]["text"])
+
+    def test_tools_call_rejects_malformed_direct_result_schema(self) -> None:
+        cases = (
+            (
+                "arborist/get_semantic_skeleton",
+                {},
+                "result is missing required field `file`",
+            ),
+            (
+                "arborist/register_symbol_index",
+                {"workspace_root": ".", "db_path": "symbols.db", "extra": True},
+                "result has unexpected field `extra`",
+            ),
+            (
+                "arborist/trace_symbol_graph",
+                {**_valid_trace_symbol_graph_result(), "indexed_files": -1},
+                "result.indexed_files must be at least 0",
+            ),
+        )
+
+        for tool_name, tool_result, expected_message in cases:
+            with self.subTest(tool_name=tool_name):
+                result = tools_call(
+                    {"name": tool_name, "arguments": {}},
+                    lambda _tool_name, _arguments, result=tool_result: result,
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertIn(expected_message, result["content"][0]["text"])
+                self.assertNotIn("structuredContent", result)
 
     def test_tools_call_rejects_result_shape_mismatch(self) -> None:
         cases = (
@@ -248,7 +311,8 @@ class GatewayRuntimeToolsTestsMixin:
             )
 
     def test_tools_call_invokes_read_tool(self) -> None:
-        core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
+        skeleton = _valid_semantic_skeleton_result()
+        core = make_recording_json_core(get_semantic_skeleton_json=skeleton)
 
         result = self.assert_jsonrpc_ok(
             self.call_gateway(
@@ -265,11 +329,12 @@ class GatewayRuntimeToolsTestsMixin:
 
         assert isinstance(result, dict)
         self.assertFalse(result["isError"])
-        self.assertEqual(result["structuredContent"]["result"], {"kind": "module"})
+        self.assertEqual(result["structuredContent"]["result"], skeleton)
         self.assertEqual(core.calls_for("get_semantic_skeleton_json"), [("sample.py", None, 2, None)])
 
     def test_tools_call_invokes_write_tool(self) -> None:
-        core = make_recording_json_core(patch_ast_node_json={"patched": True})
+        patch = _valid_patch_ast_node_result()
+        core = make_recording_json_core(patch_ast_node_json=patch)
 
         result = self.assert_jsonrpc_ok(
             self.call_gateway(
@@ -290,14 +355,15 @@ class GatewayRuntimeToolsTestsMixin:
 
         assert isinstance(result, dict)
         self.assertFalse(result["isError"])
-        self.assertEqual(result["structuredContent"]["result"], {"patched": True})
+        self.assertEqual(result["structuredContent"]["result"], patch)
         self.assertEqual(
             core.calls_for("patch_ast_node_json"),
             [("sample.py", "top_level", "def top_level():\n    return 1\n", None, None)],
         )
 
     def test_tools_call_invokes_index_tool(self) -> None:
-        core = make_recording_json_core(register_symbol_index_json={"registered": True})
+        registered = {"workspace_root": ".", "db_path": "symbols.db"}
+        core = make_recording_json_core(register_symbol_index_json=registered)
 
         result = self.assert_jsonrpc_ok(
             self.call_gateway(
@@ -314,11 +380,12 @@ class GatewayRuntimeToolsTestsMixin:
 
         assert isinstance(result, dict)
         self.assertFalse(result["isError"])
-        self.assertEqual(result["structuredContent"]["result"], {"registered": True})
+        self.assertEqual(result["structuredContent"]["result"], registered)
         self.assertEqual(core.calls_for("register_symbol_index_json"), [(".", "symbols.db")])
 
     def test_tools_call_invokes_trace_tool(self) -> None:
-        core = make_recording_json_core(trace_symbol_graph_json={"symbol": "top_level"})
+        trace = _valid_trace_symbol_graph_result()
+        core = make_recording_json_core(trace_symbol_graph_json=trace)
 
         result = self.assert_jsonrpc_ok(
             self.call_gateway(
@@ -335,7 +402,7 @@ class GatewayRuntimeToolsTestsMixin:
 
         assert isinstance(result, dict)
         self.assertFalse(result["isError"])
-        self.assertEqual(result["structuredContent"]["result"], {"symbol": "top_level"})
+        self.assertEqual(result["structuredContent"]["result"], trace)
         self.assertEqual(
             core.calls_for("trace_symbol_graph_json"),
             [(".", "top_level", "both", None, None, None, None)],

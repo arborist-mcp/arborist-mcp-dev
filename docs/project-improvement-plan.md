@@ -726,6 +726,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Deeply validate nested batch result payloads against their advertised
   required fields, property types, bounds, enums, and nested array/object
   schemas while preserving the shallow compatibility checks for direct tools.
+- [x] Deeply validate direct MCP `tools/call` result payloads against their
+  advertised required fields, property types, bounds, enums, and nested
+  array/object schemas before exposing `structuredContent`.
 
 ### P2: Multi-Language Foundation
 
