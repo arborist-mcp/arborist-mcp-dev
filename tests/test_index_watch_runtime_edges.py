@@ -279,6 +279,64 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_refresh_rejects_incomplete_stats_payload(self) -> None:
+        class MalformedStatsCore(FailingCore):
+            def __init__(self) -> None:
+                super().__init__("refresh", "unused")
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="rebuild", reason="stale")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                return json.dumps({"db_path": "symbols.db", "indexed_files": 1})
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid stats payload from refresh_symbol_index: `indexed_symbols` must be a non-negative integer",
+        ):
+            reconcile_index(
+                MalformedStatsCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_refresh_rejects_inconsistent_stats_counts(self) -> None:
+        class InconsistentStatsCore(FailingCore):
+            def __init__(self) -> None:
+                super().__init__("refresh", "unused")
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="rebuild", reason="stale")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                return json.dumps(
+                    {
+                        "db_path": "symbols.db",
+                        "indexed_files": 2,
+                        "indexed_symbols": 2,
+                        "rebuilt_files": 2,
+                        "reused_files": 1,
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            r"invalid stats payload from refresh_symbol_index: `indexed_files` must equal `rebuilt_files` \+ `reused_files`",
+        ):
+            reconcile_index(
+                InconsistentStatsCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
     def test_refresh_failure_is_wrapped_with_context(self) -> None:
         class RebuildableCore(FailingCore):
             def __init__(self) -> None:

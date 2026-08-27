@@ -99,6 +99,36 @@ def _validate_health_payload(
         )
 
 
+def _validate_refresh_stats_payload(
+    stats: dict[str, Any],
+    operation: str,
+) -> None:
+    db_path = stats.get("db_path")
+    if not isinstance(db_path, str) or not db_path.strip():
+        raise IndexWatchError(
+            f"invalid stats payload from {operation}: `db_path` must be a non-empty string"
+        )
+    counts: dict[str, int] = {}
+    for field_name in (
+        "indexed_files",
+        "indexed_symbols",
+        "rebuilt_files",
+        "reused_files",
+    ):
+        value = stats.get(field_name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise IndexWatchError(
+                f"invalid stats payload from {operation}: "
+                f"`{field_name}` must be a non-negative integer"
+            )
+        counts[field_name] = value
+    if counts["rebuilt_files"] + counts["reused_files"] != counts["indexed_files"]:
+        raise IndexWatchError(
+            f"invalid stats payload from {operation}: "
+            "`indexed_files` must equal `rebuilt_files` + `reused_files`"
+        )
+
+
 def _health_summary(health: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": health.get("ok"),
@@ -240,6 +270,9 @@ def _reconcile_index(
             )
         stats = bindings["_decode_object"](
             refresh_payload, "refresh_symbol_index"
+        )
+        bindings["_validate_refresh_stats_payload"](
+            stats, "refresh_symbol_index"
         )
     except bindings["IndexWatchError"]:
         raise

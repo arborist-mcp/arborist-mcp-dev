@@ -59,7 +59,10 @@ class StubCore:
     def __init__(
         self,
         health: str,
-        refresh: str = '{"indexed_files": 1}',
+        refresh: str = (
+            '{"db_path": "symbols.db", "indexed_files": 1, '
+            '"indexed_symbols": 1, "rebuilt_files": 1, "reused_files": 0}'
+        ),
         migrate: str = '{"ok": true, "issues": []}',
     ) -> None:
         self.health = health
@@ -391,7 +394,10 @@ class IndexWatchTests(unittest.TestCase):
     def test_reconcile_refreshes_rebuildable_index(self) -> None:
         core = StubCore(
             health_payload(ok=False, action="rebuild", reason="indexed file is stale"),
-            '{"indexed_files": 2, "rebuilt_files": 1}',
+            (
+                '{"db_path": "symbols.db", "indexed_files": 2, '
+                '"indexed_symbols": 2, "rebuilt_files": 1, "reused_files": 1}'
+            ),
         )
 
         event = reconcile_index(
