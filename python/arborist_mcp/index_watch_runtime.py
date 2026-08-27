@@ -40,6 +40,21 @@ def _validate_health_payload(
         raise IndexWatchError(
             f"invalid health payload from {operation}: `ok` must be a boolean"
         )
+    exists = health.get("exists")
+    if not isinstance(exists, bool):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `exists` must be a boolean"
+        )
+    schema_version = health.get("schema_version")
+    if schema_version is not None and not isinstance(schema_version, str):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `schema_version` must be a string or null"
+        )
+    expected_schema_version = health.get("expected_schema_version")
+    if not isinstance(expected_schema_version, str) or not expected_schema_version.strip():
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `expected_schema_version` must be a non-empty string"
+        )
     for field_name in (
         "issues",
         "stale_files",
@@ -49,7 +64,7 @@ def _validate_health_payload(
     ):
         values = health.get(field_name)
         if not isinstance(values, list) or any(
-            not isinstance(value, str) for value in values
+            not isinstance(value, str) or not value.strip() for value in values
         ):
             raise IndexWatchError(
                 f"invalid health payload from {operation}: "
@@ -66,11 +81,21 @@ def _validate_health_payload(
             f"invalid health payload from {operation}: "
             "`migration.action` must be a non-empty string"
         )
+    if action not in {"none", "migrate", "rebuild", "manual"}:
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            f"unsupported `migration.action`: {action}"
+        )
     reason = migration.get("reason")
     if not isinstance(reason, str):
         raise IndexWatchError(
             f"invalid health payload from {operation}: "
             "`migration.reason` must be a string"
+        )
+    if health["ok"] is True and (not exists or action != "none"):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "healthy indexes must be existing indexes with migration action `none`"
         )
 
 

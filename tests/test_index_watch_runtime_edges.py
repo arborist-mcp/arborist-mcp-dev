@@ -125,6 +125,8 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 return json.dumps(
                     {
                         "ok": True,
+                        "exists": True,
+                        "expected_schema_version": "1",
                         "issues": "not-a-list",
                         "migration": {"action": "none", "reason": "current"},
                     }
@@ -150,6 +152,8 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 return json.dumps(
                     {
                         "ok": True,
+                        "exists": True,
+                        "expected_schema_version": "1",
                         "issues": [],
                         "stale_files": [],
                         "missing_files": [],
@@ -252,6 +256,8 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 return json.dumps(
                     {
                         "ok": False,
+                        "exists": True,
+                        "expected_schema_version": "1",
                         "issues": [],
                         "stale_files": [],
                         "missing_files": [],
@@ -376,7 +382,9 @@ class OrderedWatchTargetTests(unittest.TestCase):
             return json.dumps(
                 {
                     "ok": False,
-                    "exists": False,
+                    "exists": True,
+                    "schema_version": "1",
+                    "expected_schema_version": "1",
                     "migration": migration,
                     "issues": issues,
                     "stale_files": [],
@@ -419,6 +427,69 @@ class OrderedWatchTargetTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_inspect_rejects_healthy_repair_action(self) -> None:
+        class MalformedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "exists": True,
+                        "schema_version": "1",
+                        "expected_schema_version": "1",
+                        "issues": [],
+                        "stale_files": [],
+                        "missing_files": [],
+                        "unreadable_files": [],
+                        "unindexed_files": [],
+                        "migration": {"action": "rebuild", "reason": "stale"},
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "healthy indexes must be existing indexes with migration action `none`",
+        ):
+            reconcile_index(
+                MalformedHealthCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_inspect_rejects_blank_health_entries(self) -> None:
+        class MalformedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "exists": True,
+                        "expected_schema_version": "1",
+                        "issues": [""],
+                        "stale_files": [],
+                        "missing_files": [],
+                        "unreadable_files": [],
+                        "unindexed_files": [],
+                        "migration": {"action": "manual", "reason": "repair"},
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: `issues` must be a list of strings",
+        ):
+            reconcile_index(
+                MalformedHealthCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
     def test_inspect_rejects_missing_migration_fields(self) -> None:
         class MalformedHealthCore:
             def __init__(self, migration: object) -> None:
@@ -430,6 +501,8 @@ class OrderedWatchTargetTests(unittest.TestCase):
                 return json.dumps(
                     {
                         "ok": False,
+                        "exists": True,
+                        "expected_schema_version": "1",
                         "issues": ["index is unhealthy"],
                         "stale_files": [],
                         "missing_files": [],
