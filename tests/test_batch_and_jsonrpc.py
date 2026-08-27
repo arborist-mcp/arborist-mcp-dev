@@ -2,7 +2,12 @@ import json
 import unittest
 
 from arborist_mcp.batch_tools import _validate_batch_calls
-from arborist_mcp.jsonrpc import error_response, is_valid_request_id, serialize_response
+from arborist_mcp.jsonrpc import (
+    _ascii_escape,
+    error_response,
+    is_valid_request_id,
+    serialize_response,
+)
 from arborist_mcp.tool_param_specs import MAX_BATCH_CALLS, MAX_WORKSPACE_SCAN_TIMEOUT_MS
 from arborist_mcp.tool_result_schemas import JsonRpcError
 
@@ -148,6 +153,15 @@ class ErrorResponseContractTests(unittest.TestCase):
         response = json.loads(payload)
         self.assertEqual(response["error"]["code"], -32000)
         self.assertIn("failed to serialize response", response["error"]["message"])
+
+    def test_ascii_escape_keeps_surrogates_and_supplementary_characters_valid_json(self) -> None:
+        payload = _ascii_escape('{"value":"\u00e9\U0001f600\ud800X\udc00"}')
+
+        self.assertTrue(payload.isascii())
+        self.assertEqual(
+            json.loads(payload),
+            {"value": "\u00e9\U0001f600\ud800X\udc00"},
+        )
 
     def test_serialize_response_round_trips_normal_payloads(self) -> None:
         response = {"jsonrpc": "2.0", "id": 3, "result": {"ok": True}}

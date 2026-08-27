@@ -421,6 +421,79 @@ class GatewayRuntimeTransportTestsMixin:
 
         self.assertEqual(exit_code, 0)
 
+    def test_stdio_retries_with_ascii_escaped_json_when_stdout_cannot_encode_unicode(
+        self,
+    ) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"message": "\u00e9\U0001f600"},
+                }
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
+        )
+        stdout_bytes = io.BytesIO()
+        stdout = io.TextIOWrapper(stdout_bytes, encoding="ascii", errors="strict")
+
+        try:
+            with mock.patch.object(
+                gateway_module, "ArboristGateway", return_value=fake_gateway
+            ):
+                with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                    exit_code = gateway_module.run_stdio()
+            stdout.flush()
+            raw_output = stdout_bytes.getvalue().decode("ascii")
+            response = gateway_module.json.loads(raw_output)
+        finally:
+            stdout.detach()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(r"\u00e9", raw_output)
+        self.assertIn(r"\ud83d\ude00", raw_output)
+        self.assertEqual(response["result"], {"message": "\u00e9\U0001f600"})
+
+    def test_once_retries_with_ascii_escaped_json_when_stdout_cannot_encode_unicode(
+        self,
+    ) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {"message": "\u00e9\U0001f600"},
+                }
+
+        fake_gateway = StubGateway()
+        stdout_bytes = io.BytesIO()
+        stdout = io.TextIOWrapper(stdout_bytes, encoding="ascii", errors="strict")
+
+        try:
+            with mock.patch.object(
+                gateway_module, "ArboristGateway", return_value=fake_gateway
+            ):
+                with mock.patch(
+                    "pathlib.Path.read_text",
+                    return_value=(
+                        '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{}}'
+                    ),
+                ):
+                    with mock.patch("sys.stdout", stdout):
+                        exit_code = gateway_module.main(["--once", "dummy.json"])
+            stdout.flush()
+            raw_output = stdout_bytes.getvalue().decode("ascii")
+            response = gateway_module.json.loads(raw_output)
+        finally:
+            stdout.detach()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(r"\u00e9", raw_output)
+        self.assertIn(r"\ud83d\ude00", raw_output)
+        self.assertEqual(response["result"], {"message": "\u00e9\U0001f600"})
+
     def test_stdio_nonstandard_response_value_emits_internal_error(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:

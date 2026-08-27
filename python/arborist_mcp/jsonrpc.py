@@ -133,12 +133,37 @@ def serialize_response(response: dict[str, Any], indent: int | None = None) -> s
         return json.dumps(fallback, ensure_ascii=True, allow_nan=False, indent=indent)
 
 
+def _ascii_escape(payload: str) -> str:
+    escaped: list[str] = []
+    for character in payload:
+        codepoint = ord(character)
+        if codepoint < 0x80:
+            escaped.append(character)
+        elif codepoint <= 0xFFFF:
+            escaped.append(f"\\u{codepoint:04x}")
+        else:
+            codepoint -= 0x10000
+            high_surrogate = 0xD800 + (codepoint >> 10)
+            low_surrogate = 0xDC00 + (codepoint & 0x3FF)
+            escaped.append(f"\\u{high_surrogate:04x}\\u{low_surrogate:04x}")
+    return "".join(escaped)
+
+
 def write_response(payload: str) -> bool:
     try:
         sys.stdout.write(payload)
         sys.stdout.flush()
     except BrokenPipeError:
         return False
+    except UnicodeEncodeError:
+        # Some hosts configure stdout with a legacy encoding. Retry the same
+        # JSON document with equivalent ASCII \u escapes rather than losing
+        # the protocol response at the text-stream boundary.
+        try:
+            sys.stdout.write(_ascii_escape(payload))
+            sys.stdout.flush()
+        except (BrokenPipeError, UnicodeEncodeError):
+            return False
     return True
 
 
@@ -147,4 +172,9 @@ def print_response(payload: str) -> bool:
         print(payload)
     except BrokenPipeError:
         return False
+    except UnicodeEncodeError:
+        try:
+            print(_ascii_escape(payload))
+        except (BrokenPipeError, UnicodeEncodeError):
+            return False
     return True
