@@ -152,6 +152,64 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_migration_must_return_a_healthy_index(self) -> None:
+        class UnhealthyMigrationCore(FailingCore):
+            def __init__(self) -> None:
+                super().__init__("migrate", "unused")
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="migrate", reason="old schema")
+
+            def migrate_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(
+                    ok=False,
+                    action="manual",
+                    reason="post-migration validation failed",
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "migration completed unsuccessfully: post-migration validation failed",
+        ):
+            reconcile_index(
+                UnhealthyMigrationCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_migration_without_issues_uses_fail_closed_reason(self) -> None:
+        class IncompleteMigrationCore(FailingCore):
+            def __init__(self) -> None:
+                super().__init__("migrate", "unused")
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="migrate", reason="old schema")
+
+            def migrate_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps({"ok": False, "issues": []})
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "migration completed unsuccessfully: migration did not produce a healthy index",
+        ):
+            reconcile_index(
+                IncompleteMigrationCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
     def test_refresh_failure_is_wrapped_with_context(self) -> None:
         class RebuildableCore(FailingCore):
             def __init__(self) -> None:

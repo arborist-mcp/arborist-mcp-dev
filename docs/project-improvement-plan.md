@@ -700,6 +700,8 @@ completed item can land in its own commit unless two changes are inseparable.
   check-mode coordination into a CLI-independent runtime module, reducing the
   console facade below two hundred fifty lines while preserving its established
   callable API, facade monkeypatch seams, protocol metadata, and pickle paths.
+- [x] Make index-watch fail closed when a migration call returns an unhealthy
+  post-migration health payload instead of reporting a successful migration.
 
 ### P2: Multi-Language Foundation
 

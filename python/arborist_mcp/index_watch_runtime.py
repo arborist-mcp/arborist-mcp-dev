@@ -118,6 +118,19 @@ def _reconcile_index(
                 f"failed to migrate symbol index: {exc}"
             ) from exc
 
+        if migrated_health.get("ok") is not True:
+            issues = migrated_health.get("issues")
+            reason = (
+                issues[0]
+                if isinstance(issues, list)
+                and issues
+                and isinstance(issues[0], str)
+                else "migration did not produce a healthy index"
+            )
+            raise bindings["IndexWatchError"](
+                f"index watch migration completed unsuccessfully: {reason}"
+            )
+
         return {
             "status": "migrated",
             "db_path": db_path,
