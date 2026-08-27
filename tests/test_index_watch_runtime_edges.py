@@ -117,6 +117,59 @@ class HealthSummaryTests(unittest.TestCase):
 
 
 class ReconcileFailureWrappingTests(unittest.TestCase):
+    def test_inspect_rejects_malformed_health_shape(self) -> None:
+        class MalformedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "issues": "not-a-list",
+                        "migration": {"action": "none", "reason": "current"},
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: `issues` must be a list of strings",
+        ):
+            reconcile_index(
+                MalformedHealthCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_inspect_rejects_missing_migration_metadata(self) -> None:
+        class MalformedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "issues": [],
+                        "stale_files": [],
+                        "missing_files": [],
+                        "unreadable_files": [],
+                        "unindexed_files": [],
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: `migration` must be an object",
+        ):
+            reconcile_index(
+                MalformedHealthCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
     def test_inspect_failure_is_wrapped_with_context(self) -> None:
         core = FailingCore("inspect", "disk unavailable")
 
@@ -196,7 +249,17 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
             def migrate_symbol_index_json(
                 self, db_path: str, timeout_ms: int | None = None
             ) -> str:
-                return json.dumps({"ok": False, "issues": []})
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "issues": [],
+                        "stale_files": [],
+                        "missing_files": [],
+                        "unreadable_files": [],
+                        "unindexed_files": [],
+                        "migration": {"action": "manual", "reason": "not healthy"},
+                    }
+                )
 
         with self.assertRaisesRegex(
             IndexWatchError,
@@ -309,19 +372,29 @@ class OrderedWatchTargetTests(unittest.TestCase):
             ) -> str:
                 return self._payload
 
+        def payload(migration: dict[str, object], issues: list[str]) -> str:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "exists": False,
+                    "migration": migration,
+                    "issues": issues,
+                    "stale_files": [],
+                    "missing_files": [],
+                    "unreadable_files": [],
+                    "unindexed_files": [],
+                }
+            )
+
         with self.assertRaisesRegex(
             IndexWatchError,
             "cannot repair this index: first issue",
         ):
             reconcile_index(
                 UnrepairableCore(
-                    json.dumps(
-                        {
-                            "ok": False,
-                            "exists": False,
-                            "migration": {"action": "manual", "reason": ""},
-                            "issues": ["first issue"],
-                        }
+                    payload(
+                        {"action": "manual", "reason": ""},
+                        ["first issue"],
                     )
                 ),
                 workspace_root="workspace",
@@ -335,13 +408,9 @@ class OrderedWatchTargetTests(unittest.TestCase):
         ):
             reconcile_index(
                 UnrepairableCore(
-                    json.dumps(
-                        {
-                            "ok": False,
-                            "exists": False,
-                            "migration": {},
-                            "issues": [],
-                        }
+                    payload(
+                        {"action": "manual", "reason": ""},
+                        [],
                     )
                 ),
                 workspace_root="workspace",
@@ -349,6 +418,45 @@ class OrderedWatchTargetTests(unittest.TestCase):
                 max_files=20,
                 max_file_bytes=None,
             )
+
+    def test_inspect_rejects_missing_migration_fields(self) -> None:
+        class MalformedHealthCore:
+            def __init__(self, migration: object) -> None:
+                self._migration = migration
+
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "issues": ["index is unhealthy"],
+                        "stale_files": [],
+                        "missing_files": [],
+                        "unreadable_files": [],
+                        "unindexed_files": [],
+                        "migration": self._migration,
+                    }
+                )
+
+        for migration, field_name in (
+            ({"reason": "manual intervention required"}, "action"),
+            ({"action": "manual"}, "reason"),
+        ):
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(
+                    IndexWatchError,
+                    rf"invalid health payload from inspect_symbol_index: "
+                    rf"`migration.{field_name}` must be "
+                    + ("a string" if field_name == "reason" else "a non-empty string"),
+                ):
+                    reconcile_index(
+                        MalformedHealthCore(migration),
+                        workspace_root="workspace",
+                        db_path="symbols.db",
+                        max_files=20,
+                        max_file_bytes=None,
+                    )
 
 
 class WatchLoopSemanticsTests(unittest.TestCase):

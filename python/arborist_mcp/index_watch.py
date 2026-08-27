@@ -27,6 +27,7 @@ from .index_watch_runtime import (
     IndexWatchCore,
     _check_watch_targets as _check_watch_targets_runtime,
     _health_summary,
+    _validate_health_payload,
     _reconcile_index as _reconcile_index_runtime,
     _run_watch_targets as _run_watch_targets_runtime,
 )

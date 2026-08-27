@@ -32,6 +32,48 @@ class IndexWatchCore(Protocol):
     ) -> str: ...
 
 
+def _validate_health_payload(
+    health: dict[str, Any],
+    operation: str,
+) -> None:
+    if not isinstance(health.get("ok"), bool):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `ok` must be a boolean"
+        )
+    for field_name in (
+        "issues",
+        "stale_files",
+        "missing_files",
+        "unreadable_files",
+        "unindexed_files",
+    ):
+        values = health.get(field_name)
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) for value in values
+        ):
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                f"`{field_name}` must be a list of strings"
+            )
+    migration = health.get("migration")
+    if not isinstance(migration, dict):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: `migration` must be an object"
+        )
+    action = migration.get("action")
+    if not isinstance(action, str) or not action.strip():
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "`migration.action` must be a non-empty string"
+        )
+    reason = migration.get("reason")
+    if not isinstance(reason, str):
+        raise IndexWatchError(
+            f"invalid health payload from {operation}: "
+            "`migration.reason` must be a string"
+        )
+
+
 def _health_summary(health: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": health.get("ok"),
@@ -72,6 +114,7 @@ def _reconcile_index(
         health = bindings["_decode_object"](
             health_payload, "inspect_symbol_index"
         )
+        bindings["_validate_health_payload"](health, "inspect_symbol_index")
     except bindings["IndexWatchError"]:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -110,6 +153,9 @@ def _reconcile_index(
                 migration_payload = core.migrate_symbol_index_json(db_path, timeout_ms)
             migrated_health = bindings["_decode_object"](
                 migration_payload, "migrate_symbol_index"
+            )
+            bindings["_validate_health_payload"](
+                migrated_health, "migrate_symbol_index"
             )
         except bindings["IndexWatchError"]:
             raise

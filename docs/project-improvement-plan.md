@@ -702,6 +702,8 @@ completed item can land in its own commit unless two changes are inseparable.
   callable API, facade monkeypatch seams, protocol metadata, and pickle paths.
 - [x] Make index-watch fail closed when a migration call returns an unhealthy
   post-migration health payload instead of reporting a successful migration.
+- [x] Validate index-watch health payload structure before making reconcile
+  decisions, so malformed native responses cannot be treated as healthy.
 
 ### P2: Multi-Language Foundation
 
