@@ -25,6 +25,14 @@ class JsonArgumentLimitTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32600)
         self.assertIn("maximum size", response["error"]["message"])
 
+    def test_rejects_non_utf8_text_without_raising(self) -> None:
+        request, response = parse_request_json("\ud800")
+
+        self.assertIsNone(request)
+        assert response is not None
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("not valid UTF-8 text", response["error"]["message"])
+
     def test_rejects_excessive_json_rpc_nesting(self) -> None:
         payload = "0"
         for _ in range(MAX_JSON_ARG_DEPTH + 1):

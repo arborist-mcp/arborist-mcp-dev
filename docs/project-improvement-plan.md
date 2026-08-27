@@ -734,6 +734,8 @@ completed item can land in its own commit unless two changes are inseparable.
   pairing and error behavior.
 - [x] Keep JSON-RPC serialization fallback envelopes UTF-8 safe when an
   unpaired surrogate makes the original response impossible to encode.
+- [x] Convert non-UTF-8 JSON-RPC input text into a parse error instead of
+  allowing the request-size guard to raise before the gateway can respond.
 
 ### P2: Multi-Language Foundation
 

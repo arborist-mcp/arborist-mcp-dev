@@ -96,7 +96,16 @@ def _validate_json_depth(value: Any) -> None:
 
 
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
-    if len(raw_request.encode("utf-8")) > MAX_REQUEST_BYTES:
+    try:
+        request_size = len(raw_request.encode("utf-8"))
+    except UnicodeEncodeError:
+        return None, error_response(
+            None,
+            -32700,
+            "invalid JSON: request is not valid UTF-8 text",
+        )
+
+    if request_size > MAX_REQUEST_BYTES:
         return None, error_response(
             None,
             -32600,
