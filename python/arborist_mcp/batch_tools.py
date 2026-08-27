@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .mcp_result_validation import validate_tool_result_shape
 from .mcp_tools import ToolExecutor
 from .mcp_validation import reject_unexpected_params
 from .tool_result_schemas import JsonRpcError
@@ -76,6 +77,7 @@ def batch_tools(
                 )
 
         result = execute_tool(call.name, arguments)
+        validate_tool_result_shape(call.name, result)
         if deadline is not None:
             deadline.remaining_timeout_ms(index, "after")
         results.append({"name": call.name, "result": result})

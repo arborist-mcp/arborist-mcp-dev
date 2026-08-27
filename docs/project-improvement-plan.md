@@ -719,6 +719,8 @@ completed item can land in its own commit unless two changes are inseparable.
   including fields whose values are nullable in the native schema.
 - [x] Check MCP `tools/call` result top-level types and object-array items
   against the advertised output schemas before returning a successful result.
+- [x] Apply MCP result-shape checks to each nested `arborist/batch` call so
+  malformed inner results cannot hide inside an otherwise valid batch envelope.
 
 ### P2: Multi-Language Foundation
 

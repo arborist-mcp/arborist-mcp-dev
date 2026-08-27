@@ -61,6 +61,23 @@ class GatewayRuntimeToolsTestsMixin:
                 self.assertIn(expected_message, result["content"][0]["text"])
                 self.assertNotIn("structuredContent", result)
 
+    def test_batch_rejects_inner_result_shape_mismatch(self) -> None:
+        with self.assertRaisesRegex(
+            JsonRpcError,
+            "invalid result from arborist/get_semantic_skeleton: expected object payload",
+        ):
+            batch_tools(
+                {
+                    "calls": [
+                        {
+                            "name": "arborist/get_semantic_skeleton",
+                            "arguments": {"file_path": "sample.py"},
+                        }
+                    ]
+                },
+                lambda _tool_name, _arguments: [],
+            )
+
     def test_tools_call_invokes_read_tool(self) -> None:
         core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
 
@@ -263,10 +280,13 @@ class GatewayRuntimeToolsTestsMixin:
             (0, 1_100_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000)
         )
 
+        def execute(name: str, arguments: dict[str, object]) -> object:
+            observed.append((name, arguments))
+            return [] if name == "arborist/list_symbol_indexes" else {"ok": True}
+
         result = batch_tools(
             calls,
-            lambda name, arguments: observed.append((name, arguments))
-            or {"ok": True},
+            execute,
             timeout_ms=10,
             monotonic_ns=lambda: next(clock_values),
         )
