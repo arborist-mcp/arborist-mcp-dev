@@ -709,6 +709,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Validate index-watch health metadata and migration-plan invariants
   against the persisted-index health contract before making repair decisions,
   including persisted file-count conservation and nonblank migration reasons.
+- [x] Verify index-watch health and refresh responses belong to the requested
+  database path before emitting repair or refresh events.
 
 ### P2: Multi-Language Foundation
 

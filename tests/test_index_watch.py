@@ -38,11 +38,12 @@ def health_payload(
     action: str,
     reason: str = "current",
     unreadable_files: tuple[str, ...] = (),
+    db_path: str = "symbols.db",
 ) -> str:
     return json.dumps(
         {
             "response_schema_version": "4",
-            "db_path": "symbols.db",
+            "db_path": db_path,
             "ok": ok,
             "exists": True,
             "schema_version": "1",
@@ -83,20 +84,32 @@ class StubCore:
         self.refresh_calls: list[tuple[object, ...]] = []
         self.migrate_calls: list[tuple[object, ...]] = []
 
+    @staticmethod
+    def _response_for_db_path(payload: str, db_path: object) -> str:
+        if not isinstance(db_path, str):
+            return payload
+        decoded = json.loads(payload)
+        if isinstance(decoded, dict) and decoded.get("db_path") == "symbols.db":
+            decoded["db_path"] = db_path
+            return json.dumps(decoded)
+        return payload
+
     def inspect_symbol_index_json(
         self, db_path: str, timeout_ms: int | None = None
     ) -> str:
         self.inspect_calls.append(db_path)
         self.inspect_timeout_ms = timeout_ms
-        return self.health
+        return self._response_for_db_path(self.health, db_path)
 
     def refresh_symbol_index_json(self, *args: object) -> str:
         self.refresh_calls.append(args)
-        return self.refresh
+        db_path = args[1] if len(args) > 1 else None
+        return self._response_for_db_path(self.refresh, db_path)
 
     def migrate_symbol_index_json(self, *args: object) -> str:
         self.migrate_calls.append(args)
-        return self.migrate
+        db_path = args[0] if args else None
+        return self._response_for_db_path(self.migrate, db_path)
 
 
 class IndexWatchTests(unittest.TestCase):

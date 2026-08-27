@@ -10,6 +10,7 @@ from .index_watch_config import (
     IndexWatchTarget,
     _decode_object,
     _ordered_watch_targets,
+    _target_identity_path,
 )
 
 
@@ -38,6 +39,8 @@ class IndexWatchCore(Protocol):
 def _validate_health_payload(
     health: dict[str, Any],
     operation: str,
+    *,
+    expected_db_path: str | None = None,
 ) -> None:
     if not isinstance(health.get("ok"), bool):
         raise IndexWatchError(
@@ -127,6 +130,18 @@ def _validate_health_payload(
         raise IndexWatchError(
             f"invalid health payload from {operation}: `db_path` must be a non-empty string"
         )
+    if expected_db_path is not None:
+        try:
+            paths_match = _target_identity_path(db_path) == _target_identity_path(
+                expected_db_path
+            )
+        except (OSError, RuntimeError, ValueError):
+            paths_match = False
+        if not paths_match:
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                "`db_path` does not match the requested database path"
+            )
 
     for field_name in (
         "workspace_root",
@@ -255,12 +270,26 @@ def _validate_health_payload(
 def _validate_refresh_stats_payload(
     stats: dict[str, Any],
     operation: str,
+    *,
+    expected_db_path: str | None = None,
 ) -> None:
     db_path = stats.get("db_path")
     if not isinstance(db_path, str) or not db_path.strip():
         raise IndexWatchError(
             f"invalid stats payload from {operation}: `db_path` must be a non-empty string"
         )
+    if expected_db_path is not None:
+        try:
+            paths_match = _target_identity_path(db_path) == _target_identity_path(
+                expected_db_path
+            )
+        except (OSError, RuntimeError, ValueError):
+            paths_match = False
+        if not paths_match:
+            raise IndexWatchError(
+                f"invalid stats payload from {operation}: "
+                "`db_path` does not match the requested database path"
+            )
     counts: dict[str, int] = {}
     for field_name in (
         "indexed_files",
@@ -322,7 +351,11 @@ def _reconcile_index(
         health = bindings["_decode_object"](
             health_payload, "inspect_symbol_index"
         )
-        bindings["_validate_health_payload"](health, "inspect_symbol_index")
+        bindings["_validate_health_payload"](
+            health,
+            "inspect_symbol_index",
+            expected_db_path=db_path,
+        )
     except bindings["IndexWatchError"]:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -363,7 +396,9 @@ def _reconcile_index(
                 migration_payload, "migrate_symbol_index"
             )
             bindings["_validate_health_payload"](
-                migrated_health, "migrate_symbol_index"
+                migrated_health,
+                "migrate_symbol_index",
+                expected_db_path=db_path,
             )
         except bindings["IndexWatchError"]:
             raise
@@ -425,7 +460,9 @@ def _reconcile_index(
             refresh_payload, "refresh_symbol_index"
         )
         bindings["_validate_refresh_stats_payload"](
-            stats, "refresh_symbol_index"
+            stats,
+            "refresh_symbol_index",
+            expected_db_path=db_path,
         )
     except bindings["IndexWatchError"]:
         raise

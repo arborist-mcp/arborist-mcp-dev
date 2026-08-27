@@ -18,11 +18,12 @@ def health_payload(
     ok: bool,
     action: str,
     reason: str = "current",
+    db_path: str = "symbols.db",
 ) -> str:
     return json.dumps(
         {
             "response_schema_version": "4",
-            "db_path": "symbols.db",
+            "db_path": db_path,
             "ok": ok,
             "exists": True,
             "schema_version": "1",
@@ -515,6 +516,146 @@ class OrderedWatchTargetTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_inspect_rejects_health_for_a_different_database(self) -> None:
+        class MismatchedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=True, action="none"))
+                payload["db_path"] = "other.db"
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: `db_path` does not match the requested database path",
+        ):
+            reconcile_index(
+                MismatchedHealthCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_refresh_rejects_stats_for_a_different_database(self) -> None:
+        class MismatchedStatsCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="rebuild", reason="stale")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                return json.dumps(
+                    {
+                        "db_path": "other.db",
+                        "indexed_files": 1,
+                        "indexed_symbols": 1,
+                        "rebuilt_files": 1,
+                        "reused_files": 0,
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid stats payload from refresh_symbol_index: `db_path` does not match the requested database path",
+        ):
+            reconcile_index(
+                MismatchedStatsCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_migration_rejects_health_for_a_different_database(self) -> None:
+        class MismatchedMigrationCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(ok=False, action="migrate", reason="upgrade")
+
+            def migrate_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(
+                    ok=True,
+                    action="none",
+                    db_path="other.db",
+                )
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected refresh")
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from migrate_symbol_index: `db_path` does not match the requested database path",
+        ):
+            reconcile_index(
+                MismatchedMigrationCore(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_inspect_accepts_relative_and_absolute_equivalent_database_paths(self) -> None:
+        class EquivalentPathCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(
+                    ok=True,
+                    action="none",
+                    db_path=os.path.abspath(db_path),
+                )
+
+            def migrate_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected migration")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected refresh")
+
+        event = reconcile_index(
+            EquivalentPathCore(),
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+        )
+
+        self.assertEqual(event["status"], "healthy")
+
+    @unittest.skipUnless(
+        os.path.normcase("A") == "a",
+        "case-insensitive path identity is platform-specific",
+    )
+    def test_inspect_accepts_case_insensitive_database_identity(self) -> None:
+        class CaseVariantPathCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                return health_payload(
+                    ok=True,
+                    action="none",
+                    db_path=os.path.abspath(db_path).upper(),
+                )
+
+            def migrate_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected migration")
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected refresh")
+
+        event = reconcile_index(
+            CaseVariantPathCore(),
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+        )
+
+        self.assertEqual(event["status"], "healthy")
+
     def test_inspect_rejects_inconsistent_health_file_counts(self) -> None:
         class MalformedHealthCore:
             def inspect_symbol_index_json(
@@ -688,7 +829,7 @@ class WatchLoopSemanticsTests(unittest.TestCase):
             def inspect_symbol_index_json(
                 self, db_path: str, timeout_ms: int | None = None
             ) -> str:
-                return health_payload(ok=True, action="none")
+                return health_payload(ok=True, action="none", db_path=db_path)
 
             def migrate_symbol_index_json(
                 self, db_path: str, timeout_ms: int | None = None
