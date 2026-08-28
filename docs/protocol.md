@@ -132,6 +132,7 @@ Current protocol-boundary checks include:
 - Reversed byte or position edit ranges.
 - Float request IDs.
 - Invalid or wrong-shaped JSON returned by the core.
+- Invalid UTF-8 text anywhere in a tool result, including unconstrained nested fields.
 - Nulls for defaulted string parameters.
 - Negative numeric parameters.
 - Non-standard response JSON.

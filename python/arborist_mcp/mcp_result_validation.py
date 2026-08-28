@@ -19,6 +19,7 @@ def validate_tool_result_shape(
 ) -> None:
     """Keep structured results aligned with their advertised top-level type."""
     if deep:
+        _validate_result_utf8(tool_name, tool_result)
         _validate_shallow_result_shape(
             tool_name,
             tool_result,
@@ -38,6 +39,49 @@ def validate_tool_result_shape(
         return
 
     _validate_shallow_result_shape(tool_name, tool_result)
+
+
+def _validate_result_utf8(tool_name: str, tool_result: Any) -> None:
+    pending: list[tuple[Any, str]] = [(tool_result, "result")]
+    visited_containers: set[int] = set()
+    while pending:
+        value, path = pending.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise JsonRpcError(
+                    -32000,
+                    f"invalid result from {tool_name}: {path} must contain valid UTF-8 text",
+                ) from exc
+            continue
+        if isinstance(value, (list, tuple)):
+            identity = id(value)
+            if identity in visited_containers:
+                continue
+            visited_containers.add(identity)
+            pending.extend(
+                (item, f"{path}[{index}]")
+                for index, item in enumerate(value)
+            )
+            continue
+        if isinstance(value, dict):
+            identity = id(value)
+            if identity in visited_containers:
+                continue
+            visited_containers.add(identity)
+            for entry_index, (key, item) in enumerate(value.items()):
+                if not isinstance(key, str):
+                    pending.append((item, f"{path}[{entry_index}]"))
+                    continue
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError as exc:
+                    raise JsonRpcError(
+                        -32000,
+                        f"invalid result from {tool_name}: {path} has a field name that is not valid UTF-8",
+                    ) from exc
+                pending.append((item, f"{path}.{key}"))
 
 
 def _validate_shallow_result_shape(

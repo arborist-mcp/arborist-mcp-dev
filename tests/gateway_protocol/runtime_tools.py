@@ -126,6 +126,46 @@ class GatewayRuntimeToolsTestsMixin:
         self.assertNotIn("structuredContent", result)
         self.assertIn("valid UTF-8 text", result["content"][0]["text"])
 
+    def test_tools_call_rejects_invalid_utf8_in_unconstrained_nested_result(self) -> None:
+        cases = (
+            {"message": "\ud800"},
+            {1: "\ud800"},
+            {"messages": ("\ud800",)},
+        )
+        for nested_value in cases:
+            with self.subTest(nested_value=nested_value):
+                result = tools_call(
+                    {
+                        "name": "arborist/export_patch_diagnostics_sarif",
+                        "arguments": {},
+                    },
+                    lambda _tool_name, _arguments, nested_value=nested_value: {
+                        "version": "2.1.0",
+                        "$schema": "https://example.test/sarif.json",
+                        "runs": [nested_value],
+                    },
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertNotIn("structuredContent", result)
+                self.assertIn("valid UTF-8 text", result["content"][0]["text"])
+
+    def test_tools_call_rejects_invalid_utf8_batch_result_fields(self) -> None:
+        cases = (
+            [{"name": "\ud800", "result": {}}],
+            [{"name": "arborist/get_semantic_skeleton", "result": {}, "\ud800": True}],
+        )
+        for tool_result in cases:
+            with self.subTest(tool_result=tool_result):
+                result = tools_call(
+                    {"name": "arborist/batch", "arguments": {"calls": []}},
+                    lambda _tool_name, _arguments, result=tool_result: result,
+                )
+
+                self.assertTrue(result["isError"])
+                self.assertNotIn("structuredContent", result)
+                self.assertIn("valid UTF-8", result["content"][0]["text"])
+
     def test_tools_call_rejects_malformed_direct_result_schema(self) -> None:
         cases = (
             (
