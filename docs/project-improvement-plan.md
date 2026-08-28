@@ -67,6 +67,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `python/arborist_mcp/gateway.py`.
 - [x] Retry stdio and one-shot JSON responses with ASCII escapes when a host
   stdout text encoding cannot represent valid non-ASCII response content.
+- [x] Keep stdio request framing strict by removing only CR/LF transport
+  terminators instead of normalizing non-JSON Unicode whitespace.
 - [x] Centralize unexpected-parameter validation across MCP helper modules and
   legacy gateway routes.
 - [x] Move gateway resource handling into a focused helper module while keeping

@@ -7,12 +7,13 @@ Arborist exposes two compatible stdio protocols:
 - Legacy direct JSON-RPC methods named `arborist/*`.
 
 The gateway accepts one JSON document per line on stdin and writes one JSON-RPC
-response per line on stdout. If the host stdout text encoding rejects a valid
-non-ASCII response, the gateway retries the same JSON document with equivalent
-ASCII `\u` escapes. If stdin decoding encounters invalid UTF-8 bytes, the
-gateway emits a `-32700` parse-error response without initializing the Arborist
-core, then stops reading the affected stream because its text decoder cannot be
-safely re-synchronized.
+response per line on stdout. Stdio removes only CR/LF transport terminators;
+it does not normalize non-JSON Unicode whitespace around a request. If the host
+stdout text encoding rejects a valid non-ASCII response, the gateway retries
+the same JSON document with equivalent ASCII `\u` escapes. If stdin decoding
+encounters invalid UTF-8 bytes, the gateway emits a `-32700` parse-error
+response without initializing the Arborist core, then stops reading the affected
+stream because its text decoder cannot be safely re-synchronized.
 
 ## Standard MCP
 

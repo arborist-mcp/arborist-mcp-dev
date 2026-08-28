@@ -263,6 +263,46 @@ class GatewayRuntimeTransportTestsMixin:
         response = gateway_module.json.loads(stdout.getvalue())
         self.assertEqual(response["error"]["code"], -32700)
 
+    def test_stdio_rejects_non_json_unicode_whitespace_around_request(self) -> None:
+        stdin = io.StringIO(
+            "\u00a0{\"jsonrpc\":\"2.0\",\"id\":27,\"method\":\"initialize\",\"params\":{}}\u00a0\n"
+        )
+        stdout = io.StringIO()
+
+        with mock.patch.object(
+            gateway_module.ArboristGateway,
+            "__init__",
+            side_effect=AssertionError("gateway should not initialize"),
+        ):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+
+    def test_once_rejects_non_json_unicode_whitespace_around_request(self) -> None:
+        with mock.patch.object(
+            gateway_module.ArboristGateway,
+            "__init__",
+            side_effect=AssertionError("gateway should not initialize"),
+        ):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value="\u00a0{\"jsonrpc\":\"2.0\",\"id\":28,\"method\":\"initialize\",\"params\":{}}\u00a0",
+            ):
+                with mock.patch("builtins.print") as mock_print:
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once()
+        response = gateway_module.json.loads(mock_print.call_args.args[0])
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+
     def test_stdio_invalid_utf8_bytes_emit_parse_error_without_initializing_gateway(
         self,
     ) -> None:

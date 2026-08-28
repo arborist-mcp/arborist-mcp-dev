@@ -88,8 +88,11 @@ def run_stdio(
             return 0
         if raw_line is None:
             break
-        line = raw_line.strip()
-        if not line:
+        # Preserve request bytes apart from the transport line terminator. A
+        # generic str.strip() would silently accept Unicode whitespace that is
+        # not valid JSON, diverging from the one-shot request-file path.
+        line = raw_line.rstrip("\r\n")
+        if not line.strip(" \t\r\n"):
             continue
 
         request, response = parse_request(line)
