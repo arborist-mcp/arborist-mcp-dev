@@ -688,7 +688,9 @@ supervisor probe. The command refreshes only a missing index or a current-schema
 index with freshness issues, and migrates supported v1-v3 indexes in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
 `--dry-run` follows the same inspection and fail-closed decisions but reports
-`would_refresh` or `would_migrate` without changing an index.
+`would_refresh` or `would_migrate` without changing an index. Event output falls
+back to ASCII `\u` escapes when stdout uses a legacy encoding, without changing
+the decoded JSON values.
 `--check` runs this no-write pass once and exits nonzero when any target is not
 healthy, while emitting each target's status for CI diagnostics. Watch event
 health summaries include issue, stale, missing, unreadable, and unindexed file counts.

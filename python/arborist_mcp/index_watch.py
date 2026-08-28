@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import sys
 import time
@@ -27,6 +26,7 @@ from .index_watch_runtime import (
     IndexWatchCore,
     _check_watch_targets as _check_watch_targets_runtime,
     _health_summary,
+    _print_json_event,
     _validate_health_payload,
     _validate_refresh_stats_payload,
     _reconcile_index as _reconcile_index_runtime,
@@ -75,9 +75,7 @@ def run_watch(
     dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
 ) -> None:
     run_watch_targets(
         core,
@@ -105,9 +103,7 @@ def run_watch_targets(
     dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
     include_workspace_root: bool = True,
 ) -> None:
     _run_watch_targets_runtime(
@@ -133,9 +129,7 @@ def check_watch_targets(
     max_files: int,
     max_file_bytes: int | None,
     timeout_ms: int | None = None,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
     include_workspace_root: bool = True,
 ) -> bool:
     return _check_watch_targets_runtime(
@@ -170,7 +164,7 @@ def run_cli(
     errors = sys.stderr if stderr is None else stderr
 
     def emit(event: dict[str, Any]) -> None:
-        print(json.dumps(event, ensure_ascii=False, allow_nan=False), file=output)
+        _print_json_event(event, output)
 
     try:
         if args.check and args.dry_run:

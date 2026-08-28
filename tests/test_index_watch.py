@@ -734,6 +734,39 @@ class IndexWatchTests(unittest.TestCase):
             with self.assertRaisesRegex(IndexWatchError, "duplicate object key"):
                 load_watch_config(config_path)
 
+    def test_cli_once_escapes_events_for_ascii_stdout(self) -> None:
+        core = StubCore(health_payload(ok=True, action="none", db_path="é.db"))
+        raw_stdout = io.BytesIO()
+        stdout = io.TextIOWrapper(raw_stdout, encoding="ascii", errors="strict")
+        stderr = io.StringIO()
+
+        try:
+            result = run_cli(
+                [
+                    "--workspace-root",
+                    ".",
+                    "--db-path",
+                    "é.db",
+                    "--once",
+                ],
+                core_factory=lambda: core,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            stdout.flush()
+        finally:
+            stdout.detach()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        encoded_event = raw_stdout.getvalue()
+        self.assertIn(b"\\u00e9", encoded_event)
+        event = json.loads(encoded_event.decode("ascii"))
+        self.assertEqual(
+            event["db_path"],
+            str(Path.cwd().joinpath("é.db").resolve()),
+        )
+
     def test_cli_once_emits_json_event(self) -> None:
         core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
         stdout = io.StringIO()

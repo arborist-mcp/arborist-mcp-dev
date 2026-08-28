@@ -431,8 +431,9 @@ inspection requires manual intervention, such as an unsupported or foreign
 SQLite schema. `--timeout-ms` bounds health freshness reads and workspace
 reconciliation scans as well as refresh indexing work.
 `--dry-run` reports `would_refresh` or `would_migrate` without changing an
-index. `--check` performs that no-write inspection once and returns a nonzero
-exit status unless every target is healthy, which is useful for CI and
+index. Event output falls back to ASCII `\u` escapes when stdout uses a
+legacy encoding, while preserving the same decoded JSON values. `--check`
+performs that no-write inspection once and returns a nonzero exit status unless every target is healthy, which is useful for CI and
 deployment checks. `--check` is mutually exclusive with `--once` and cannot be
 combined with `--dry-run` or a non-default `--interval-seconds`. Emitted health
 summaries include issue, stale, missing, unreadable, and unindexed file counts.

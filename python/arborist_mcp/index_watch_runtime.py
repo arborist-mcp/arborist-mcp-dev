@@ -4,7 +4,7 @@ import json
 import math
 import os
 import time
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, TextIO
 
 from .index_watch_config import (
     IndexWatchError,
@@ -39,6 +39,19 @@ _HEALTH_FIELDS = frozenset(
     }
 )
 _MIGRATION_FIELDS = frozenset({"required", "action", "reason"})
+
+
+def _print_json_event(event: dict[str, Any], output: TextIO | None = None) -> None:
+    payload = json.dumps(event, ensure_ascii=False, allow_nan=False)
+    try:
+        print(payload, file=output)
+    except UnicodeEncodeError:
+        print(
+            json.dumps(event, ensure_ascii=True, allow_nan=False),
+            file=output,
+        )
+
+
 _REFRESH_STATS_FIELDS = frozenset(
     {
         "db_path",
@@ -611,9 +624,7 @@ def run_watch(
     dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
 ) -> None:
     run_watch_targets(
         core,
@@ -683,9 +694,7 @@ def run_watch_targets(
     dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
     include_workspace_root: bool = True,
 ) -> None:
     _run_watch_targets(
@@ -740,9 +749,7 @@ def check_watch_targets(
     max_files: int,
     max_file_bytes: int | None,
     timeout_ms: int | None = None,
-    emit: Callable[[dict[str, Any]], None] = lambda event: print(
-        json.dumps(event, ensure_ascii=False, allow_nan=False)
-    ),
+    emit: Callable[[dict[str, Any]], None] = _print_json_event,
     include_workspace_root: bool = True,
 ) -> bool:
     return _check_watch_targets(
