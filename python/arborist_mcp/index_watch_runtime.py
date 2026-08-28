@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from typing import Any, Callable, Mapping, Protocol
 
@@ -101,6 +102,7 @@ def _validate_health_payload(
     operation: str,
     *,
     expected_db_path: str | None = None,
+    expected_workspace_root: str | None = None,
 ) -> None:
     _reject_unknown_fields(health, _HEALTH_FIELDS, operation, "health")
     if not isinstance(health.get("ok"), bool):
@@ -208,6 +210,24 @@ def _validate_health_payload(
             raise IndexWatchError(
                 f"invalid health payload from {operation}: "
                 "`db_path` does not match the requested database path"
+            )
+
+    workspace_root = health.get("workspace_root")
+    if (
+        expected_workspace_root is not None
+        and isinstance(workspace_root, str)
+        and os.path.isabs(workspace_root)
+    ):
+        try:
+            workspaces_match = _target_identity_path(
+                workspace_root
+            ) == _target_identity_path(expected_workspace_root)
+        except (OSError, RuntimeError, ValueError):
+            workspaces_match = False
+        if not workspaces_match:
+            raise IndexWatchError(
+                f"invalid health payload from {operation}: "
+                "`workspace_root` does not match the requested workspace root"
             )
 
     for field_name in (
@@ -431,6 +451,7 @@ def _reconcile_index(
             health,
             "inspect_symbol_index",
             expected_db_path=db_path,
+            expected_workspace_root=workspace_root,
         )
     except bindings["IndexWatchError"]:
         raise
@@ -475,6 +496,7 @@ def _reconcile_index(
                 migrated_health,
                 "migrate_symbol_index",
                 expected_db_path=db_path,
+                expected_workspace_root=workspace_root,
             )
         except bindings["IndexWatchError"]:
             raise

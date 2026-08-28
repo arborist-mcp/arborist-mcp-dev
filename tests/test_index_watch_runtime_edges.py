@@ -509,6 +509,65 @@ class ReconcileFailureWrappingTests(unittest.TestCase):
                 max_file_bytes=None,
             )
 
+    def test_migration_rejects_health_for_a_different_workspace(self) -> None:
+        requested_workspace = os.path.abspath("requested-workspace")
+
+        class MismatchedMigrationCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(
+                    health_payload(ok=False, action="migrate", reason="upgrade")
+                )
+                payload["workspace_root"] = requested_workspace
+                return json.dumps(payload)
+
+            def migrate_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=True, action="none"))
+                payload["workspace_root"] = os.path.abspath("other-workspace")
+                return json.dumps(payload)
+
+            def refresh_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("unexpected refresh")
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from migrate_symbol_index: "
+            "`workspace_root` does not match the requested workspace root",
+        ):
+            reconcile_index(
+                MismatchedMigrationCore(),
+                workspace_root=requested_workspace,
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+    def test_inspect_rejects_health_for_a_different_workspace(self) -> None:
+        class MismatchedHealthCore:
+            def inspect_symbol_index_json(
+                self, db_path: str, timeout_ms: int | None = None
+            ) -> str:
+                payload = json.loads(health_payload(ok=True, action="none"))
+                payload["workspace_root"] = os.path.abspath("stored-workspace")
+                return json.dumps(payload)
+
+        with self.assertRaisesRegex(
+            IndexWatchError,
+            "invalid health payload from inspect_symbol_index: "
+            "`workspace_root` does not match the requested workspace root",
+        ):
+            reconcile_index(
+                MismatchedHealthCore(),
+                workspace_root=os.path.abspath("requested-workspace"),
+                db_path="symbols.db",
+                max_files=20,
+                max_file_bytes=None,
+            )
+
+
 
 class OrderedWatchTargetTests(unittest.TestCase):
     def test_rejects_malformed_target_fields_before_path_normalization(self) -> None:
