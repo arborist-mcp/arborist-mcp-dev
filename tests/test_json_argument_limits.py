@@ -49,6 +49,14 @@ class JsonArgumentLimitTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("not valid UTF-8 text", response["error"]["message"])
 
+    def test_rejects_escaped_unpaired_surrogate_in_json_text(self) -> None:
+        request, response = parse_request_json('{"method":"\\ud800"}')
+
+        self.assertIsNone(request)
+        assert response is not None
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("not valid UTF-8", response["error"]["message"])
+
     def test_rejects_excessive_json_rpc_nesting(self) -> None:
         payload = "0"
         for _ in range(MAX_JSON_ARG_DEPTH + 1):

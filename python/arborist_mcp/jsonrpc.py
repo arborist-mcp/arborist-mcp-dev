@@ -17,16 +17,35 @@ def is_notification_request(request: Any) -> bool:
     )
 
 
+def _contains_invalid_utf8_string(value: Any) -> bool:
+    pending = [value]
+    visited_containers: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            try:
+                current.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(current, (list, dict)):
+            identity = id(current)
+            if identity in visited_containers:
+                continue
+            visited_containers.add(identity)
+            if isinstance(current, list):
+                pending.extend(current)
+            else:
+                pending.extend(current.keys())
+                pending.extend(current.values())
+    return False
+
+
 def is_valid_request_id(request_id: Any) -> bool:
     if request_id is None:
         return True
 
     if isinstance(request_id, str):
-        try:
-            request_id.encode("utf-8")
-        except UnicodeEncodeError:
-            return False
-        return True
+        return not _contains_invalid_utf8_string(request_id)
 
     if isinstance(request_id, bool):
         return False
@@ -75,6 +94,8 @@ def loads_strict(payload: str) -> Any:
         ) from exc
 
     _validate_json_depth(value)
+    if _contains_invalid_utf8_string(value):
+        raise ValueError("JSON contains a string that is not valid UTF-8")
     return value
 
 

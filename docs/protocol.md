@@ -124,6 +124,7 @@ The gateway rejects malformed protocol input before it reaches the Rust core.
 Current protocol-boundary checks include:
 
 - Non-standard JSON constants such as `NaN` and `Infinity`.
+- Strings containing invalid UTF-8 text, including escaped unpaired surrogates.
 - Duplicate JSON object keys.
 - Unexpected top-level request params.
 - Malformed `did_change` edit payloads.

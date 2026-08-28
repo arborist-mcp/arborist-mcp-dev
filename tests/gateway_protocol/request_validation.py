@@ -115,6 +115,36 @@ class GatewayRequestValidationTests(
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         self.assert_invalid_request(["initialize"], request_id=None, contains="expected object")
 
+    def test_rejects_unpaired_surrogate_in_direct_request(self) -> None:
+        response = self.make_gateway().handle_request(
+            {"jsonrpc": "2.0", "id": 12, "method": "\ud800", "params": {}}
+        )
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=12,
+            code=-32600,
+            contains="not valid UTF-8",
+        )
+
+    def test_rejects_cyclic_direct_request_without_recursing(self) -> None:
+        request: dict[str, object] = {
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "arborist/nope",
+            "params": {},
+        }
+        request["self"] = request
+
+        response = self.make_gateway().handle_request(request)
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=13,
+            code=-32601,
+            contains="method not found",
+        )
+
     def test_rejects_non_object_params_without_calling_core_method(self) -> None:
         self.assert_invalid_params(
             "arborist/get_semantic_skeleton",

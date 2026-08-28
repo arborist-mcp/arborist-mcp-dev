@@ -21,6 +21,7 @@ from .gateway_params import GatewayParameterValidation
 from .gateway_trace_routes import GatewayTraceRoutes
 from .gateway_vfs_routes import GatewayVfsRoutes
 from .jsonrpc import (
+    _contains_invalid_utf8_string,
     error_response,
     is_notification_request,
     is_valid_request_id,
@@ -155,6 +156,12 @@ class ArboristGateway(
             return error_response(None, -32600, "invalid request: expected object")
 
         request_id = request.get("id")
+        if _contains_invalid_utf8_string(request):
+            return error_response(
+                request_id if is_valid_request_id(request_id) else None,
+                -32600,
+                "invalid request: contains a string that is not valid UTF-8",
+            )
         response_id = request_id if is_valid_request_id(request_id) else None
         jsonrpc_version = request.get("jsonrpc")
         if jsonrpc_version != "2.0":
