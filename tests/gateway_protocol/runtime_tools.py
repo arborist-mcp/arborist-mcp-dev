@@ -108,6 +108,24 @@ class GatewayRuntimeToolsTestsMixin:
         self.assertNotIn("structuredContent", result)
         self.assertIn("Out of range float values", result["content"][0]["text"])
 
+    def test_tools_call_rejects_invalid_utf8_result_text(self) -> None:
+        result = tools_call(
+            {
+                "name": "arborist/get_semantic_skeleton",
+                "arguments": {},
+            },
+            lambda _tool_name, _arguments: {
+                "file": "sample.py",
+                "skeleton": "\ud800",
+                "available_paths": [],
+                "available_symbols": [],
+            },
+        )
+
+        self.assertTrue(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        self.assertIn("valid UTF-8 text", result["content"][0]["text"])
+
     def test_tools_call_rejects_malformed_direct_result_schema(self) -> None:
         cases = (
             (

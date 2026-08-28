@@ -124,6 +124,12 @@ def _validate_result_schema(
     elif isinstance(value, list):
         _validate_result_array(schema, value, path)
     elif isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise _ResultSchemaValidationError(
+                f"{path} must contain valid UTF-8 text"
+            ) from exc
         min_length = schema.get("minLength")
         max_length = schema.get("maxLength")
         if isinstance(min_length, int) and len(value) < min_length:
@@ -156,6 +162,13 @@ def _validate_result_object(
 ) -> None:
     if any(not isinstance(key, str) for key in value):
         raise _ResultSchemaValidationError(f"{path} must use string field names")
+    for field_name in value:
+        try:
+            field_name.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise _ResultSchemaValidationError(
+                f"{path} has a field name that is not valid UTF-8"
+            ) from exc
 
     properties = schema.get("properties", {})
     if not isinstance(properties, dict):
