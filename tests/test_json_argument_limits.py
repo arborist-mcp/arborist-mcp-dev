@@ -25,6 +25,22 @@ class JsonArgumentLimitTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32600)
         self.assertIn("maximum size", response["error"]["message"])
 
+    def test_rejects_unpaired_surrogate_json_values_without_raising(self) -> None:
+        with self.assertRaisesRegex(
+            JsonRpcError, "invalid JSON-compatible param: payload"
+        ):
+            GatewayParameterValidation._encode_json_param(
+                {"value": "\ud800"}, "payload"
+            )
+
+    def test_rejects_unpaired_surrogate_string_params_without_raising(self) -> None:
+        with self.assertRaisesRegex(
+            JsonRpcError, "invalid UTF-8 string param: file_path"
+        ):
+            GatewayParameterValidation._require_string(
+                {"file_path": "\ud800"}, "file_path"
+            )
+
     def test_rejects_non_utf8_text_without_raising(self) -> None:
         request, response = parse_request_json("\ud800")
 

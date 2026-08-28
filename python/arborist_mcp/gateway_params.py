@@ -116,7 +116,14 @@ class GatewayParameterValidation:
                 -32602,
                 f"invalid string param: {key} exceeds max length {max_length}",
             )
-        if max_bytes is not None and len(value.encode("utf-8")) > max_bytes:
+        try:
+            encoded = value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise JsonRpcError(
+                -32602,
+                f"invalid UTF-8 string param: {key}",
+            ) from exc
+        if max_bytes is not None and len(encoded) > max_bytes:
             raise JsonRpcError(
                 -32602,
                 f"invalid string param: {key} exceeds max byte length {max_bytes}",
@@ -280,12 +287,17 @@ class GatewayParameterValidation:
     def _encode_json_param(value: Any, key: str) -> str:
         GatewayParameterValidation._validate_json_param(value, key)
         try:
-            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
-        except (TypeError, ValueError) as exc:
+            encoded = json.dumps(
+                value, ensure_ascii=False, allow_nan=False
+            ).encode("utf-8")
+        except (TypeError, UnicodeEncodeError, ValueError) as exc:
             raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key}") from exc
-        if len(encoded.encode("utf-8")) > MAX_JSON_ARG_BYTES:
-            raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key} exceeds maximum size {MAX_JSON_ARG_BYTES} bytes")
-        return encoded
+        if len(encoded) > MAX_JSON_ARG_BYTES:
+            raise JsonRpcError(
+                -32602,
+                f"invalid JSON-compatible param: {key} exceeds maximum size {MAX_JSON_ARG_BYTES} bytes",
+            )
+        return encoded.decode("utf-8")
 
     @staticmethod
     def _validate_json_param(value: Any, path: str, depth: int = 0) -> None:
