@@ -299,7 +299,7 @@ fn mark_javascript_block_lexical_bindings_initializing(
 ) -> Result<()> {
     let mut cursor = node.walk();
     for statement in node.named_children(&mut cursor) {
-        mark_javascript_lexical_declaration_initializing(statement, source, scope)?;
+        mark_javascript_lexical_binding_initializing(statement, source, scope)?;
     }
     Ok(())
 }
@@ -367,28 +367,35 @@ fn mark_javascript_switch_lexical_bindings_initializing(
         }
         let mut statement_cursor = case_clause.walk();
         for statement in case_clause.children_by_field_name("body", &mut statement_cursor) {
-            mark_javascript_lexical_declaration_initializing(statement, source, scope)?;
+            mark_javascript_lexical_binding_initializing(statement, source, scope)?;
         }
     }
     Ok(())
 }
 
-fn mark_javascript_lexical_declaration_initializing(
+fn mark_javascript_lexical_binding_initializing(
     node: Node<'_>,
     source: &str,
     scope: &mut Scope,
 ) -> Result<()> {
-    if !matches!(node.kind(), "lexical_declaration" | "using_declaration") {
-        return Ok(());
-    }
-    let mut cursor = node.walk();
-    for declarator in node.named_children(&mut cursor) {
-        if declarator.kind() != "variable_declarator" {
-            continue;
+    match node.kind() {
+        "lexical_declaration" | "using_declaration" => {
+            let mut cursor = node.walk();
+            for declarator in node.named_children(&mut cursor) {
+                if declarator.kind() != "variable_declarator" {
+                    continue;
+                }
+                if let Some(name) = declarator.child_by_field_name("name") {
+                    mark_javascript_pattern_initializing(name, source, scope)?;
+                }
+            }
         }
-        if let Some(name) = declarator.child_by_field_name("name") {
-            mark_javascript_pattern_initializing(name, source, scope)?;
+        "class_declaration" | "abstract_class_declaration" => {
+            if let Some(name) = node.child_by_field_name("name") {
+                mark_javascript_pattern_initializing(name, source, scope)?;
+            }
         }
+        _ => {}
     }
     Ok(())
 }
@@ -528,23 +535,55 @@ fn walk_javascript_class(
     immediately_constructed: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        if child.kind() == "class_heritage" {
-            walk_javascript_class_heritage(child, source, scopes, scan, deadline)?;
-        }
-    }
-    if let Some(name_node) = node.child_by_field_name("name")
-        && let Some(enclosing) = scopes.last_mut()
-    {
-        bind_javascript_name(name_node, source, node.kind(), enclosing, scan)?;
-    }
+    let name = node.child_by_field_name("name");
+    let is_declaration = matches!(
+        node.kind(),
+        "class_declaration" | "abstract_class_declaration"
+    );
+
+    // Named classes have an internal binding that is in the temporal dead
+    // zone while their heritage is evaluated, then remains visible to class
+    // members. Keep that binding separate from the surrounding declaration
+    // scope so named class expressions do not leak their internal name.
     scopes.push(Scope {
         is_function_scope: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
+    if let Some(name) = name {
+        mark_javascript_pattern_initializing(
+            name,
+            source,
+            scopes
+                .last_mut()
+                .expect("a JavaScript class scope was just pushed"),
+        )?;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "class_heritage" {
+            walk_javascript_class_heritage(child, source, scopes, scan, deadline)?;
+        }
+    }
+
+    if let Some(name) = name {
+        if is_declaration && scopes.len() >= 2 {
+            let enclosing_index = scopes.len() - 2;
+            let enclosing = &mut scopes[enclosing_index];
+            let name_text = node_text(name, source)?.trim().to_string();
+            enclosing.initializing_names.remove(&name_text);
+            bind_javascript_name(name, source, node.kind(), enclosing, scan)?;
+        }
+        let class_scope = scopes
+            .last_mut()
+            .expect("a JavaScript class scope was just pushed");
+        let name_text = node_text(name, source)?.trim().to_string();
+        class_scope.initializing_names.remove(&name_text);
+        bind_javascript_name(name, source, node.kind(), class_scope, scan)?;
+    }
+
     if let Some(body) = javascript_class_body(node) {
         walk_javascript_class_body(
             body,

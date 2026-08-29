@@ -1478,6 +1478,96 @@ fn javascript_patch_binding_validation_rejects_lexical_references_in_class_herit
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_class_declaration_heritage_tdz_references() {
+    let source = r#"function compute(helper) { return helper; }"#;
+    let replacement = r#"function compute(helper) {
+    {
+        class helper extends helper {}
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_named_class_expression_heritage_tdz_references() {
+    let source = r#"function compute(helper) { return helper; }"#;
+    let replacement = r#"function compute(helper) {
+    const Wrapper = class helper extends helper {};
+    return Wrapper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_keeps_named_class_expressions_in_class_scope() {
+    let source = r#"function compute(value) { return value; }"#;
+    let replacement = r#"function compute(value) {
+    const Wrapper = class Hidden {
+        static create() {
+            return new Hidden();
+        }
+    };
+    return Hidden;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["Hidden"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_named_class_expression_body_references() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    const Wrapper = class Hidden {
+        static create() {
+            return new Hidden();
+        }
+    };
+    return Wrapper.create();
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_initialized_class_heritage() {
     let source = r#"function compute(value) {
     return value;
