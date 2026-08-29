@@ -31,6 +31,35 @@ fn index_overlay_counts_new_unsaved_files_in_indexed_file_totals() {
     assert!(!new_file.exists());
 }
 
+#[cfg(windows)]
+#[test]
+fn workspace_overlay_case_variant_reuses_scanned_file_identity() {
+    let dir = temporary_dir();
+    let stored_path = dir.join("Helper.py");
+    let case_variant_path = dir.join("helper.py");
+
+    fs::write(&stored_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+    let listed = SymbolQueryContext::workspace(&dir)
+        .unwrap()
+        .with_source_overlay(&case_variant_path, "def helper() -> int:\n    return 2\n")
+        .unwrap()
+        .list_symbols(10, None, None)
+        .unwrap();
+
+    assert_eq!(listed.indexed_files, 1);
+    let helper_symbols = listed
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "helper")
+        .collect::<Vec<_>>();
+    assert_eq!(helper_symbols.len(), 1);
+    assert_eq!(
+        helper_symbols[0].file_path,
+        stored_path.to_string_lossy().replace('\\', "/")
+    );
+}
+
 #[test]
 fn index_overlay_accepts_new_disk_file_when_source_is_overridden() {
     let dir = temporary_dir();

@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 
 use crate::language::{
     normalize_absolute_path, normalize_path, parse_document, parse_document_with_timeout,
-    read_source,
+    path_identity, read_source,
 };
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
@@ -77,6 +77,7 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
         normalize_source_overrides_for_workspace(&workspace_root, file_overrides, "workspace")?;
     let limits = WorkspaceScanLimits::default();
     let mut indexed_paths = collect_source_files_with_limits(&workspace_root, limits)?;
+    let file_overrides = remap_overrides_to_indexed_paths(&indexed_paths, &file_overrides)?;
     append_override_paths(&mut indexed_paths, &file_overrides, limits.max_files)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index(&indexed_paths, Some(&file_overrides))?;
@@ -102,6 +103,8 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     };
     let deadline = WorkspaceScanDeadline::new(limits)?;
     let mut indexed_paths = collect_source_files_with_deadline(&workspace_root, limits, &deadline)?;
+    let file_overrides =
+        remap_overrides_to_indexed_paths_with_deadline(&indexed_paths, &file_overrides, &deadline)?;
     append_override_paths_with_deadline(
         &mut indexed_paths,
         &file_overrides,
@@ -124,6 +127,72 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     Ok((resolved_symbols, indexed_files))
 }
 
+fn remap_overrides_to_indexed_paths(
+    indexed_paths: &[PathBuf],
+    file_overrides: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
+    remap_overrides_to_indexed_paths_with_optional_deadline(indexed_paths, file_overrides, None)
+}
+
+fn remap_overrides_to_indexed_paths_with_deadline(
+    indexed_paths: &[PathBuf],
+    file_overrides: &BTreeMap<String, String>,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<BTreeMap<String, String>> {
+    remap_overrides_to_indexed_paths_with_optional_deadline(
+        indexed_paths,
+        file_overrides,
+        Some(deadline),
+    )
+}
+
+fn remap_overrides_to_indexed_paths_with_optional_deadline(
+    indexed_paths: &[PathBuf],
+    file_overrides: &BTreeMap<String, String>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<BTreeMap<String, String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("remapping workspace source overlays")?;
+    }
+
+    let mut indexed_paths_by_identity = BTreeMap::new();
+    for path in indexed_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("remapping workspace source overlays")?;
+        }
+        let normalized_path = normalize_path(path);
+        let identity = path_identity(&normalized_path);
+        if indexed_paths_by_identity
+            .insert(identity, normalized_path.clone())
+            .is_some()
+        {
+            bail!(
+                "workspace scan contains multiple case-insensitive paths for {}",
+                normalized_path
+            );
+        }
+    }
+
+    let mut remapped_overrides = BTreeMap::new();
+    for (file_path, source) in file_overrides {
+        if let Some(deadline) = deadline {
+            deadline.check("remapping workspace source overlays")?;
+        }
+        let normalized_path = normalize_path(Path::new(file_path));
+        let resolved_path = indexed_paths_by_identity
+            .get(&path_identity(&normalized_path))
+            .cloned()
+            .unwrap_or(normalized_path);
+        if remapped_overrides
+            .insert(resolved_path.clone(), source.clone())
+            .is_some()
+        {
+            bail!("source overlay contains duplicate file path {resolved_path}");
+        }
+    }
+    Ok(remapped_overrides)
+}
+
 fn append_override_paths(
     indexed_paths: &mut Vec<PathBuf>,
     file_overrides: &BTreeMap<String, String>,
@@ -131,13 +200,13 @@ fn append_override_paths(
 ) -> Result<()> {
     let mut known_paths: BTreeSet<String> = indexed_paths
         .iter()
-        .map(|path| normalize_path(path))
+        .map(|path| path_identity(&normalize_path(path)))
         .collect();
 
     for override_path in file_overrides.keys() {
         let override_path = Path::new(override_path).to_path_buf();
         let normalized_path = normalize_path(&override_path);
-        if known_paths.insert(normalized_path) {
+        if known_paths.insert(path_identity(&normalized_path)) {
             if indexed_paths.len() >= max_files {
                 bail!(
                     "workspace scan exceeded max_files while adding source overlays: max_files={max_files}"
@@ -159,14 +228,14 @@ fn append_override_paths_with_deadline(
 ) -> Result<()> {
     let mut known_paths: BTreeSet<String> = indexed_paths
         .iter()
-        .map(|path| normalize_path(path))
+        .map(|path| path_identity(&normalize_path(path)))
         .collect();
 
     for override_path in file_overrides.keys() {
         deadline.check("adding workspace overrides")?;
         let override_path = Path::new(override_path).to_path_buf();
         let normalized_path = normalize_path(&override_path);
-        if known_paths.insert(normalized_path) {
+        if known_paths.insert(path_identity(&normalized_path)) {
             if indexed_paths.len() >= max_files {
                 bail!(
                     "workspace scan exceeded max_files while adding source overlays: max_files={max_files}"
@@ -239,8 +308,10 @@ fn build_workspace_index_with_deadline(
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
-    use super::append_override_paths;
+    use super::{append_override_paths, remap_overrides_to_indexed_paths_with_deadline};
+    use crate::workspace_scan::WorkspaceScanDeadline;
 
     #[test]
     fn override_paths_respect_workspace_file_limit() {
@@ -264,5 +335,25 @@ mod tests {
         append_override_paths(&mut indexed_paths, &overrides, 1)
             .expect("an override for an indexed file should not consume another slot");
         assert_eq!(indexed_paths.len(), 1);
+    }
+
+    #[test]
+    fn remapping_override_paths_rejects_expired_deadline() {
+        let indexed_paths = vec![PathBuf::from("existing.py")];
+        let overrides = BTreeMap::from([("existing.py".to_string(), String::new())]);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error =
+            remap_overrides_to_indexed_paths_with_deadline(&indexed_paths, &overrides, &deadline)
+                .expect_err("expired deadline should reject workspace overlay remapping");
+
+        assert!(
+            error
+                .to_string()
+                .contains("remapping workspace source overlays")
+        );
     }
 }
