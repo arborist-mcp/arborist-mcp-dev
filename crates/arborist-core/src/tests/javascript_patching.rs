@@ -912,6 +912,30 @@ fn javascript_patch_binding_validation_rejects_unresolved_loop_assignment_target
     assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
 }
 #[test]
+fn javascript_patch_binding_validation_rejects_unresolved_computed_loop_assignment_keys() {
+    let source = r#"function compute(items, target) {
+    return target;
+}
+"#;
+    let replacement = r#"function compute(items, target) {
+    for ({ [missing]: target.value } of items) {
+        continue;
+    }
+    return target;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
+}
+#[test]
 fn javascript_patch_binding_validation_resolves_var_loop_bindings_after_the_loop() {
     let source = r#"function compute(items) {
     return 0;
