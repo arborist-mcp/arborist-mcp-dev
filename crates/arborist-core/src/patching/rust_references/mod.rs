@@ -6,10 +6,15 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{ReferenceValidation, resolved_binding_decision, unresolved_binding_decision};
+use super::{
+    ReferenceValidation, ambiguous_binding_decision, resolved_binding_decision,
+    unresolved_binding_decision,
+};
 use crate::deadline::DeadlineCheck;
 use crate::language::{ParsedDocument, node_text, normalize_path};
-use crate::model::{SymbolSummary, SymbolSummaryInit, ValidationBinding};
+use crate::model::{
+    DisambiguationContext, SymbolSummary, SymbolSummaryInit, ValidationAmbiguity, ValidationBinding,
+};
 use crate::semantic::rust::{
     rust_parameters, rust_return_type, rust_semantic_path, rust_signature, rust_symbol_name,
 };
@@ -32,6 +37,12 @@ pub(crate) fn collect_rust_reference_validation_with_deadline(
 
     let mut validation = ReferenceValidation::default();
     for name in &scope_scan.local_references {
+        // The validation report has one decision per identifier spelling. When
+        // the spelling also appears outside the local binding's scope, validate
+        // the external reference instead of accepting every site as local.
+        if scope_scan.external_references.contains(name) {
+            continue;
+        }
         let Some(binding) = scope_scan
             .local_bindings
             .iter()
@@ -55,22 +66,61 @@ pub(crate) fn collect_rust_reference_validation_with_deadline(
         if RUST_PRELUDE_NAMES.contains(&name.as_str()) {
             continue;
         }
-        // Item declarations are hoisted inside a block, so a nested item name
-        // resolves even when the reference precedes the declaration text.
-        if let Some(binding) = scope_scan
+        // Item declarations are hoisted only within their enclosing block. A
+        // nested item can therefore satisfy an earlier reference in the same
+        // block, but never a reference after that block ends.
+        let nested_item_candidates = scope_scan
             .local_bindings
             .iter()
-            .find(|binding| &binding.name == name && is_rust_nested_item_kind(binding.node_kind))
-        {
-            let summary = rust_local_symbol_summary(&normalized_path, &scope_path, binding);
-            validation
-                .binding_decisions
-                .push(resolved_binding_decision(name, &summary));
-            validation.resolved_identifiers.push(ValidationBinding {
-                name: name.clone(),
-                symbol: summary,
-            });
-            continue;
+            .filter(|binding| {
+                &binding.name == name
+                    && is_rust_nested_item_kind(binding.node_kind)
+                    && binding.scope_range.is_some_and(|(scope_start, scope_end)| {
+                        scope_scan
+                            .external_reference_ranges
+                            .get(name)
+                            .is_some_and(|ranges| {
+                                ranges
+                                    .iter()
+                                    .all(|&(start, end)| scope_start <= start && end <= scope_end)
+                            })
+                    })
+            })
+            .collect::<Vec<_>>();
+        match nested_item_candidates.as_slice() {
+            [binding] => {
+                let summary = rust_local_symbol_summary(&normalized_path, &scope_path, binding);
+                validation
+                    .binding_decisions
+                    .push(resolved_binding_decision(name, &summary));
+                validation.resolved_identifiers.push(ValidationBinding {
+                    name: name.clone(),
+                    symbol: summary,
+                });
+                continue;
+            }
+            [] => {}
+            bindings => {
+                let candidates = bindings
+                    .iter()
+                    .map(|binding| {
+                        rust_local_symbol_summary(&normalized_path, &scope_path, binding)
+                    })
+                    .collect::<Vec<_>>();
+                let reason =
+                    "multiple nested Rust item bindings are visible from every unresolved reference"
+                        .to_string();
+                validation
+                    .binding_decisions
+                    .push(ambiguous_binding_decision(name, &reason, &candidates));
+                validation.ambiguous_identifiers.push(ValidationAmbiguity {
+                    name: name.clone(),
+                    candidates,
+                    reason,
+                    disambiguation_context: DisambiguationContext::default(),
+                });
+                continue;
+            }
         }
         match file_items.get(name) {
             Some(item) => {

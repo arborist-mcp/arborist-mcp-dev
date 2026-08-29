@@ -411,6 +411,96 @@ fn rust_patch_binding_validation_resolves_scoped_patterns_guards_and_closures() 
 }
 
 #[test]
+fn rust_patch_binding_validation_rejects_references_outside_nested_block_scope() {
+    let source = "pub fn compute(value: i32) -> i32 {
+    value
+}
+";
+    let result = patch_ast_node(
+        Path::new("sample.rs"),
+        source,
+        "compute",
+        "pub fn compute(value: i32) -> i32 {
+    {
+        let helper = value + 1;
+        let _ = helper;
+    }
+    helper
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn rust_patch_binding_validation_rejects_nested_items_referenced_outside_their_block() {
+    let source = "pub fn compute(value: i32) -> i32 {
+    value
+}
+";
+    let result = patch_ast_node(
+        Path::new("sample.rs"),
+        source,
+        "compute",
+        "pub fn compute(value: i32) -> i32 {
+    {
+        fn helper(input: i32) -> i32 {
+            input + 1
+        }
+        let _ = helper(value);
+    }
+    helper(value)
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn rust_patch_binding_validation_rejects_ambiguous_hoisted_nested_items() {
+    let source = "pub fn compute(value: i32) -> i32 {\n    value\n}\n";
+    let result = patch_ast_node(
+        Path::new("sample.rs"),
+        source,
+        "compute",
+        "pub fn compute(value: i32) -> i32 {
+    let result = helper(value);
+    fn helper(input: i32) -> i32 {
+        input + 1
+    }
+    fn helper(input: i32) -> i32 {
+        input + 2
+    }
+    result
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert_eq!(result.validation.ambiguous_identifiers.len(), 1);
+    assert_eq!(result.validation.ambiguous_identifiers[0].name, "helper");
+    assert_eq!(
+        result.validation.ambiguous_identifiers[0].candidates.len(),
+        2
+    );
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "helper" && decision.status == "ambiguous")
+    );
+}
+
+#[test]
 fn rust_patch_binding_validation_resolves_method_bodies_without_member_checks() {
     let source = r#"pub struct Counter {
     count: i32,

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use tree_sitter::Node;
@@ -12,12 +12,14 @@ pub(super) struct RustBinding {
     pub(super) node_kind: &'static str,
     pub(super) start_byte: usize,
     pub(super) end_byte: usize,
+    pub(super) scope_range: Option<(usize, usize)>,
 }
 
 pub(super) struct RustScopeScan {
     pub(super) local_bindings: Vec<RustBinding>,
     pub(super) local_references: BTreeSet<String>,
     pub(super) external_references: BTreeSet<String>,
+    pub(super) external_reference_ranges: BTreeMap<String, Vec<(usize, usize)>>,
 }
 
 /// Walks the patched symbol node and classifies identifier references into
@@ -32,6 +34,7 @@ pub(super) fn scan_rust_symbol_scope(
         local_bindings: Vec::new(),
         local_references: BTreeSet::new(),
         external_references: BTreeSet::new(),
+        external_reference_ranges: BTreeMap::new(),
     };
     let mut scopes: Vec<Vec<RustBinding>> = Vec::new();
 
@@ -438,10 +441,22 @@ fn bind_nested_item_name(
         node_kind: node.kind(),
         start_byte: name_node.start_byte(),
         end_byte: name_node.end_byte(),
+        scope_range: rust_enclosing_block_range(node),
     };
     scan.local_bindings.push(binding.clone());
     scope.push(binding);
     Ok(())
+}
+
+fn rust_enclosing_block_range(node: Node<'_>) -> Option<(usize, usize)> {
+    let mut ancestor = node.parent();
+    while let Some(candidate) = ancestor {
+        if candidate.kind() == "block" {
+            return Some((candidate.start_byte(), candidate.end_byte()));
+        }
+        ancestor = candidate.parent();
+    }
+    None
 }
 
 fn collect_parameter_bindings(
@@ -575,6 +590,7 @@ fn push_rust_binding(
         node_kind,
         start_byte: node.start_byte(),
         end_byte: node.end_byte(),
+        scope_range: None,
     };
     out.push(binding.clone());
     scan.local_bindings.push(binding);
@@ -602,7 +618,11 @@ fn record_rust_reference(
     if rust_name_visible(&name, scopes) {
         scan.local_references.insert(name);
     } else {
-        scan.external_references.insert(name);
+        scan.external_references.insert(name.clone());
+        scan.external_reference_ranges
+            .entry(name)
+            .or_default()
+            .push((node.start_byte(), node.end_byte()));
     }
     Ok(())
 }
