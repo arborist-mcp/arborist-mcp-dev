@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
@@ -15,6 +15,47 @@ use crate::workspace_scan::{
 };
 
 use super::fingerprints::source_fingerprint;
+
+pub(crate) fn resolve_persisted_file_path(
+    file_path: &Path,
+    file_states: &BTreeMap<String, u64>,
+) -> Result<PathBuf> {
+    let normalized_path = normalize_path(file_path);
+    if !cfg!(windows) {
+        return Ok(file_path.to_path_buf());
+    }
+
+    let matches = file_states
+        .keys()
+        .filter(|persisted_path| persisted_path.eq_ignore_ascii_case(&normalized_path))
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(file_path.to_path_buf()),
+        [persisted_path] => Ok(PathBuf::from(persisted_path)),
+        _ => bail!(
+            "persisted index contains multiple case-insensitive file_state paths for {}",
+            normalized_path
+        ),
+    }
+}
+
+pub(crate) fn remap_file_overrides_to_persisted_paths(
+    file_overrides: &BTreeMap<String, String>,
+    file_states: &BTreeMap<String, u64>,
+) -> Result<BTreeMap<String, String>> {
+    let mut remapped_overrides = BTreeMap::new();
+    for (file_path, source) in file_overrides {
+        let resolved_path = resolve_persisted_file_path(Path::new(file_path), file_states)?;
+        let normalized_path = normalize_path(&resolved_path);
+        if remapped_overrides
+            .insert(normalized_path.clone(), source.clone())
+            .is_some()
+        {
+            bail!("source overlay contains duplicate file path {normalized_path}");
+        }
+    }
+    Ok(remapped_overrides)
+}
 
 pub(crate) fn validate_persisted_index_paths(
     workspace_root: &Path,

@@ -14,5 +14,7 @@ mod inspection;
 mod loading;
 mod paths;
 
-pub(crate) use paths::validate_persisted_index_paths_with_overrides_and_deadline;
+pub(crate) use paths::{
+    resolve_persisted_file_path, validate_persisted_index_paths_with_overrides_and_deadline,
+};
 mod migration;

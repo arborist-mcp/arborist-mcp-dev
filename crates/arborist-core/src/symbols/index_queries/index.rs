@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::index_schema::{
@@ -25,7 +25,8 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document_with_deadline;
 use crate::symbol_index_state::{
-    source_fingerprint, validate_persisted_index_paths_with_overrides_and_deadline,
+    resolve_persisted_file_path, source_fingerprint,
+    validate_persisted_index_paths_with_overrides_and_deadline,
 };
 use crate::symbol_index_workspace::{
     expanded_refresh_file_paths, resolve_workspace_symbols_incremental_with_deadline,
@@ -124,29 +125,6 @@ fn refresh_source(
         .unwrap_or_else(|| read_source(refresh_path))
 }
 
-fn persisted_refresh_file_path(
-    file_path: &Path,
-    file_states: &BTreeMap<String, u64>,
-) -> Result<PathBuf> {
-    let normalized_path = normalize_path(file_path);
-    if !cfg!(windows) {
-        return Ok(file_path.to_path_buf());
-    }
-
-    let matches = file_states
-        .keys()
-        .filter(|persisted_path| persisted_path.eq_ignore_ascii_case(&normalized_path))
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [] => Ok(file_path.to_path_buf()),
-        [persisted_path] => Ok(PathBuf::from(persisted_path)),
-        _ => bail!(
-            "persisted index contains multiple case-insensitive file_state paths for {}",
-            normalized_path
-        ),
-    }
-}
-
 pub fn refresh_symbol_index_for_file(
     workspace_root: &Path,
     db_path: &Path,
@@ -200,7 +178,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     deadline.check("loading existing indexed symbols")?;
     let mut file_states = load_file_states_with_deadline(&connection, Some(&deadline))?;
     deadline.check("loading existing indexed file states")?;
-    let refresh_file_path = persisted_refresh_file_path(&file_path, &file_states)?;
+    let refresh_file_path = resolve_persisted_file_path(&file_path, &file_states)?;
     let refresh_paths = if should_skip_index_path(&workspace_root, &refresh_file_path) {
         vec![refresh_file_path]
     } else {

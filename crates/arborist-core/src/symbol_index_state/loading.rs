@@ -28,7 +28,10 @@ use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline, WorkspaceScanLimits};
 
 use super::freshness::{ensure_symbol_index_fresh_with_deadline, validate_indexed_file_count};
-use super::paths::validate_persisted_index_paths_with_overrides_and_deadline;
+use super::paths::{
+    remap_file_overrides_to_persisted_paths,
+    validate_persisted_index_paths_with_overrides_and_deadline,
+};
 
 pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     load_symbol_index_internal(db_path, None)
@@ -148,7 +151,7 @@ fn load_symbol_index_with_overrides_internal(
     validate_symbol_index_analysis_provenance(&connection, db_path)?;
     let workspace_root =
         load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
-    let file_overrides = normalize_source_overrides_for_workspace(
+    let normalized_file_overrides = normalize_source_overrides_for_workspace(
         &workspace_root,
         file_overrides,
         "indexed workspace",
@@ -170,6 +173,10 @@ fn load_symbol_index_with_overrides_internal(
     if let Some(deadline) = deadline {
         deadline.check("loading indexed file states")?;
     }
+    let file_overrides = remap_file_overrides_to_persisted_paths(
+        &normalized_file_overrides,
+        &persisted_file_states,
+    )?;
     let (resolved_symbols, persisted_indexed_files) = match deadline {
         Some(deadline) => load_resolved_symbols_with_deadline(&connection, Some(deadline))?,
         None => load_resolved_symbols(&connection)?,

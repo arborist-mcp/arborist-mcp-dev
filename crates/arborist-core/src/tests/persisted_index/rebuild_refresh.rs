@@ -105,6 +105,37 @@ fn refresh_case_variant_reuses_persisted_file_identity() {
     assert_eq!(symbol.symbol.file_path, normalize_path(&stored_path));
 }
 
+#[cfg(windows)]
+#[test]
+fn source_overlay_case_variant_reuses_persisted_file_identity() {
+    use std::collections::BTreeMap;
+
+    use crate::symbol_index_state::load_symbol_index_with_overrides;
+
+    let dir = temporary_dir();
+    let stored_path = dir.join("Helper.py");
+    let case_variant_path = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&stored_path, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let overrides = BTreeMap::from([(
+        normalize_path(&case_variant_path),
+        "def helper() -> int:\n    return 2\n".to_string(),
+    )]);
+    let (symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, &overrides)
+        .expect("case-variant source overlay should replace the persisted file");
+
+    assert_eq!(indexed_files, 1);
+    let helper_symbols = symbols
+        .iter()
+        .filter(|symbol| symbol.symbol_id == "helper")
+        .collect::<Vec<_>>();
+    assert_eq!(helper_symbols.len(), 1);
+    assert_eq!(helper_symbols[0].file_path, normalize_path(&stored_path));
+}
+
 #[test]
 fn refresh_symbol_index_ignores_files_in_skipped_dirs() {
     let dir = temporary_dir();
