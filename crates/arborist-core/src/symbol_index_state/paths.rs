@@ -5,7 +5,8 @@ use anyhow::{Result, bail};
 
 use crate::index_store::validate_resolved_symbol_edges_with_deadline;
 use crate::language::{
-    detect_language, normalize_absolute_path, normalize_path, path_is_inside_workspace, read_source,
+    detect_language, normalize_absolute_path, normalize_path, path_identity,
+    path_is_inside_workspace, read_source,
 };
 use crate::model::SymbolMeta;
 use crate::workspace_scan::{
@@ -25,9 +26,10 @@ pub(crate) fn resolve_persisted_file_path(
         return Ok(file_path.to_path_buf());
     }
 
+    let normalized_identity = path_identity(&normalized_path);
     let matches = file_states
         .keys()
-        .filter(|persisted_path| persisted_path.eq_ignore_ascii_case(&normalized_path))
+        .filter(|persisted_path| path_identity(persisted_path) == normalized_identity)
         .collect::<Vec<_>>();
     match matches.as_slice() {
         [] => Ok(file_path.to_path_buf()),

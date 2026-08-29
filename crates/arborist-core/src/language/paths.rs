@@ -77,3 +77,11 @@ fn canonicalize_with_existing_ancestor(path: &Path) -> Result<PathBuf> {
 pub fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
+
+pub(crate) fn path_identity(path: &str) -> String {
+    if cfg!(windows) {
+        path.to_lowercase()
+    } else {
+        path.to_owned()
+    }
+}
