@@ -710,6 +710,42 @@ fn csharp_patch_binding_validation_rejects_references_outside_nested_block_scope
 }
 
 #[test]
+fn csharp_patch_binding_validation_resolves_hoisted_local_functions_within_their_block() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Counter.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        r#"public int Compute(int value) {
+    int result = helper();
+    int helper() {
+        return value + 1;
+    }
+    return result;
+}"#,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "helper" && decision.status == "resolved")
+    );
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {

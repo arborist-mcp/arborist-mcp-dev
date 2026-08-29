@@ -6,10 +6,15 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{ReferenceValidation, resolved_binding_decision, unresolved_binding_decision};
+use super::{
+    ReferenceValidation, ambiguous_binding_decision, resolved_binding_decision,
+    unresolved_binding_decision,
+};
 use crate::deadline::DeadlineCheck;
 use crate::language::{ParsedDocument, node_text, normalize_path};
-use crate::model::{SymbolSummary, SymbolSummaryInit, ValidationBinding};
+use crate::model::{
+    DisambiguationContext, SymbolSummary, SymbolSummaryInit, ValidationAmbiguity, ValidationBinding,
+};
 use crate::semantic::csharp::{
     csharp_parameters, csharp_return_type, csharp_semantic_path, csharp_signature,
     csharp_symbol_name,
@@ -70,6 +75,61 @@ pub(crate) fn collect_csharp_reference_validation_with_deadline(
         }
         if CSHARP_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
+        }
+        // Local functions are callable throughout their enclosing block, even
+        // before the declaration text. They never escape that block.
+        let local_function_candidates = scope_scan
+            .local_bindings
+            .iter()
+            .filter(|binding| {
+                &binding.name == name
+                    && binding.node_kind == "local_function"
+                    && binding.scope_range.is_some_and(|(scope_start, scope_end)| {
+                        scope_scan
+                            .external_reference_ranges
+                            .get(name)
+                            .is_some_and(|ranges| {
+                                ranges
+                                    .iter()
+                                    .all(|&(start, end)| scope_start <= start && end <= scope_end)
+                            })
+                    })
+            })
+            .collect::<Vec<_>>();
+        match local_function_candidates.as_slice() {
+            [binding] => {
+                let summary = csharp_local_symbol_summary(&normalized_path, &scope_path, binding);
+                validation
+                    .binding_decisions
+                    .push(resolved_binding_decision(name, &summary));
+                validation.resolved_identifiers.push(ValidationBinding {
+                    name: name.clone(),
+                    symbol: summary,
+                });
+                continue;
+            }
+            [] => {}
+            bindings => {
+                let candidates = bindings
+                    .iter()
+                    .map(|binding| {
+                        csharp_local_symbol_summary(&normalized_path, &scope_path, binding)
+                    })
+                    .collect::<Vec<_>>();
+                let reason =
+                    "multiple local C# functions are visible from every unresolved reference"
+                        .to_string();
+                validation
+                    .binding_decisions
+                    .push(ambiguous_binding_decision(name, &reason, &candidates));
+                validation.ambiguous_identifiers.push(ValidationAmbiguity {
+                    name: name.clone(),
+                    candidates,
+                    reason,
+                    disambiguation_context: DisambiguationContext::default(),
+                });
+                continue;
+            }
         }
         let item =
             visible_csharp_file_item(&file_items, name, scope_path.as_deref()).or_else(|| {
