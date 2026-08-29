@@ -858,6 +858,61 @@ fn javascript_patch_binding_validation_rejects_inline_constructed_instance_field
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_class_heritage() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = class extends helper {};
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_initialized_class_heritage() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const Base = class {};
+    const helper = class extends Base {};
+    return new helper();
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "Base" && decision.status == "resolved"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_prior_lexical_declarators() {
     let source = r#"function compute(value) {
     return value;

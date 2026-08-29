@@ -70,15 +70,7 @@ pub(super) fn scan_javascript_symbol_scope(
             }
         }
         "class_declaration" | "abstract_class_declaration" => {
-            scopes.push(Scope {
-                is_function_scope: false,
-                defers_tdz_references: false,
-                bindings: Vec::new(),
-                initializing_names: BTreeSet::new(),
-            });
-            if let Some(body) = javascript_class_body(symbol_node) {
-                walk_javascript_node(body, source, &mut scopes, &mut scan, deadline)?;
-            }
+            walk_javascript_class(symbol_node, source, &mut scopes, &mut scan, false, deadline)?;
         }
         // Interfaces, enums, and type aliases carry no value references to
         // validate; their member and type spellings are not value bindings.
@@ -122,7 +114,7 @@ fn walk_javascript_node(
         | "method_definition" => {
             walk_javascript_function(node, source, scopes, scan, false, deadline)
         }
-        "class_declaration" | "abstract_class_declaration" => {
+        "class_declaration" | "abstract_class_declaration" | "class" => {
             walk_javascript_class(node, source, scopes, scan, false, deadline)
         }
         "public_field_definition" | "field_definition" => {
@@ -412,6 +404,12 @@ fn walk_javascript_class(
     immediately_constructed: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "class_heritage" {
+            walk_javascript_class_heritage(child, source, scopes, scan, deadline)?;
+        }
+    }
     if let Some(name_node) = node.child_by_field_name("name")
         && let Some(enclosing) = scopes.last_mut()
     {
@@ -435,6 +433,35 @@ fn walk_javascript_class(
     }
     scopes.pop();
     Ok(())
+}
+
+fn walk_javascript_class_heritage(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    match node.kind() {
+        "implements_clause" => Ok(()),
+        "extends_clause" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() != "type_arguments" {
+                    walk_javascript_node(child, source, scopes, scan, deadline)?;
+                }
+            }
+            Ok(())
+        }
+        "class_heritage" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                walk_javascript_class_heritage(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
+        _ => walk_javascript_node(node, source, scopes, scan, deadline),
+    }
 }
 
 fn walk_javascript_class_body(
