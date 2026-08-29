@@ -228,15 +228,18 @@ has expired. The direct graph and neighborhood trace tools accept the same
 budget for expansion phases; loading an index or parsing a source overlay is
 still a non-preemptible boundary.
 
-`inspect_symbol_index` also accepts the optional budget and fails closed when
-freshness or unindexed-file scanning exceeds it; its successful health response
-shape is unchanged. `migrate_symbol_index` uses the same cap for path/open,
-schema and metadata validation, legacy-row loading, persisted-path checks, and
-a final gate before schema mutation. A timeout through that gate leaves the
-index unchanged. After the schema transaction starts, no further deadline check
-runs; the required source rebuild and final health inspection complete and
-return their actual outcome. A single SQLite query, source read, schema
-transaction, or rebuild persistence step remains non-preemptible.
+`inspect_symbol_index` also accepts the optional budget. Its budget covers
+path normalization, the initial index existence probe, database opening,
+table/schema/metadata checks, persisted state loading, freshness inspection,
+and unindexed-file scanning. It fails closed when the budget expires, while its
+successful health response shape is unchanged. `migrate_symbol_index` uses the
+same cap for path/open, schema and metadata validation, legacy-row loading,
+persisted-path checks, and a final gate before schema mutation. A timeout
+through that gate leaves the index unchanged. After the schema transaction
+starts, no further deadline check runs; the required source rebuild and final
+health inspection complete and return their actual outcome. A single SQLite
+query, source read, schema transaction, or rebuild persistence step remains
+non-preemptible.
 
 The four `list_symbols*` tools, the four `search_symbols*` tools, and all eight
 `read_symbol*` tools also accept the optional `timeout_ms` budget. For direct
