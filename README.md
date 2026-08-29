@@ -695,8 +695,8 @@ for response shapes, error behavior, and examples.
   non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
   unchanged Java source files. Imported targets require a
   unique static-method arity match. Wildcard imports, static wildcard imports, static field imports, missing or ambiguous
-  imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call selection, and patching remain capability-gated
-  pending dedicated Java resolution fixtures.
+  imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, and overloaded-call selection remain capability-gated.
+  Structural patching targets Java classes, interfaces, enums, records, annotation types, methods, constructors, and nested types by semantic path or source position with syntax-level validation. Patch binding validation resolves identifier references inside a patched symbol to visible formal parameters, local declarators, `for` and enhanced-`for` variables, catch parameters, try-with-resources variables, lambda parameters, pattern variables, record components, same-file type, method, field, constant, and enum-constant declarations, or explicit single-name imports; type annotations, field and method names, package-qualified type spellings, cast/`instanceof`/object-creation types, labels, annotation names, wildcard imports, and predeclared Java names are ignored or fail closed, and unknown bare identifiers fail closed.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
