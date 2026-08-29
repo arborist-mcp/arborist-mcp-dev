@@ -172,6 +172,12 @@ fn walk_kotlin_function_declaration(
     scan: &mut KotlinScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    // A named local function is visible after its declaration in the
+    // enclosing lexical scope and inside its own body for recursion. Bind it
+    // before entering its parameter scope so both contexts can resolve it.
+    if let Some(name) = node.child_by_field_name("name") {
+        bind_kotlin_name(name, source, "local_function", scopes, scan)?;
+    }
     let mut function_scope = Vec::new();
     collect_kotlin_function_bindings(node, source, &mut function_scope, scan)?;
     scopes.push(function_scope);

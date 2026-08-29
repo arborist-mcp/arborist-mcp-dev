@@ -480,6 +480,67 @@ fn kotlin_patch_binding_validation_rejects_references_outside_nested_block_scope
 }
 
 #[test]
+fn kotlin_patch_binding_validation_resolves_local_function_calls() {
+    let source = "package com.example\n\nfun compute(value: Int): Int {\n    return value\n}\n";
+    let result = patch_ast_node(
+        Path::new("Compute.kt"),
+        source,
+        "com::example::compute",
+        r#"fun compute(value: Int): Int {
+    fun helper(input: Int): Int {
+        return if (input <= 0) 0 else helper(input - 1)
+    }
+    return helper(value)
+}"#,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
+fn kotlin_patch_binding_validation_rejects_local_functions_outside_their_block() {
+    let source = "package com.example\n\nfun compute(value: Int): Int {\n    return value\n}\n";
+    let result = patch_ast_node(
+        Path::new("Compute.kt"),
+        source,
+        "com::example::compute",
+        r#"fun compute(value: Int): Int {
+    if (value >= 0) {
+        fun helper(input: Int): Int {
+            return input + 1
+        }
+        val ignored = helper(value)
+    }
+    return helper(value)
+}"#,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "helper"),
+        "{result:#?}"
+    );
+    let helper_decisions = result
+        .validation
+        .binding_decisions
+        .iter()
+        .filter(|decision| decision.name == "helper")
+        .collect::<Vec<_>>();
+    assert_eq!(helper_decisions.len(), 1, "{result:#?}");
+    assert_eq!(helper_decisions[0].status, "unresolved");
+}
+
+#[test]
 fn kotlin_patch_binding_validation_rejects_sibling_class_members() {
     let source = r#"package com.example
 
