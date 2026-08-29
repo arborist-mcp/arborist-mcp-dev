@@ -783,6 +783,81 @@ fn javascript_patch_binding_validation_resolves_initialized_computed_property_ke
 }
 
 #[test]
+fn javascript_patch_binding_validation_allows_deferred_instance_field_initializers() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = class {
+        result = helper;
+    };
+    return new helper().result;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_eager_static_field_initializers() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = class {
+        static result = helper;
+    };
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_inline_constructed_instance_field_initializers() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = new class {
+        result = helper;
+    }();
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_prior_lexical_declarators() {
     let source = r#"function compute(value) {
     return value;

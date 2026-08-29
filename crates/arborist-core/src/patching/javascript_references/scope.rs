@@ -126,16 +126,7 @@ fn walk_javascript_node(
             walk_javascript_class(node, source, scopes, scan, false, deadline)
         }
         "public_field_definition" | "field_definition" => {
-            if let Some(name) = node
-                .child_by_field_name("property")
-                .or_else(|| node.child_by_field_name("name"))
-            {
-                walk_javascript_computed_property_name(name, source, scopes, scan, deadline)?;
-            }
-            if let Some(value) = node.child_by_field_name("value") {
-                walk_javascript_node(value, source, scopes, scan, deadline)?;
-            }
-            Ok(())
+            walk_javascript_field_definition(node, source, scopes, scan, false, deadline)
         }
         "class_static_block" => walk_javascript_children(node, source, scopes, scan, deadline),
         "statement_block" => walk_javascript_block(node, source, scopes, scan, deadline),
@@ -206,6 +197,49 @@ fn walk_javascript_node(
             }
         }
     }
+}
+
+fn walk_javascript_field_definition(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    instance_initializer_executes_now: bool,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(name) = node
+        .child_by_field_name("property")
+        .or_else(|| node.child_by_field_name("name"))
+    {
+        // Computed keys are evaluated when the class is created, regardless
+        // of whether the field initializer is deferred until construction.
+        walk_javascript_computed_property_name(name, source, scopes, scan, deadline)?;
+    }
+    let Some(value) = node.child_by_field_name("value") else {
+        return Ok(());
+    };
+    if is_javascript_static_field_definition(node) || instance_initializer_executes_now {
+        return walk_javascript_node(value, source, scopes, scan, deadline);
+    }
+
+    // Instance field initializers run when an instance is constructed, which
+    // is after a normal class-expression binding has finished initializing.
+    // Model that delayed execution without making the field a `var` scope.
+    scopes.push(Scope {
+        is_function_scope: false,
+        defers_tdz_references: true,
+        bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
+    });
+    walk_javascript_node(value, source, scopes, scan, deadline)?;
+    scopes.pop();
+    Ok(())
+}
+
+fn is_javascript_static_field_definition(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "static")
 }
 
 fn walk_javascript_computed_property_name(
@@ -413,7 +447,16 @@ fn walk_javascript_class_body(
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if immediately_constructed && is_javascript_constructor(child, source)? {
+        if matches!(child.kind(), "public_field_definition" | "field_definition") {
+            walk_javascript_field_definition(
+                child,
+                source,
+                scopes,
+                scan,
+                immediately_constructed,
+                deadline,
+            )?;
+        } else if immediately_constructed && is_javascript_constructor(child, source)? {
             walk_javascript_function(child, source, scopes, scan, true, deadline)?;
         } else {
             walk_javascript_node(child, source, scopes, scan, deadline)?;
