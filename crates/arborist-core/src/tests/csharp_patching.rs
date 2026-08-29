@@ -663,6 +663,53 @@ fn csharp_patch_binding_validation_rejects_ambiguous_same_scope_overloads() {
 }
 
 #[test]
+fn csharp_patch_binding_validation_rejects_references_outside_nested_block_scope() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Counter.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        r#"public int Compute(int value) {
+    {
+        int helper() {
+            return value + 1;
+        }
+        int ignored = helper();
+    }
+    return helper();
+}"#,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "helper"),
+        "{result:#?}"
+    );
+    let helper_decisions = result
+        .validation
+        .binding_decisions
+        .iter()
+        .filter(|decision| decision.name == "helper")
+        .collect::<Vec<_>>();
+    assert_eq!(helper_decisions.len(), 1, "{result:#?}");
+    assert_eq!(helper_decisions[0].status, "unresolved");
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {
