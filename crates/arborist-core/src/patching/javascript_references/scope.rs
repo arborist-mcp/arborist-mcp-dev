@@ -675,6 +675,12 @@ fn javascript_for_in_has_lexical_binding(node: Node<'_>) -> bool {
         .any(|kind| matches!(kind.kind(), "const" | "let" | "using"))
 }
 
+fn javascript_for_in_has_var_binding(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children_by_field_name("kind", &mut cursor)
+        .any(|kind| kind.kind() == "var")
+}
+
 fn collect_javascript_pattern_initialization<'tree>(
     node: Node<'tree>,
     source: &str,
@@ -769,6 +775,10 @@ fn walk_javascript_for_in(
     let lexical_left = javascript_for_in_has_lexical_binding(node)
         .then_some(left)
         .flatten();
+    let var_left = javascript_for_in_has_var_binding(node)
+        .then_some(left)
+        .flatten();
+    let mut post_iterable_defaults = Vec::new();
     if let Some(left) = lexical_left {
         // The iterable expression runs while the per-loop lexical bindings
         // exist but are still in their temporal dead zone.
@@ -777,22 +787,32 @@ fn walk_javascript_for_in(
             source,
             scopes.last_mut().expect("loop scope is active"),
         )?;
+    } else if let Some(left) = var_left {
+        if let Some(target_index) = javascript_var_target_scope_index(scopes) {
+            collect_javascript_pattern_bindings(
+                left,
+                source,
+                "loop_variable",
+                &mut scopes[target_index],
+                scan,
+                &mut post_iterable_defaults,
+            )?;
+        }
     } else if let Some(left) = left {
-        let mut defaults = Vec::new();
         collect_javascript_pattern_bindings(
             left,
             source,
             "loop_variable",
             scopes.last_mut().expect("loop scope is active"),
             scan,
-            &mut defaults,
+            &mut post_iterable_defaults,
         )?;
-        for default in defaults {
-            walk_javascript_node(default, source, scopes, scan, deadline)?;
-        }
     }
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
+    }
+    for default in post_iterable_defaults {
+        walk_javascript_node(default, source, scopes, scan, deadline)?;
     }
     if let Some(left) = lexical_left {
         walk_javascript_lexical_loop_binding(left, source, scopes, scan, deadline)?;

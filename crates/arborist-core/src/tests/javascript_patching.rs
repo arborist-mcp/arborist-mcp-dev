@@ -858,6 +858,30 @@ fn javascript_patch_binding_validation_rejects_inline_constructed_instance_field
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_var_loop_bindings_after_the_loop() {
+    let source = r#"function compute(items) {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(items) {
+    for (var item of items) {
+        continue;
+    }
+    return item;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+#[test]
 fn javascript_patch_binding_validation_rejects_lexical_references_in_loop_iterables() {
     let source = r#"function compute() {
     return [];
