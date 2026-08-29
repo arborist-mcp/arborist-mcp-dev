@@ -40,12 +40,29 @@ pub(crate) fn current_analysis_provenance_json() -> Result<String> {
     Ok(serde_json::to_string(&current_analysis_provenance())?)
 }
 
+pub(crate) fn open_symbol_index_with_deadline(
+    db_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Connection> {
+    open_symbol_index_connection_with_deadline(db_path, deadline, |path| Connection::open(path))
+}
+
 pub(crate) fn open_symbol_index_read_only_with_deadline(
     db_path: &Path,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Connection> {
+    open_symbol_index_connection_with_deadline(db_path, deadline, |path| {
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+    })
+}
+
+fn open_symbol_index_connection_with_deadline(
+    db_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+    open: impl FnOnce(&Path) -> rusqlite::Result<Connection>,
+) -> Result<Connection> {
     check_deadline(deadline, "opening persisted index")?;
-    let connection = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let connection = open(db_path)?;
     check_deadline(deadline, "opening persisted index")?;
     Ok(connection)
 }
@@ -293,7 +310,7 @@ mod tests {
     use super::{
         load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
         load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only_with_deadline,
-        validate_symbol_index_workspace_with_deadline,
+        open_symbol_index_with_deadline, validate_symbol_index_workspace_with_deadline,
     };
 
     struct ExpiredDeadline;
@@ -303,6 +320,21 @@ mod tests {
             assert_eq!(phase, "opening persisted index");
             anyhow::bail!("test deadline expired during {phase}");
         }
+    }
+
+    #[test]
+    fn opening_writable_index_checks_deadline_before_opening_database() {
+        let error = open_symbol_index_with_deadline(
+            Path::new("unreachable-symbol-index.db"),
+            Some(&ExpiredDeadline),
+        )
+        .expect_err("expired deadline should stop before opening the database");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during opening persisted index")
+        );
     }
 
     #[test]

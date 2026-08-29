@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use rusqlite::Connection;
 
 use crate::deadline::DeadlineCheck;
 use crate::index_migration;
@@ -10,7 +9,7 @@ use crate::index_schema::{
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_optional_metadata_value,
     load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root,
-    load_symbol_index_workspace_root_with_deadline,
+    load_symbol_index_workspace_root_with_deadline, open_symbol_index_with_deadline,
     require_legacy_symbol_index_schema_with_deadline,
     require_older_symbol_index_schema_with_deadline,
     require_oldest_symbol_index_schema_with_deadline,
@@ -65,7 +64,10 @@ fn migrate_symbol_index_inner(
         bail!("symbol index {} does not exist", db_path.display());
     }
 
-    let mut connection = Connection::open(&db_path)?;
+    let mut connection = open_symbol_index_with_deadline(
+        &db_path,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
+    )?;
     check_optional_deadline(deadline, "opening symbol index for migration")?;
     let schema_version = match deadline {
         Some(deadline) => load_optional_metadata_value_with_deadline(

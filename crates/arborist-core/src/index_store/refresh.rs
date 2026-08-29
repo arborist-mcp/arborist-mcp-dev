@@ -2,12 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::params;
 
 use super::core::{persisted_byte_range, raw_symbol_row_map, reference_names, symbol_row_key};
 use super::metadata::persisted_fingerprint;
 use crate::deadline::DeadlineCheck;
-use crate::index_schema::{ensure_symbol_tables_with_deadline, persist_symbol_index_metadata};
+use crate::index_schema::{
+    ensure_symbol_tables_with_deadline, open_symbol_index_with_deadline,
+    persist_symbol_index_metadata,
+};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::IndexedSymbol;
 
@@ -25,10 +28,7 @@ pub(crate) struct SymbolRefreshPersistence<'a> {
 }
 
 pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
-    if let Some(deadline) = context.deadline {
-        deadline.check("opening symbol index database")?;
-    }
-    let connection = Connection::open(context.db_path)?;
+    let connection = open_symbol_index_with_deadline(context.db_path, context.deadline)?;
     if let Some(deadline) = context.deadline {
         deadline.check("preparing symbol index schema")?;
     }

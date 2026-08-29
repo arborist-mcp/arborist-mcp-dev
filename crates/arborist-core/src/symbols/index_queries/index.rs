@@ -2,12 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use rusqlite::Connection;
 
 use crate::deadline::DeadlineCheck;
 use crate::index_schema::{
-    load_indexed_files_metadata_with_deadline, require_current_symbol_index_schema_with_deadline,
-    require_symbol_index_tables_with_deadline,
+    load_indexed_files_metadata_with_deadline, open_symbol_index_with_deadline,
+    require_current_symbol_index_schema_with_deadline, require_symbol_index_tables_with_deadline,
     validate_symbol_index_analysis_provenance_with_deadline,
     validate_symbol_index_schema_version_with_deadline,
     validate_symbol_index_workspace_with_deadline,
@@ -74,7 +73,8 @@ fn rebuild_symbol_index_with_deadline(
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     if db_path.exists() {
-        let connection = Connection::open(&db_path)?;
+        let connection =
+            open_symbol_index_with_deadline(&db_path, Some(deadline as &dyn DeadlineCheck))?;
         require_symbol_index_tables_with_deadline(
             &connection,
             &db_path,
@@ -176,7 +176,8 @@ pub fn refresh_symbol_index_for_file_with_limits(
         return rebuild_symbol_index_with_deadline(&workspace_root, &db_path, limits, &deadline);
     }
 
-    let connection = Connection::open(&db_path)?;
+    let connection =
+        open_symbol_index_with_deadline(&db_path, Some(&deadline as &dyn DeadlineCheck))?;
     require_symbol_index_tables_with_deadline(
         &connection,
         &db_path,

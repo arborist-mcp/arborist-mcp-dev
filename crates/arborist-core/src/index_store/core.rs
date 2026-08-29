@@ -2,11 +2,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::params;
 
 use super::metadata::persisted_fingerprint;
 use crate::deadline::DeadlineCheck;
-use crate::index_schema::{ensure_symbol_tables_with_deadline, persist_symbol_index_metadata};
+use crate::index_schema::{
+    ensure_symbol_tables_with_deadline, open_symbol_index_with_deadline,
+    persist_symbol_index_metadata,
+};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 
@@ -19,10 +22,7 @@ pub(crate) fn persist_symbol_index(
     indexed_files: usize,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    if let Some(deadline) = deadline {
-        deadline.check("opening symbol index database")?;
-    }
-    let connection = Connection::open(db_path)?;
+    let connection = open_symbol_index_with_deadline(db_path, deadline)?;
     if let Some(deadline) = deadline {
         deadline.check("preparing symbol index schema")?;
     }
