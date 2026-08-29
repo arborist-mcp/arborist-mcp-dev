@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use rusqlite::Connection;
 
 use crate::index_schema::{
@@ -124,6 +124,29 @@ fn refresh_source(
         .unwrap_or_else(|| read_source(refresh_path))
 }
 
+fn persisted_refresh_file_path(
+    file_path: &Path,
+    file_states: &BTreeMap<String, u64>,
+) -> Result<PathBuf> {
+    let normalized_path = normalize_path(file_path);
+    if !cfg!(windows) {
+        return Ok(file_path.to_path_buf());
+    }
+
+    let matches = file_states
+        .keys()
+        .filter(|persisted_path| persisted_path.eq_ignore_ascii_case(&normalized_path))
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(file_path.to_path_buf()),
+        [persisted_path] => Ok(PathBuf::from(persisted_path)),
+        _ => bail!(
+            "persisted index contains multiple case-insensitive file_state paths for {}",
+            normalized_path
+        ),
+    }
+}
+
 pub fn refresh_symbol_index_for_file(
     workspace_root: &Path,
     db_path: &Path,
@@ -175,14 +198,14 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let mut grouped_symbols =
         load_indexed_symbols_grouped_by_file_with_deadline(&connection, &deadline)?;
     deadline.check("loading existing indexed symbols")?;
-    let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
-        vec![file_path.clone()]
-    } else {
-        expanded_refresh_file_paths(&workspace_root, &file_path, limits, &deadline)?
-    };
-
     let mut file_states = load_file_states_with_deadline(&connection, Some(&deadline))?;
     deadline.check("loading existing indexed file states")?;
+    let refresh_file_path = persisted_refresh_file_path(&file_path, &file_states)?;
+    let refresh_paths = if should_skip_index_path(&workspace_root, &refresh_file_path) {
+        vec![refresh_file_path]
+    } else {
+        expanded_refresh_file_paths(&workspace_root, &refresh_file_path, limits, &deadline)?
+    };
     let mut refresh_path_overrides = BTreeMap::new();
     for refresh_path in &refresh_paths {
         deadline.check("reading changed refresh sources")?;

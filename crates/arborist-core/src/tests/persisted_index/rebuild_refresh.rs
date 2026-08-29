@@ -84,6 +84,27 @@ fn refresh_deleted_duplicate_definition_preserves_surviving_symbol() {
     assert_eq!(surviving.symbol.symbol_id, "helper");
 }
 
+#[cfg(windows)]
+#[test]
+fn refresh_case_variant_reuses_persisted_file_identity() {
+    let dir = temporary_dir();
+    let stored_path = dir.join("Helper.py");
+    let case_variant_path = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&stored_path, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &case_variant_path).unwrap();
+
+    assert_eq!(stats.indexed_files, 1);
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 0);
+    let symbol = read_symbol_from_index(&db_path, "helper")
+        .expect("case-variant refresh should preserve the indexed symbol");
+    assert_eq!(symbol.symbol.file_path, normalize_path(&stored_path));
+}
+
 #[test]
 fn refresh_symbol_index_ignores_files_in_skipped_dirs() {
     let dir = temporary_dir();
