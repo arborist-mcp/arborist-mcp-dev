@@ -65,6 +65,26 @@ fn rebuild_symbol_index_rejects_oversized_source_file() {
 }
 
 #[test]
+fn refresh_deleted_duplicate_definition_preserves_surviving_symbol() {
+    let dir = temporary_dir();
+    let first = dir.join("first.py");
+    let second = dir.join("second.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&first, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&second, "def helper() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    fs::remove_file(&second).unwrap();
+    refresh_symbol_index_for_file(&dir, &db_path, &second).unwrap();
+
+    let surviving = read_symbol_from_index(&db_path, "helper")
+        .expect("the surviving duplicate definition should be re-addressable");
+    assert_eq!(surviving.symbol.file_path, normalize_path(&first));
+    assert_eq!(surviving.symbol.symbol_id, "helper");
+}
+
+#[test]
 fn refresh_symbol_index_ignores_files_in_skipped_dirs() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

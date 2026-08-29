@@ -194,6 +194,21 @@ pub fn refresh_symbol_index_for_file_with_limits(
         Some(&refresh_path_overrides),
         Some(&deadline),
     )?;
+    let old_symbol_ids = grouped_symbols
+        .values()
+        .flatten()
+        .map(|symbol| {
+            (
+                (
+                    symbol.file_path.clone(),
+                    symbol.semantic_path.clone(),
+                    symbol.node_kind.clone(),
+                    symbol.byte_range,
+                ),
+                symbol.symbol_id.clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut old_changed_symbols = Vec::new();
     let mut changed_file_paths = BTreeSet::new();
     let mut rebuilt_files = 0;
@@ -243,21 +258,6 @@ pub fn refresh_symbol_index_for_file_with_limits(
         changed_file_paths.insert(normalized_refresh_path);
     }
 
-    let old_symbol_ids = grouped_symbols
-        .values()
-        .flatten()
-        .map(|symbol| {
-            (
-                (
-                    symbol.file_path.clone(),
-                    symbol.semantic_path.clone(),
-                    symbol.node_kind.clone(),
-                    symbol.byte_range,
-                ),
-                symbol.symbol_id.clone(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
     let mut raw_symbols = grouped_symbols
         .values()
         .flatten()
