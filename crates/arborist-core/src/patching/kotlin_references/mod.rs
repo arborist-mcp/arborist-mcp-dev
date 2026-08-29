@@ -63,7 +63,7 @@ pub(crate) fn collect_kotlin_reference_validation_with_deadline(
         if KOTLIN_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
         }
-        match file_items.get(name) {
+        match visible_kotlin_file_item(&file_items, name, scope_path.as_deref()) {
             Some(item) => {
                 let summary = kotlin_item_symbol_summary(&normalized_path, source, item);
                 validation
@@ -83,6 +83,37 @@ pub(crate) fn collect_kotlin_reference_validation_with_deadline(
         }
     }
     Ok(validation)
+}
+
+fn visible_kotlin_file_item<'tree>(
+    file_items: &'tree BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
+    name: &str,
+    scope_path: Option<&str>,
+) -> Option<&'tree KotlinFileItem<'tree>> {
+    let items = file_items.get(name)?;
+    let mut current_scope_path = scope_path;
+    while let Some(scope_path) = current_scope_path {
+        let mut candidates = items
+            .iter()
+            .filter(|item| item.parent_path.as_deref() == Some(scope_path));
+        let Some(candidate) = candidates.next() else {
+            current_scope_path = scope_path
+                .rsplit_once("::")
+                .map(|(parent_path, _)| parent_path);
+            continue;
+        };
+        if candidates.next().is_some() {
+            return None;
+        }
+        return Some(candidate);
+    }
+
+    let mut root_candidates = items.iter().filter(|item| item.parent_path.is_none());
+    let candidate = root_candidates.next()?;
+    if root_candidates.next().is_some() {
+        return None;
+    }
+    Some(candidate)
 }
 
 fn kotlin_symbol_scope_path(
@@ -176,7 +207,7 @@ struct KotlinFileItem<'tree> {
 fn collect_kotlin_file_items<'tree>(
     root: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, KotlinFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     walk_kotlin_file_items(root, root, source, items, deadline)
@@ -186,7 +217,7 @@ fn walk_kotlin_file_items<'tree>(
     root: Node<'tree>,
     node: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, KotlinFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
@@ -224,7 +255,7 @@ fn insert_kotlin_declaration_item<'tree>(
     node: Node<'tree>,
     source: &str,
     node_kind: &'static str,
-    items: &mut BTreeMap<String, KotlinFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(name) = kotlin_symbol_name(node, source)? else {
         return Ok(());
@@ -233,17 +264,14 @@ fn insert_kotlin_declaration_item<'tree>(
         return Ok(());
     }
     let semantic_path = kotlin_semantic_path(root, node, source, &name)?;
-    items.insert(
-        name.clone(),
-        KotlinFileItem {
-            name,
-            node_kind,
-            node,
-            origin_type: "module_scope",
-            parent_path: semantic_parent_path(&semantic_path),
-            semantic_path,
-        },
-    );
+    items.entry(name.clone()).or_default().push(KotlinFileItem {
+        name,
+        node_kind,
+        node,
+        origin_type: "module_scope",
+        parent_path: semantic_parent_path(&semantic_path),
+        semantic_path,
+    });
     Ok(())
 }
 
@@ -251,7 +279,7 @@ fn insert_kotlin_class_parameter_items<'tree>(
     root: Node<'tree>,
     class: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, KotlinFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(class_name) = kotlin_symbol_name(class, source)? else {
         return Ok(());
@@ -280,17 +308,14 @@ fn insert_kotlin_class_parameter_items<'tree>(
             let semantic_path = class_path
                 .as_ref()
                 .map(|class_path| format!("{class_path}::{name}"));
-            items.insert(
-                name.clone(),
-                KotlinFileItem {
-                    name,
-                    node_kind: "class_parameter",
-                    node: parameter,
-                    origin_type: "module_scope",
-                    parent_path: semantic_parent_path(&semantic_path),
-                    semantic_path,
-                },
-            );
+            items.entry(name.clone()).or_default().push(KotlinFileItem {
+                name,
+                node_kind: "class_parameter",
+                node: parameter,
+                origin_type: "module_scope",
+                parent_path: semantic_parent_path(&semantic_path),
+                semantic_path,
+            });
         }
     }
     Ok(())
@@ -299,22 +324,22 @@ fn insert_kotlin_class_parameter_items<'tree>(
 fn insert_kotlin_import_item<'tree>(
     import: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, KotlinFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<KotlinFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(simple_name) = kotlin_import_simple_name(import, source) else {
         return Ok(());
     };
-    items.insert(
-        simple_name.clone(),
-        KotlinFileItem {
+    items
+        .entry(simple_name.clone())
+        .or_default()
+        .push(KotlinFileItem {
             name: simple_name.clone(),
             node_kind: "import",
             node: import,
             origin_type: "imported_module",
             parent_path: None,
             semantic_path: Some(simple_name),
-        },
-    );
+        });
     Ok(())
 }
 

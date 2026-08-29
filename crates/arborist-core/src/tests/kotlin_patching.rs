@@ -442,6 +442,70 @@ fn rejects_kotlin_method_patch_with_unresolved_local_initializer() {
 }
 
 #[test]
+fn kotlin_patch_binding_validation_rejects_sibling_class_members() {
+    let source = r#"package com.example
+
+class Counter {
+    fun compute(value: Int): Int {
+        return value
+    }
+}
+
+class Other {
+    fun sibling(value: Int): Int {
+        return value
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Counter.kt"),
+        source,
+        "com::example::Counter::compute",
+        "fun compute(value: Int): Int {
+    return sibling(value)
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["sibling"]);
+}
+
+#[test]
+fn kotlin_patch_binding_validation_rejects_ambiguous_same_scope_overloads() {
+    let source = r#"package com.example
+
+class Counter {
+    fun compute(value: Int): Int {
+        return value
+    }
+
+    fun helper(value: Int): Int {
+        return value
+    }
+
+    fun helper(value: String): String {
+        return value
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Counter.kt"),
+        source,
+        "com::example::Counter::compute",
+        "fun compute(value: Int): Int {
+    return helper(value)
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn kotlin_patch_binding_validation_resolves_scoped_lambdas_loops_and_catches() {
     let source = r#"package com.example
 
