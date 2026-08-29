@@ -46,6 +46,28 @@ class GatewayRuntimeTransportTestsMixin:
             contains="failed to load arborist core",
         )
 
+    def test_legacy_error_response_escapes_malformed_exception_text(self) -> None:
+        gateway = self.make_gateway(object())
+        tool_name = "arborist/get_semantic_skeleton"
+        with mock.patch.object(
+            gateway,
+            gateway_module.tool_spec(tool_name).handler,
+            side_effect=ValueError("core failed: caf\u00e9 \ud800"),
+        ):
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 25,
+                    "method": tool_name,
+                    "params": {},
+                }
+            )
+
+        payload = gateway_module._serialize_response(response)
+        decoded = gateway_module.json.loads(payload)
+        self.assertEqual(decoded["error"]["code"], -32602)
+        self.assertEqual(decoded["error"]["message"], "core failed: caf\u00e9 \\ud800")
+
     def test_once_valid_request_with_core_load_failure_prints_error_response(self) -> None:
         with mock.patch.object(gateway_module, "_load_core_class", side_effect=ImportError("boom")):
             with mock.patch(

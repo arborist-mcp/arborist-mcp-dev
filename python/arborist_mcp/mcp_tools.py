@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from .jsonrpc import safe_error_text
 from .mcp_result_validation import validate_tool_result_shape
 from .mcp_validation import reject_unexpected_params
 from .tool_manifest import build_tool_catalog
@@ -69,16 +70,8 @@ def mcp_tool_error(message: str) -> dict[str, Any]:
         "content": [
             {
                 "type": "text",
-                "text": _safe_error_text(message),
+                "text": safe_error_text(message),
             }
         ],
         "isError": True,
     }
-
-
-def _safe_error_text(message: str) -> str:
-    try:
-        message.encode("utf-8")
-    except UnicodeEncodeError:
-        return message.encode("utf-8", "backslashreplace").decode("utf-8")
-    return message

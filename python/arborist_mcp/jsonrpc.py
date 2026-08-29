@@ -62,9 +62,18 @@ def error_response(request_id: Any, code: int, message: str) -> dict[str, Any]:
         "id": request_id if is_valid_request_id(request_id) else None,
         "error": {
             "code": code,
-            "message": message,
+            "message": safe_error_text(message),
         },
     }
+
+
+def safe_error_text(message: str) -> str:
+    """Keep protocol error messages writable even when an exception is malformed."""
+    try:
+        message.encode("utf-8")
+    except UnicodeEncodeError:
+        return message.encode("utf-8", "backslashreplace").decode("utf-8")
+    return message
 
 
 def _reject_nonstandard_json_constant(name: str) -> Any:
