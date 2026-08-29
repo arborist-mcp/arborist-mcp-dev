@@ -1,9 +1,11 @@
 use std::path::Path;
 
 use anyhow::Result;
+
+use crate::deadline::DeadlineCheck;
 use rusqlite::Connection;
 
-use crate::index_schema::ensure_symbol_tables;
+use crate::index_schema::ensure_symbol_tables_with_deadline;
 use crate::index_store::{
     load_file_states_with_deadline, load_indexed_symbols_grouped_by_file_with_deadline,
 };
@@ -37,7 +39,7 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     let indexed_paths = collect_source_files_with_deadline(workspace_root, limits, deadline)?;
     let indexed_files = indexed_paths.len();
     let connection = Connection::open(db_path)?;
-    ensure_symbol_tables(&connection)?;
+    ensure_symbol_tables_with_deadline(&connection, Some(deadline as &dyn DeadlineCheck))?;
     deadline.check("preparing incremental symbol index")?;
 
     let persisted_states = load_file_states_with_deadline(&connection, Some(deadline))?;

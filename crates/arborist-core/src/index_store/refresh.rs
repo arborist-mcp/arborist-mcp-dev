@@ -7,7 +7,7 @@ use rusqlite::{Connection, params};
 use super::core::{persisted_byte_range, raw_symbol_row_map, reference_names, symbol_row_key};
 use super::metadata::persisted_fingerprint;
 use crate::deadline::DeadlineCheck;
-use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
+use crate::index_schema::{ensure_symbol_tables_with_deadline, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::IndexedSymbol;
 
@@ -32,7 +32,7 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
     if let Some(deadline) = context.deadline {
         deadline.check("preparing symbol index schema")?;
     }
-    ensure_symbol_tables(&connection)?;
+    ensure_symbol_tables_with_deadline(&connection, context.deadline)?;
 
     let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols)?;
     let changed_symbols: Vec<_> = context

@@ -6,7 +6,7 @@ use rusqlite::{Connection, params};
 
 use super::metadata::persisted_fingerprint;
 use crate::deadline::DeadlineCheck;
-use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
+use crate::index_schema::{ensure_symbol_tables_with_deadline, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 
@@ -26,7 +26,7 @@ pub(crate) fn persist_symbol_index(
     if let Some(deadline) = deadline {
         deadline.check("preparing symbol index schema")?;
     }
-    ensure_symbol_tables(&connection)?;
+    ensure_symbol_tables_with_deadline(&connection, deadline)?;
 
     let tx = connection.unchecked_transaction()?;
     if let Some(deadline) = deadline {

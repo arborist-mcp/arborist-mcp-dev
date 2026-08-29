@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 
 use crate::deadline::DeadlineCheck;
-use crate::index_schema::ensure_symbol_tables;
+use crate::index_schema::ensure_symbol_tables_with_deadline;
 use crate::index_store::{
     SymbolRefreshPersistence, load_file_states, persist_symbol_index, persist_symbol_refresh,
     persisted_byte_range,
@@ -436,7 +436,7 @@ fn transitive_local_file_dependents_skips_symlink_header_escape() {
 
 fn seed_indexed_files_metadata(db_path: &Path, value: &str) {
     let connection = Connection::open(db_path).unwrap();
-    ensure_symbol_tables(&connection).unwrap();
+    ensure_symbol_tables_with_deadline(&connection, None).unwrap();
     connection
         .execute(
             "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)",

@@ -4,6 +4,8 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::deadline::DeadlineCheck;
+
 use super::tables::{
     ensure_symbols_column, ensure_symbols_file_path_index, ensure_symbols_primary_key_layout,
 };
@@ -15,105 +17,158 @@ pub(crate) const OLDER_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
 pub(crate) const OLDEST_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
 pub(crate) const ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
-pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
-    connection.execute_batch(
-        "
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE IF NOT EXISTS metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS symbols (
-            symbol_id TEXT NOT NULL,
-            semantic_path TEXT NOT NULL,
-            scope_path TEXT,
-            file_path TEXT NOT NULL,
-            node_kind TEXT NOT NULL,
-            start_byte INTEGER NOT NULL,
-            end_byte INTEGER NOT NULL,
-            signature TEXT,
-            parameters_json TEXT NOT NULL DEFAULT '[]',
-            return_type TEXT,
-            docstring TEXT,
-            extension_receiver TEXT,
-            dependencies_json TEXT NOT NULL,
-            references_json TEXT NOT NULL,
-            reference_names_json TEXT NOT NULL DEFAULT '[]',
-            reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
-            reference_facts_json TEXT NOT NULL DEFAULT '[]',
-            PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
-        );
-        CREATE TABLE IF NOT EXISTS file_state (
-            file_path TEXT PRIMARY KEY,
-            fingerprint INTEGER NOT NULL
-        );
-        ",
-    )?;
-    let mut symbol_columns = table_columns(connection, "symbols")?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "reference_names_json",
-        "ALTER TABLE symbols ADD COLUMN reference_names_json TEXT NOT NULL DEFAULT '[]'",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "reference_call_arities_json",
-        "ALTER TABLE symbols ADD COLUMN reference_call_arities_json TEXT NOT NULL DEFAULT '{}'",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "reference_facts_json",
-        "ALTER TABLE symbols ADD COLUMN reference_facts_json TEXT NOT NULL DEFAULT '[]'",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "extension_receiver",
-        "ALTER TABLE symbols ADD COLUMN extension_receiver TEXT",
-    )?;
-    if ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "symbol_id",
-        "ALTER TABLE symbols ADD COLUMN symbol_id TEXT NOT NULL DEFAULT ''",
-    )? {
-        connection.execute(
-            "UPDATE symbols SET symbol_id = semantic_path WHERE symbol_id = ''",
-            [],
+pub(crate) fn ensure_symbol_tables_with_deadline(
+    connection: &Connection,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    run_symbol_index_schema_step(deadline, || {
+        connection.execute_batch("PRAGMA journal_mode = WAL;")?;
+        Ok(())
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         )?;
+        Ok(())
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS symbols (
+                symbol_id TEXT NOT NULL,
+                semantic_path TEXT NOT NULL,
+                scope_path TEXT,
+                file_path TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte INTEGER NOT NULL,
+                signature TEXT,
+                parameters_json TEXT NOT NULL DEFAULT '[]',
+                return_type TEXT,
+                docstring TEXT,
+                extension_receiver TEXT,
+                dependencies_json TEXT NOT NULL,
+                references_json TEXT NOT NULL,
+                reference_names_json TEXT NOT NULL DEFAULT '[]',
+                reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
+                reference_facts_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
+            );",
+        )?;
+        Ok(())
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS file_state (
+                file_path TEXT PRIMARY KEY,
+                fingerprint INTEGER NOT NULL
+            );",
+        )?;
+        Ok(())
+    })?;
+
+    let mut symbol_columns =
+        run_symbol_index_schema_step(deadline, || table_columns(connection, "symbols"))?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "reference_names_json",
+            "ALTER TABLE symbols ADD COLUMN reference_names_json TEXT NOT NULL DEFAULT '[]'",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "reference_call_arities_json",
+            "ALTER TABLE symbols ADD COLUMN reference_call_arities_json TEXT NOT NULL DEFAULT '{}'",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "reference_facts_json",
+            "ALTER TABLE symbols ADD COLUMN reference_facts_json TEXT NOT NULL DEFAULT '[]'",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "extension_receiver",
+            "ALTER TABLE symbols ADD COLUMN extension_receiver TEXT",
+        )
+    })?;
+    if run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "symbol_id",
+            "ALTER TABLE symbols ADD COLUMN symbol_id TEXT NOT NULL DEFAULT ''",
+        )
+    })? {
+        run_symbol_index_schema_step(deadline, || {
+            connection.execute(
+                "UPDATE symbols SET symbol_id = semantic_path WHERE symbol_id = ''",
+                [],
+            )?;
+            Ok(())
+        })?;
     }
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "scope_path",
-        "ALTER TABLE symbols ADD COLUMN scope_path TEXT",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "parameters_json",
-        "ALTER TABLE symbols ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "return_type",
-        "ALTER TABLE symbols ADD COLUMN return_type TEXT",
-    )?;
-    ensure_symbols_column(
-        connection,
-        &mut symbol_columns,
-        "docstring",
-        "ALTER TABLE symbols ADD COLUMN docstring TEXT",
-    )?;
-    ensure_symbols_primary_key_layout(connection)?;
-    ensure_symbols_file_path_index(connection)?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "scope_path",
+            "ALTER TABLE symbols ADD COLUMN scope_path TEXT",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "parameters_json",
+            "ALTER TABLE symbols ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "return_type",
+            "ALTER TABLE symbols ADD COLUMN return_type TEXT",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || {
+        ensure_symbols_column(
+            connection,
+            &mut symbol_columns,
+            "docstring",
+            "ALTER TABLE symbols ADD COLUMN docstring TEXT",
+        )
+    })?;
+    run_symbol_index_schema_step(deadline, || ensure_symbols_primary_key_layout(connection))?;
+    run_symbol_index_schema_step(deadline, || ensure_symbols_file_path_index(connection))?;
     Ok(())
 }
 
+fn run_symbol_index_schema_step<T>(
+    deadline: Option<&dyn DeadlineCheck>,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if let Some(deadline) = deadline {
+        deadline.check("initializing symbol index schema")?;
+    }
+    let value = operation()?;
+    if let Some(deadline) = deadline {
+        deadline.check("initializing symbol index schema")?;
+    }
+    Ok(value)
+}
 pub(super) fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
     connection
         .query_row(
@@ -265,13 +320,61 @@ fn table_primary_key_layout(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
     use std::path::Path;
 
     use rusqlite::Connection;
 
+    use crate::deadline::DeadlineCheck;
+
     use super::super::tables::ensure_symbols_column;
-    use super::{require_table_primary_key_layout, table_columns};
+    use super::{
+        ensure_symbol_tables_with_deadline, require_table_primary_key_layout, table_columns,
+        table_exists,
+    };
+
+    struct FailOnNthSchemaCheck {
+        remaining: Cell<usize>,
+    }
+
+    impl FailOnNthSchemaCheck {
+        fn new(remaining: usize) -> Self {
+            Self {
+                remaining: Cell::new(remaining),
+            }
+        }
+    }
+
+    impl DeadlineCheck for FailOnNthSchemaCheck {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "initializing symbol index schema");
+            let remaining = self.remaining.get();
+            if remaining == 1 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            self.remaining.set(remaining - 1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn schema_initialization_checks_deadline_between_ddl_steps() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = FailOnNthSchemaCheck::new(5);
+
+        let error = ensure_symbol_tables_with_deadline(&connection, Some(&deadline))
+            .expect_err("deadline should stop schema initialization before the symbols table");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during initializing symbol index schema")
+        );
+        assert!(table_exists(&connection, "metadata").unwrap());
+        assert!(!table_exists(&connection, "symbols").unwrap());
+        assert!(!table_exists(&connection, "file_state").unwrap());
+    }
 
     #[test]
     fn current_schema_validation_rejects_incompatible_primary_keys() {
