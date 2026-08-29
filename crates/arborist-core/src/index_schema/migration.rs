@@ -26,49 +26,66 @@ pub(crate) fn migrate_symbol_index_schema_to_current_with_deadline(
     } else {
         "'{}'"
     };
-    check_deadline(deadline, "rebuilding symbol index schema")?;
-    transaction.execute_batch(&format!(
-        "
-        DROP INDEX IF EXISTS idx_symbols_file_path;
-        ALTER TABLE symbols RENAME TO symbols_legacy;
-        CREATE TABLE symbols (
-            symbol_id TEXT NOT NULL,
-            semantic_path TEXT NOT NULL,
-            scope_path TEXT,
-            file_path TEXT NOT NULL,
-            node_kind TEXT NOT NULL,
-            start_byte INTEGER NOT NULL,
-            end_byte INTEGER NOT NULL,
-            signature TEXT,
-            parameters_json TEXT NOT NULL DEFAULT '[]',
-            return_type TEXT,
-            docstring TEXT,
-            extension_receiver TEXT,
-            dependencies_json TEXT NOT NULL,
-            references_json TEXT NOT NULL,
-            reference_names_json TEXT NOT NULL DEFAULT '[]',
-            reference_call_arities_json TEXT NOT NULL DEFAULT '{{}}',
-            reference_facts_json TEXT NOT NULL DEFAULT '[]',
-            PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
-        );
-        INSERT INTO symbols (
-            symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-            signature, parameters_json, return_type, docstring, dependencies_json,
-            references_json, reference_names_json, reference_call_arities_json
-        )
-        SELECT
-            COALESCE(NULLIF(symbol_id, ''), semantic_path),
-            semantic_path, scope_path, file_path, node_kind, start_byte, end_byte, signature,
-            COALESCE(parameters_json, '[]'), return_type, docstring,
-            dependencies_json, references_json,
-            COALESCE(reference_names_json, '[]'),
-            {legacy_call_arities}
-        FROM symbols_legacy;
-        DROP TABLE symbols_legacy;
-        CREATE INDEX idx_symbols_file_path ON symbols(file_path);
-        DELETE FROM file_state;
-        "
-    ))?;
+    migration_step(deadline, "dropping legacy symbol index", || {
+        Ok(transaction.execute_batch("DROP INDEX IF EXISTS idx_symbols_file_path;")?)
+    })?;
+    migration_step(deadline, "renaming legacy symbol table", || {
+        Ok(transaction.execute_batch("ALTER TABLE symbols RENAME TO symbols_legacy;")?)
+    })?;
+    migration_step(deadline, "creating current symbol table", || {
+        Ok(transaction.execute_batch(
+            "CREATE TABLE symbols (
+                symbol_id TEXT NOT NULL,
+                semantic_path TEXT NOT NULL,
+                scope_path TEXT,
+                file_path TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte INTEGER NOT NULL,
+                signature TEXT,
+                parameters_json TEXT NOT NULL DEFAULT '[]',
+                return_type TEXT,
+                docstring TEXT,
+                extension_receiver TEXT,
+                dependencies_json TEXT NOT NULL,
+                references_json TEXT NOT NULL,
+                reference_names_json TEXT NOT NULL DEFAULT '[]',
+                reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
+                reference_facts_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
+            );",
+        )?)
+    })?;
+    migration_step(deadline, "copying legacy symbol rows", || {
+        Ok(transaction.execute(
+            &format!(
+                "INSERT INTO symbols (
+                    symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                    signature, parameters_json, return_type, docstring, dependencies_json,
+                    references_json, reference_names_json, reference_call_arities_json
+                )
+                SELECT
+                    COALESCE(NULLIF(symbol_id, ''), semantic_path),
+                    semantic_path, scope_path, file_path, node_kind, start_byte, end_byte, signature,
+                    COALESCE(parameters_json, '[]'), return_type, docstring,
+                    dependencies_json, references_json,
+                    COALESCE(reference_names_json, '[]'),
+                    {legacy_call_arities}
+                FROM symbols_legacy"
+            ),
+            [],
+        )?)
+    })?;
+    migration_step(deadline, "removing legacy symbol table", || {
+        Ok(transaction.execute_batch("DROP TABLE symbols_legacy;")?)
+    })?;
+    migration_step(deadline, "creating symbol file-path index", || {
+        Ok(transaction
+            .execute_batch("CREATE INDEX idx_symbols_file_path ON symbols(file_path);")?)
+    })?;
+    migration_step(deadline, "clearing legacy file states", || {
+        Ok(transaction.execute_batch("DELETE FROM file_state;")?)
+    })?;
     check_deadline(deadline, "rebuilding symbol index schema")?;
     migrate_reference_facts(&transaction, deadline)?;
     migrate_cpp_callable_symbol_ids(&transaction, deadline)?;
@@ -187,6 +204,17 @@ fn migrate_cpp_callable_symbol_ids(
     Ok(())
 }
 
+fn migration_step<T>(
+    deadline: Option<&dyn DeadlineCheck>,
+    phase: &str,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    check_deadline(deadline, phase)?;
+    let result = operation()?;
+    check_deadline(deadline, phase)?;
+    Ok(result)
+}
+
 fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check(phase)?;
@@ -203,7 +231,7 @@ mod tests {
 
     use crate::deadline::DeadlineCheck;
 
-    use super::migrate_reference_facts;
+    use super::{migrate_reference_facts, migrate_symbol_index_schema_to_current_with_deadline};
 
     struct FailsAfterChecks {
         checks: Cell<usize>,
@@ -219,6 +247,86 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    struct FailsDuringPhase {
+        phase: &'static str,
+    }
+
+    impl DeadlineCheck for FailsDuringPhase {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == self.phase {
+                bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn schema_migration_rolls_back_when_deadline_expires_before_copying_legacy_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte INTEGER NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    reference_names_json TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
+                );
+                CREATE TABLE file_state (file_path TEXT PRIMARY KEY, fingerprint INTEGER NOT NULL);
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
+                    parameters_json, dependencies_json, references_json, reference_names_json
+                ) VALUES ('helper', 'helper', 'helper.py', 'function_definition', 0, 1,
+                    '[]', '[]', '[]', '[]');",
+            )
+            .unwrap();
+        let deadline = FailsDuringPhase {
+            phase: "copying legacy symbol rows",
+        };
+
+        let error =
+            migrate_symbol_index_schema_to_current_with_deadline(&mut connection, Some(&deadline))
+                .expect_err("deadline should abort migration before copying legacy rows");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during copying legacy symbol rows")
+        );
+        let columns = connection
+            .prepare("PRAGMA table_info(symbols)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(!columns.contains(&"reference_facts_json".to_string()));
+        let legacy_table_error = connection
+            .query_row("SELECT COUNT(*) FROM symbols_legacy", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect_err("rolled-back migration must not retain the temporary table");
+        assert!(legacy_table_error.to_string().contains("no such table"));
+        assert_eq!(
+            connection
+                .query_row("SELECT semantic_path FROM symbols", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "helper"
+        );
     }
 
     #[test]
