@@ -923,18 +923,27 @@ fn walk_javascript_catch(
         initializing_names: BTreeSet::new(),
     });
     if let Some(parameter) = node.child_by_field_name("parameter") {
-        let mut defaults = Vec::new();
-        collect_javascript_pattern_bindings(
+        let mut ignored_defaults = Vec::new();
+        {
+            let scope = scopes.last_mut().expect("catch scope is active");
+            collect_javascript_pattern_bindings(
+                parameter,
+                source,
+                "catch_parameter",
+                scope,
+                scan,
+                &mut ignored_defaults,
+            )?;
+            mark_javascript_pattern_initializing(parameter, source, scope)?;
+        }
+        walk_javascript_lexical_pattern_initialization(
             parameter,
             source,
             "catch_parameter",
-            scopes.last_mut().expect("catch scope is active"),
+            scopes,
             scan,
-            &mut defaults,
+            deadline,
         )?;
-        for default in defaults {
-            walk_javascript_node(default, source, scopes, scan, deadline)?;
-        }
     }
     if let Some(body) = node.child_by_field_name("body") {
         walk_javascript_node(body, source, scopes, scan, deadline)?;
