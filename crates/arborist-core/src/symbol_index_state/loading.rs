@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow, bail};
 use crate::deadline::DeadlineCheck;
 use crate::index_schema::{
     load_indexed_files_metadata_with_deadline, load_symbol_index_workspace_root_with_deadline,
-    open_symbol_index_read_only, require_current_symbol_index_schema_with_deadline,
+    open_symbol_index_read_only_with_deadline, require_current_symbol_index_schema_with_deadline,
     require_symbol_index_tables_with_deadline,
     validate_symbol_index_analysis_provenance_with_deadline,
     validate_symbol_index_schema_version_with_deadline,
@@ -63,8 +63,8 @@ fn load_symbol_index_internal(
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
 
-    let connection = open_symbol_index_read_only(db_path)?;
     let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+    let connection = open_symbol_index_read_only_with_deadline(db_path, schema_deadline)?;
     require_symbol_index_tables_with_deadline(&connection, db_path, schema_deadline)?;
     let indexed_files = load_indexed_files_metadata_with_deadline(&connection, schema_deadline)?;
     validate_symbol_index_schema_version_with_deadline(&connection, db_path, schema_deadline)?;
@@ -148,8 +148,8 @@ fn load_symbol_index_with_overrides_internal(
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
 
-    let connection = open_symbol_index_read_only(db_path)?;
     let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+    let connection = open_symbol_index_read_only_with_deadline(db_path, schema_deadline)?;
     require_symbol_index_tables_with_deadline(&connection, db_path, schema_deadline)?;
     validate_symbol_index_schema_version_with_deadline(&connection, db_path, schema_deadline)?;
     require_current_symbol_index_schema_with_deadline(&connection, db_path, schema_deadline)?;

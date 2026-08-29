@@ -9,7 +9,7 @@ use crate::index_schema::{
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
     load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
-    load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only,
+    load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only_with_deadline,
     require_current_symbol_index_schema_with_deadline,
     require_legacy_symbol_index_schema_with_deadline,
     require_older_symbol_index_schema_with_deadline,
@@ -71,9 +71,10 @@ pub fn inspect_symbol_index_with_timeout(
         return Ok(health);
     }
 
-    let connection = match open_symbol_index_read_only(&db_path) {
+    let connection = match open_symbol_index_read_only_with_deadline(&db_path, Some(&deadline)) {
         Ok(connection) => connection,
         Err(error) => {
+            deadline.check("opening persisted index")?;
             health
                 .issues
                 .push(format!("failed to open symbol index: {error}"));
@@ -82,7 +83,6 @@ pub fn inspect_symbol_index_with_timeout(
             return Ok(health);
         }
     };
-    deadline.check("opening persisted index")?;
 
     let table_validation = require_symbol_index_tables_with_deadline(
         &connection,

@@ -40,8 +40,14 @@ pub(crate) fn current_analysis_provenance_json() -> Result<String> {
     Ok(serde_json::to_string(&current_analysis_provenance())?)
 }
 
-pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
-    Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
+pub(crate) fn open_symbol_index_read_only_with_deadline(
+    db_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Connection> {
+    check_deadline(deadline, "opening persisted index")?;
+    let connection = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    check_deadline(deadline, "opening persisted index")?;
+    Ok(connection)
 }
 
 pub(crate) fn persist_symbol_index_metadata(
@@ -286,9 +292,33 @@ mod tests {
 
     use super::{
         load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
-        load_symbol_index_workspace_root_with_deadline,
+        load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only_with_deadline,
         validate_symbol_index_workspace_with_deadline,
     };
+
+    struct ExpiredDeadline;
+
+    impl DeadlineCheck for ExpiredDeadline {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "opening persisted index");
+            anyhow::bail!("test deadline expired during {phase}");
+        }
+    }
+
+    #[test]
+    fn opening_read_only_index_checks_deadline_before_opening_database() {
+        let error = open_symbol_index_read_only_with_deadline(
+            Path::new("unreachable-symbol-index.db"),
+            Some(&ExpiredDeadline),
+        )
+        .expect_err("expired deadline should stop before opening the database");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during opening persisted index")
+        );
+    }
 
     #[test]
     fn load_indexed_files_metadata_checks_deadline_before_query() {
