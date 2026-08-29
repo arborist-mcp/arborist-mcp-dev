@@ -936,6 +936,29 @@ fn javascript_patch_binding_validation_rejects_unresolved_computed_loop_assignme
     assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
 }
 #[test]
+fn javascript_patch_binding_validation_rejects_switch_case_tdz_references() {
+    let source = r#"function compute(value) { return value; }"#;
+    let replacement = r#"function compute(value) {
+    switch (value) {
+        case 1:
+            let helper = helper;
+            return helper;
+        default:
+            return value;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+#[test]
 fn javascript_patch_binding_validation_rejects_unresolved_destructured_loop_assignment_targets() {
     let source = r#"function compute(items) { return 0; }"#;
     let replacement = r#"function compute(items) {
