@@ -4,8 +4,9 @@ use tree_sitter::Point;
 
 use super::{
     LanguageCapabilities, LanguageRegistry, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
-    c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
-    offset_for_position, parse_document, point_for_offset, read_source, supported_languages,
+    c_companion_source_path, detect_language, ensure_path_inside_workspace, is_c_header_path,
+    normalize_absolute_path, offset_for_position, parse_document, path_is_inside_workspace,
+    point_for_offset, read_source, supported_languages,
 };
 use crate::model::{LanguageId, Position};
 
@@ -597,6 +598,28 @@ fn companion_c_source_prefers_header_case_style() {
     assert_eq!(c_companion_source_path(&template_header), None);
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(windows)]
+#[test]
+fn workspace_boundary_comparison_accepts_case_variant_paths() {
+    let root = std::env::temp_dir().join(format!(
+        "arborist-language-case-boundary-{}",
+        std::process::id()
+    ));
+    let workspace = root.join("Workspace");
+    let file = workspace.join("source.py");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(&file, "def helper():\n    return 1\n").unwrap();
+
+    let workspace = normalize_absolute_path(&workspace).unwrap();
+    let case_variant_file =
+        normalize_absolute_path(&root.join("workspace").join("source.py")).unwrap();
+
+    assert!(path_is_inside_workspace(&workspace, &case_variant_file).unwrap());
+    ensure_path_inside_workspace(&workspace, &case_variant_file).unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

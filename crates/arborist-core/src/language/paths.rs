@@ -42,13 +42,30 @@ pub(crate) fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -
 }
 
 pub(crate) fn path_is_inside_workspace(workspace_root: &Path, path: &Path) -> Result<bool> {
-    if !path.starts_with(workspace_root) {
+    if !paths_start_with_identity(path, workspace_root) {
         return Ok(false);
     }
 
     let canonical_workspace = canonicalize_with_existing_ancestor(workspace_root)?;
     let canonical_path = canonicalize_with_existing_ancestor(path)?;
-    Ok(canonical_path.starts_with(&canonical_workspace))
+    Ok(paths_start_with_identity(
+        &canonical_path,
+        &canonical_workspace,
+    ))
+}
+
+fn paths_start_with_identity(path: &Path, prefix: &Path) -> bool {
+    let mut path_components = path.components();
+    prefix.components().all(|prefix_component| {
+        path_components.next().is_some_and(|path_component| {
+            if cfg!(windows) {
+                path_identity(&path_component.as_os_str().to_string_lossy())
+                    == path_identity(&prefix_component.as_os_str().to_string_lossy())
+            } else {
+                path_component == prefix_component
+            }
+        })
+    })
 }
 
 fn canonicalize_with_existing_ancestor(path: &Path) -> Result<PathBuf> {
