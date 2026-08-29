@@ -279,7 +279,12 @@ pub fn inspect_symbol_index_with_timeout(
         ) {
             Ok(()) => true,
             Err(error) => {
-                health.issues.push(error.to_string());
+                record_persisted_path_validation_error(
+                    &mut health,
+                    &deadline,
+                    "validating persisted file state paths",
+                    error,
+                )?;
                 false
             }
         };
@@ -292,7 +297,12 @@ pub fn inspect_symbol_index_with_timeout(
                 Some(&deadline),
             )
         {
-            health.issues.push(error.to_string());
+            record_persisted_path_validation_error(
+                &mut health,
+                &deadline,
+                "validating persisted symbol paths",
+                error,
+            )?;
         }
         if paths_valid {
             inspect_symbol_index_freshness(&mut health, file_states, &deadline)?;
@@ -332,6 +342,16 @@ pub fn inspect_symbol_index_with_timeout(
     Ok(health)
 }
 
+fn record_persisted_path_validation_error(
+    health: &mut SymbolIndexHealth,
+    deadline: &WorkspaceScanDeadline,
+    phase: &str,
+    error: anyhow::Error,
+) -> Result<()> {
+    deadline.check(phase)?;
+    health.issues.push(error.to_string());
+    Ok(())
+}
 fn record_unindexed_workspace_scan_error(
     health: &mut SymbolIndexHealth,
     deadline: &WorkspaceScanDeadline,
@@ -350,13 +370,12 @@ mod tests {
 
     use anyhow::anyhow;
 
-    use super::record_unindexed_workspace_scan_error;
+    use super::{record_persisted_path_validation_error, record_unindexed_workspace_scan_error};
     use crate::model::SymbolIndexHealth;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
-    #[test]
-    fn unindexed_scan_timeout_is_not_downgraded_to_a_health_issue() {
-        let mut health = SymbolIndexHealth {
+    fn test_health() -> SymbolIndexHealth {
+        SymbolIndexHealth {
             response_schema_version: "4".to_owned(),
             db_path: "C:\\workspace\\symbols.db".to_owned(),
             exists: true,
@@ -374,7 +393,12 @@ mod tests {
             unreadable_files: Vec::new(),
             unindexed_files: Vec::new(),
             issues: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn unindexed_scan_timeout_is_not_downgraded_to_a_health_issue() {
+        let mut health = test_health();
         let deadline = WorkspaceScanDeadline {
             deadline: Some(Instant::now() - Duration::from_millis(1)),
             timeout_ms: Some(1),
@@ -386,6 +410,30 @@ mod tests {
             anyhow!("workspace scan timeout exceeded"),
         )
         .expect_err("expired unindexed scans should fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+        assert!(health.issues.is_empty());
+    }
+
+    #[test]
+    fn persisted_path_validation_timeout_is_not_downgraded_to_a_health_issue() {
+        let mut health = test_health();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = record_persisted_path_validation_error(
+            &mut health,
+            &deadline,
+            "validating persisted file state paths",
+            anyhow!("workspace scan timeout exceeded"),
+        )
+        .expect_err("expired persisted path validation should fail closed");
 
         assert!(
             error
