@@ -28,8 +28,17 @@ pub(crate) fn collect_csharp_reference_validation_with_deadline(
     let normalized_path = normalize_path(path);
     let scope_scan = scan_csharp_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
-    collect_csharp_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
+    let mut using_aliases = BTreeMap::new();
+    collect_csharp_file_items(
+        document.tree.root_node(),
+        source,
+        &mut file_items,
+        &mut using_aliases,
+        deadline,
+    )?;
     let scope_path = csharp_symbol_scope_path(document.tree.root_node(), symbol_node, source)?;
+    let namespace_scope_path =
+        csharp_namespace_scope_path(document.tree.root_node(), symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();
     for name in &scope_scan.local_references {
@@ -63,7 +72,10 @@ pub(crate) fn collect_csharp_reference_validation_with_deadline(
         if CSHARP_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
         }
-        match file_items.get(name) {
+        let item = file_items.get(name).or_else(|| {
+            visible_csharp_using_alias(&using_aliases, name, namespace_scope_path.as_deref())
+        });
+        match item {
             Some(item) => {
                 let summary = csharp_item_symbol_summary(&normalized_path, source, item);
                 validation
@@ -83,6 +95,73 @@ pub(crate) fn collect_csharp_reference_validation_with_deadline(
         }
     }
     Ok(validation)
+}
+
+fn csharp_namespace_scope_path(
+    root: Node<'_>,
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let mut parts = Vec::new();
+    let mut root_cursor = root.walk();
+    let file_scoped_namespaces = root
+        .named_children(&mut root_cursor)
+        .filter(|node| node.kind() == "file_scoped_namespace_declaration")
+        .filter_map(|node| csharp_symbol_name(node, source).transpose())
+        .collect::<Result<Vec<_>>>()?;
+    if let [namespace] = file_scoped_namespaces.as_slice() {
+        parts.extend(namespace.split('.').map(str::to_string));
+    }
+
+    let mut ancestors = Vec::new();
+    let mut current = symbol_node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "namespace_declaration"
+            && let Some(namespace) = csharp_symbol_name(candidate, source)?
+        {
+            ancestors.push(namespace);
+        }
+        current = candidate.parent();
+    }
+    ancestors.reverse();
+    for namespace in ancestors {
+        parts.extend(namespace.split('.').map(str::to_string));
+    }
+    Ok((!parts.is_empty()).then(|| parts.join("::")))
+}
+
+fn csharp_visible_import_scope_paths(namespace_scope_path: Option<&str>) -> Vec<Option<String>> {
+    let mut scope_paths = Vec::new();
+    let mut current_scope_path = namespace_scope_path;
+    while let Some(scope_path) = current_scope_path {
+        scope_paths.push(Some(scope_path.to_string()));
+        current_scope_path = scope_path
+            .rsplit_once("::")
+            .map(|(parent_path, _)| parent_path);
+    }
+    scope_paths.push(None);
+    scope_paths
+}
+
+fn visible_csharp_using_alias<'tree>(
+    using_aliases: &'tree BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
+    name: &str,
+    namespace_scope_path: Option<&str>,
+) -> Option<&'tree CSharpFileItem<'tree>> {
+    let aliases = using_aliases.get(name)?;
+    for scope_path in csharp_visible_import_scope_paths(namespace_scope_path) {
+        let mut candidates = aliases
+            .iter()
+            .filter(|alias| alias.parent_path == scope_path);
+        let Some(candidate) = candidates.next() else {
+            continue;
+        };
+        if candidates.next().is_some() {
+            return None;
+        }
+        return Some(candidate);
+    }
+    None
 }
 
 fn csharp_symbol_scope_path(
@@ -184,9 +263,10 @@ fn collect_csharp_file_items<'tree>(
     root: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    using_aliases: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    walk_csharp_file_items(root, root, source, items, deadline)
+    walk_csharp_file_items(root, root, source, items, using_aliases, deadline)
 }
 
 fn walk_csharp_file_items<'tree>(
@@ -194,6 +274,7 @@ fn walk_csharp_file_items<'tree>(
     node: Node<'tree>,
     source: &str,
     items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    using_aliases: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
@@ -210,7 +291,7 @@ fn walk_csharp_file_items<'tree>(
                 collect_csharp_record_component_items(root, node, source, items)?;
             }
             if let Some(body) = node.child_by_field_name("body") {
-                walk_csharp_file_items(root, body, source, items, deadline)?;
+                walk_csharp_file_items(root, body, source, items, using_aliases, deadline)?;
             }
         }
         "method_declaration" => {
@@ -225,11 +306,11 @@ fn walk_csharp_file_items<'tree>(
         "enum_member_declaration" => {
             insert_csharp_declaration_item(root, node, source, "enum_member_declaration", items)?
         }
-        "using_directive" => insert_csharp_using_alias_item(root, node, source, items)?,
+        "using_directive" => insert_csharp_using_alias_item(root, node, source, using_aliases)?,
         _ => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                walk_csharp_file_items(root, child, source, items, deadline)?;
+                walk_csharp_file_items(root, child, source, items, using_aliases, deadline)?;
             }
         }
     }
@@ -357,13 +438,14 @@ fn insert_csharp_using_alias_item<'tree>(
     root: Node<'tree>,
     using_directive: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    using_aliases: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
 ) -> Result<()> {
     // Only the alias form (`using Alias = Namespace.Type;`) introduces a
     // usable simple name. Plain and static using directives do not bind a
     // simple name, and their targets are not modeled, so references to names
-    // introduced that way fail closed.
-    let _ = root;
+    // introduced that way fail closed. Aliases retain their lexical namespace
+    // scope so only the caller's namespace, an enclosing namespace, or the
+    // file root can resolve them.
     let Some(name_node) = using_directive.child_by_field_name("name") else {
         return Ok(());
     };
@@ -371,17 +453,18 @@ fn insert_csharp_using_alias_item<'tree>(
     if name.is_empty() {
         return Ok(());
     }
-    items.insert(
-        name.clone(),
-        CSharpFileItem {
+    let parent_path = csharp_namespace_scope_path(root, using_directive, source)?;
+    using_aliases
+        .entry(name.clone())
+        .or_default()
+        .push(CSharpFileItem {
             name: name.clone(),
             node_kind: "using_directive",
             node: using_directive,
             origin_type: "imported_module",
-            parent_path: None,
+            parent_path,
             semantic_path: Some(name),
-        },
-    );
+        });
     Ok(())
 }
 

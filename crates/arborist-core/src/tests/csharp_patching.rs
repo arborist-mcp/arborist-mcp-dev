@@ -406,6 +406,77 @@ namespace Demo.Tools {
 }
 
 #[test]
+fn csharp_patch_binding_validation_respects_namespace_alias_scope() {
+    let source = r#"namespace Demo.Tools {
+    public class Toolbox {}
+}
+
+namespace Demo {
+    using OuterAlias = Demo.Tools.Toolbox;
+
+    namespace Core {
+        public class Counter {
+            public int Compute(int value) {
+                return value;
+            }
+        }
+    }
+}
+
+namespace Demo.Other {
+    using SiblingAlias = Demo.Tools.Toolbox;
+
+    public class Other {}
+}
+"#;
+    let outer_alias = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return OuterAlias.Run(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(outer_alias.applied, "{outer_alias:#?}");
+    assert!(
+        outer_alias
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| {
+                decision.name == "OuterAlias"
+                    && decision.status == "resolved"
+                    && decision
+                        .selected_symbol_id
+                        .as_deref()
+                        .is_some_and(|symbol_id| {
+                            symbol_id.contains("::Demo::using_directive::OuterAlias")
+                        })
+            })
+    );
+
+    let sibling_alias = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return SiblingAlias.Run(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!sibling_alias.applied, "{sibling_alias:#?}");
+    assert_eq!(
+        sibling_alias.validation.unresolved_identifiers,
+        ["SiblingAlias"]
+    );
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {
