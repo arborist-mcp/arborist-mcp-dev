@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::language::read_source;
 use crate::model::SymbolIndexHealth;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -19,7 +20,9 @@ pub(crate) fn inspect_symbol_index_freshness(
     for (file_path, stored_fingerprint) in file_states {
         deadline.check("inspecting indexed file freshness")?;
         let path = Path::new(file_path);
-        if !path.exists() {
+        let exists = path.exists();
+        deadline.check("inspecting indexed file freshness")?;
+        if !exists {
             health.missing_files.push(file_path.clone());
             health
                 .issues
@@ -27,7 +30,9 @@ pub(crate) fn inspect_symbol_index_freshness(
             continue;
         }
 
-        match read_source(path) {
+        let source = read_source(path);
+        deadline.check("inspecting indexed file freshness")?;
+        match source {
             Ok(source) => {
                 let current_fingerprint = source_fingerprint(&source);
                 if current_fingerprint == *stored_fingerprint {
@@ -59,7 +64,8 @@ pub(crate) fn ensure_symbol_index_fresh_with_deadline(
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
-    let mut issues = symbol_index_freshness_issues(file_states, file_overrides, deadline)?;
+    let deadline_check = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+    let mut issues = symbol_index_freshness_issues(file_states, file_overrides, deadline_check)?;
     issues.extend(
         unindexed_workspace_files(workspace_root, file_states, file_overrides, deadline)?
             .into_iter()

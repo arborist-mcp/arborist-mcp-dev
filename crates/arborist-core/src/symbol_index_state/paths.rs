@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::index_store::validate_resolved_symbol_edges_with_deadline;
 use crate::language::{
     detect_language, normalize_absolute_path, normalize_path, path_identity,
@@ -273,7 +274,7 @@ pub(crate) fn unindexed_workspace_files(
 pub(crate) fn symbol_index_freshness_issues(
     file_states: &BTreeMap<String, u64>,
     file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<String>> {
     let mut issues = Vec::new();
     for (file_path, stored_fingerprint) in file_states {
@@ -285,12 +286,20 @@ pub(crate) fn symbol_index_freshness_issues(
         }
 
         let path = Path::new(file_path);
-        if !path.exists() {
+        let exists = path.exists();
+        if let Some(deadline) = deadline {
+            deadline.check("checking indexed file freshness")?;
+        }
+        if !exists {
             issues.push(format!("indexed file is missing: {file_path}"));
             continue;
         }
 
-        match read_source(path) {
+        let source = read_source(path);
+        if let Some(deadline) = deadline {
+            deadline.check("checking indexed file freshness")?;
+        }
+        match source {
             Ok(source) => {
                 let current_fingerprint = source_fingerprint(&source);
                 if current_fingerprint != *stored_fingerprint {
@@ -310,6 +319,7 @@ pub(crate) fn symbol_index_freshness_issues(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
     #[cfg(windows)]
     use std::fs;
@@ -323,6 +333,7 @@ mod tests {
         remap_file_overrides_to_persisted_paths, symbol_index_freshness_issues,
         validate_persisted_index_paths_with_overrides_and_deadline,
     };
+    use crate::deadline::DeadlineCheck;
     #[cfg(windows)]
     use crate::language::normalize_path;
     use crate::workspace_scan::WorkspaceScanDeadline;
@@ -374,6 +385,41 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    struct ExpireAfterFreshnessRead {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterFreshnessRead {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "checking indexed file freshness");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 2 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn freshness_checks_deadline_after_reading_each_file() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let file_states = BTreeMap::from([(manifest.to_string_lossy().into_owned(), 0)]);
+        let deadline = ExpireAfterFreshnessRead {
+            checks: Cell::new(0),
+        };
+
+        let error = symbol_index_freshness_issues(&file_states, None, Some(&deadline))
+            .expect_err("deadline should stop after reading the indexed file");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during checking indexed file freshness")
+        );
+        assert_eq!(deadline.checks.get(), 3);
     }
 
     #[test]
