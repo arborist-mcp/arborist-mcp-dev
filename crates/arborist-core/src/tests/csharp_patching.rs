@@ -630,6 +630,39 @@ namespace Demo.Other {
 }
 
 #[test]
+fn csharp_patch_binding_validation_rejects_ambiguous_same_scope_overloads() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+
+        public int Helper(int value) {
+            return value;
+        }
+
+        public string Helper(string value) {
+            return value;
+        }
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return Helper(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["Helper"]);
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {
