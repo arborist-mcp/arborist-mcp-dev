@@ -958,6 +958,64 @@ fn javascript_patch_binding_validation_rejects_switch_case_tdz_references() {
     assert!(!result.applied, "{result:#?}");
     assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
 }
+
+#[test]
+fn javascript_patch_binding_validation_rejects_later_parameter_default_references() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute(first = second, second = 1) {
+    return first + second;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["second"]);
+}
+
+#[test]
+fn typescript_patch_binding_validation_rejects_later_parameter_default_references() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(first: number = second, second: number = 1): number {
+    return first + second;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["second"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_prior_parameter_default_references() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute(first = 1, second = first) {
+    return first + second;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
 #[test]
 fn javascript_patch_binding_validation_rejects_unresolved_destructured_loop_assignment_targets() {
     let source = r#"function compute(items) { return 0; }"#;

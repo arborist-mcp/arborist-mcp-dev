@@ -21,6 +21,11 @@ pub(super) struct JavaScriptScopeScan {
     pub(super) tdz_references: BTreeSet<String>,
 }
 
+struct JavaScriptParameter<'tree> {
+    pattern: Node<'tree>,
+    default_initializer: Option<Node<'tree>>,
+}
+
 /// A scope in the walker stack. `is_function_scope` marks function-like
 /// scopes so `var` declarations bind to the nearest function scope while
 /// `let`/`const` bind to the innermost block scope.
@@ -327,11 +332,21 @@ fn walk_javascript_function(
     {
         bind_javascript_function_declaration_name(node, source, enclosing, scan)?;
     }
-    let (function_scope, defaults) =
+    let (function_scope, parameter_patterns) =
         collect_javascript_callable_bindings(node, source, scan, !immediately_invoked)?;
     scopes.push(function_scope);
-    for default in defaults {
-        walk_javascript_node(default, source, scopes, scan, deadline)?;
+    for parameter in parameter_patterns {
+        if let Some(parameter_default) = parameter.default_initializer {
+            walk_javascript_node(parameter_default, source, scopes, scan, deadline)?;
+        }
+        walk_javascript_lexical_pattern_initialization(
+            parameter.pattern,
+            source,
+            "parameter",
+            scopes,
+            scan,
+            deadline,
+        )?;
     }
     if let Some(body) = javascript_callable_body(node) {
         {
@@ -615,9 +630,10 @@ fn mark_javascript_pattern_initializing(
     Ok(())
 }
 
-fn walk_javascript_lexical_loop_binding(
+fn walk_javascript_lexical_pattern_initialization(
     node: Node<'_>,
     source: &str,
+    node_kind: &'static str,
     scopes: &mut Vec<Scope>,
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
@@ -625,23 +641,29 @@ fn walk_javascript_lexical_loop_binding(
     match node.kind() {
         "identifier" | "shorthand_property_identifier_pattern" => {
             let name = node_text(node, source)?.trim().to_string();
-            let scope = scopes.last_mut().expect("loop scope is active");
+            let scope = scopes
+                .last_mut()
+                .expect("pattern initialization scope is active");
             scope.initializing_names.remove(&name);
-            bind_javascript_name(node, source, "loop_variable", scope, scan)
+            bind_javascript_name(node, source, node_kind, scope, scan)
         }
         "assignment_pattern" | "object_assignment_pattern" => {
             if let Some(right) = node.child_by_field_name("right") {
                 walk_javascript_node(right, source, scopes, scan, deadline)?;
             }
             if let Some(left) = node.child_by_field_name("left") {
-                walk_javascript_lexical_loop_binding(left, source, scopes, scan, deadline)?;
+                walk_javascript_lexical_pattern_initialization(
+                    left, source, node_kind, scopes, scan, deadline,
+                )?;
             }
             Ok(())
         }
         "rest_pattern" | "array_pattern" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                walk_javascript_lexical_loop_binding(child, source, scopes, scan, deadline)?;
+                walk_javascript_lexical_pattern_initialization(
+                    child, source, node_kind, scopes, scan, deadline,
+                )?;
             }
             Ok(())
         }
@@ -655,12 +677,14 @@ fn walk_javascript_lexical_loop_binding(
                         )?;
                     }
                     if let Some(value) = member.child_by_field_name("value") {
-                        walk_javascript_lexical_loop_binding(
-                            value, source, scopes, scan, deadline,
+                        walk_javascript_lexical_pattern_initialization(
+                            value, source, node_kind, scopes, scan, deadline,
                         )?;
                     }
                 } else {
-                    walk_javascript_lexical_loop_binding(member, source, scopes, scan, deadline)?;
+                    walk_javascript_lexical_pattern_initialization(
+                        member, source, node_kind, scopes, scan, deadline,
+                    )?;
                 }
             }
             Ok(())
@@ -851,7 +875,14 @@ fn walk_javascript_for_in(
         walk_javascript_node(default, source, scopes, scan, deadline)?;
     }
     if let Some(left) = lexical_left {
-        walk_javascript_lexical_loop_binding(left, source, scopes, scan, deadline)?;
+        walk_javascript_lexical_pattern_initialization(
+            left,
+            source,
+            "loop_variable",
+            scopes,
+            scan,
+            deadline,
+        )?;
     }
     if let Some(body) = node.child_by_field_name("body") {
         walk_javascript_node(body, source, scopes, scan, deadline)?;
@@ -1053,21 +1084,21 @@ fn javascript_var_target_scope_index(scopes: &[Scope]) -> Option<usize> {
     if scopes.is_empty() { None } else { Some(0) }
 }
 
-/// Collects the parameter bindings of a callable node plus the default-value
-/// expressions that must be walked inside the new function scope.
+/// Collects the parameter bindings of a callable node and preserves their
+/// source order with TypeScript-only default initializer expressions.
 fn collect_javascript_callable_bindings<'tree>(
     node: Node<'tree>,
     source: &str,
     scan: &mut JavaScriptScopeScan,
     defers_tdz_references: bool,
-) -> Result<(Scope, Vec<Node<'tree>>)> {
+) -> Result<(Scope, Vec<JavaScriptParameter<'tree>>)> {
     let mut scope = Scope {
         is_function_scope: true,
         defers_tdz_references,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     };
-    let mut defaults = Vec::new();
+    let mut parameter_patterns = Vec::new();
     // A named function expression binds its own name inside its scope.
     if node.kind() == "function_expression"
         && let Some(name_node) = node.child_by_field_name("name")
@@ -1080,32 +1111,83 @@ fn collect_javascript_callable_bindings<'tree>(
         .or_else(|| node.child_by_field_name("parameter"));
     if let Some(parameters) = parameters {
         if parameters.kind() == "identifier" {
-            bind_javascript_name(parameters, source, "parameter", &mut scope, scan)?;
+            parameter_patterns.push(JavaScriptParameter {
+                pattern: parameters,
+                default_initializer: None,
+            });
         } else {
             let mut cursor = parameters.walk();
             for parameter in parameters.named_children(&mut cursor) {
                 if parameter.kind() == "identifier" {
-                    bind_javascript_name(parameter, source, "parameter", &mut scope, scan)?;
+                    parameter_patterns.push(JavaScriptParameter {
+                        pattern: parameter,
+                        default_initializer: None,
+                    });
                 } else if let Some(pattern) = javascript_parameter_pattern(parameter) {
-                    collect_javascript_pattern_bindings(
+                    parameter_patterns.push(JavaScriptParameter {
                         pattern,
-                        source,
-                        "parameter",
-                        &mut scope,
-                        scan,
-                        &mut defaults,
-                    )?;
+                        default_initializer: javascript_parameter_default_initializer(parameter),
+                    });
                 }
             }
         }
     }
-    Ok((scope, defaults))
+    for parameter in &parameter_patterns {
+        let mut ignored_defaults = Vec::new();
+        collect_javascript_pattern_bindings(
+            parameter.pattern,
+            source,
+            "parameter",
+            &mut scope,
+            scan,
+            &mut ignored_defaults,
+        )?;
+        let mut names = BTreeSet::new();
+        collect_javascript_pattern_initialization(
+            parameter.pattern,
+            source,
+            &mut names,
+            &mut ignored_defaults,
+        )?;
+        scope.initializing_names.extend(names);
+    }
+    Ok((scope, parameter_patterns))
+}
+
+/// Returns the value expression after a TypeScript parameter's `=` token.
+/// JavaScript defaults are represented by an `assignment_pattern` and are
+/// handled while that pattern is initialized instead.
+fn javascript_parameter_default_initializer(node: Node<'_>) -> Option<Node<'_>> {
+    if !matches!(node.kind(), "required_parameter" | "optional_parameter") {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let mut after_equals = false;
+    for child in node.children(&mut cursor) {
+        if child.kind() == "=" {
+            after_equals = true;
+        } else if after_equals && child.is_named() {
+            return Some(child);
+        }
+    }
+    None
 }
 
 /// Returns the binding pattern of a single formal parameter, falling back to
 /// the first pattern-shaped child for parameter-property spellings such as
 /// `constructor(private initial: T)` where the pattern is not a field.
 fn javascript_parameter_pattern(node: Node<'_>) -> Option<Node<'_>> {
+    if matches!(
+        node.kind(),
+        "identifier"
+            | "object_pattern"
+            | "array_pattern"
+            | "assignment_pattern"
+            | "rest_pattern"
+            | "shorthand_property_identifier_pattern"
+    ) {
+        return Some(node);
+    }
     if let Some(pattern) = node.child_by_field_name("pattern") {
         return Some(pattern);
     }
