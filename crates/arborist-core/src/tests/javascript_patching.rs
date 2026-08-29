@@ -998,6 +998,82 @@ fn typescript_patch_binding_validation_rejects_later_parameter_default_reference
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_using_initializer_tdz_references() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    using value = value;
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "value"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_await_using_initializer_tdz_references() {
+    let source = r#"async function compute() { return 0; }"#;
+    let replacement = r#"async function compute() {
+    await using value = value;
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "value"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_initialized_using_bindings() {
+    let source = r#"function compute(resource) { return resource; }"#;
+    let replacement = r#"function compute(resource) {
+    using value = resource;
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_later_catch_destructuring_bindings() {
     let source = r#"function compute() { return 0; }"#;
     let replacement = r#"function compute() {

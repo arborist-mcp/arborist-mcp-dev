@@ -106,7 +106,7 @@ fn walk_javascript_node(
         "property_identifier"
         | "shorthand_property_identifier_pattern"
         | "statement_identifier" => Ok(()),
-        "lexical_declaration" | "variable_declaration" => {
+        "lexical_declaration" | "using_declaration" | "variable_declaration" => {
             walk_javascript_declaration(node, source, scopes, scan, deadline)
         }
         "variable_declarator" => {
