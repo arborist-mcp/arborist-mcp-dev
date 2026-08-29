@@ -998,6 +998,26 @@ fn typescript_patch_binding_validation_rejects_later_parameter_default_reference
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_body_var_in_parameter_defaults() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute(value = hidden) {
+    var hidden = 1;
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["hidden"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_prior_parameter_default_references() {
     let source = r#"function compute() { return 0; }"#;
     let replacement = r#"function compute(first = 1, second = first) {
