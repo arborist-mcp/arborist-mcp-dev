@@ -758,6 +758,47 @@ fn walk_javascript_variable_declarator(
     Ok(())
 }
 
+fn walk_javascript_loop_assignment_target(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            record_javascript_reference(node, source, scopes, scan)
+        }
+        "array_pattern" | "rest_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                walk_javascript_loop_assignment_target(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
+        "object_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() == "pair_pattern" {
+                    if let Some(key) = child.child_by_field_name("key") {
+                        walk_javascript_computed_property_name(
+                            key, source, scopes, scan, deadline,
+                        )?;
+                    }
+                    if let Some(value) = child.child_by_field_name("value") {
+                        walk_javascript_loop_assignment_target(
+                            value, source, scopes, scan, deadline,
+                        )?;
+                    }
+                } else {
+                    walk_javascript_loop_assignment_target(child, source, scopes, scan, deadline)?;
+                }
+            }
+            Ok(())
+        }
+        _ => walk_javascript_node(node, source, scopes, scan, deadline),
+    }
+}
 fn walk_javascript_for_in(
     node: Node<'_>,
     source: &str,
@@ -801,7 +842,7 @@ fn walk_javascript_for_in(
     } else if let Some(left) = left {
         // Assignment targets do not declare bindings. Scan them as values so
         // unresolved identifiers and computed member components are validated.
-        walk_javascript_node(left, source, scopes, scan, deadline)?;
+        walk_javascript_loop_assignment_target(left, source, scopes, scan, deadline)?;
     }
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
