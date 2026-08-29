@@ -132,16 +132,22 @@ fn rebuild_symbol_index_with_deadline(
     Ok(result)
 }
 
-fn refresh_source(
+fn read_existing_refresh_source_with_deadline(
     refresh_path: &Path,
-    normalized_refresh_path: &str,
-    refresh_path_overrides: &BTreeMap<String, String>,
+    limits: WorkspaceScanLimits,
+    source_override: Option<&str>,
+    deadline: &dyn DeadlineCheck,
+    phase: &str,
 ) -> Result<String> {
-    refresh_path_overrides
-        .get(normalized_refresh_path)
-        .cloned()
-        .map(Ok)
-        .unwrap_or_else(|| read_source(refresh_path))
+    if let Some(source_override) = source_override {
+        return Ok(source_override.to_owned());
+    }
+
+    validate_source_file_size(refresh_path, limits)?;
+    deadline.check(phase)?;
+    let source = read_source(refresh_path);
+    deadline.check(phase)?;
+    source
 }
 
 pub fn refresh_symbol_index_for_file(
@@ -223,11 +229,18 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let mut refresh_path_overrides = BTreeMap::new();
     for refresh_path in &refresh_paths {
         deadline.check("reading changed refresh sources")?;
-        if !refresh_path.exists() || should_skip_index_path(&workspace_root, refresh_path) {
+        let exists = refresh_path.exists();
+        deadline.check("reading changed refresh sources")?;
+        if !exists || should_skip_index_path(&workspace_root, refresh_path) {
             continue;
         }
-        validate_source_file_size(refresh_path, limits)?;
-        let source = read_source(refresh_path)?;
+        let source = read_existing_refresh_source_with_deadline(
+            refresh_path,
+            limits,
+            None,
+            &deadline,
+            "reading changed refresh sources",
+        )?;
         let normalized_refresh_path = normalize_path(refresh_path);
         if file_states
             .get(&normalized_refresh_path)
@@ -275,12 +288,17 @@ pub fn refresh_symbol_index_for_file_with_limits(
                 .unwrap_or_default(),
         );
 
-        if refresh_path.exists() && !skip_refresh_path {
-            validate_source_file_size(refresh_path, limits)?;
-            let source = refresh_source(
+        let exists = refresh_path.exists();
+        deadline.check("refreshing indexed files")?;
+        if exists && !skip_refresh_path {
+            let source = read_existing_refresh_source_with_deadline(
                 refresh_path,
-                &normalized_refresh_path,
-                &refresh_path_overrides,
+                limits,
+                refresh_path_overrides
+                    .get(&normalized_refresh_path)
+                    .map(String::as_str),
+                &deadline,
+                "refreshing indexed files",
             )?;
             let document = parse_document_with_timeout(
                 refresh_path,
@@ -393,18 +411,71 @@ pub fn refresh_symbol_index_for_file_with_limits(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::cell::Cell;
     use std::path::Path;
 
-    use super::refresh_source;
+    use super::read_existing_refresh_source_with_deadline;
+    use crate::deadline::DeadlineCheck;
+    use crate::workspace_scan::WorkspaceScanLimits;
+
+    struct ExpireAfterRefreshSourceRead {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterRefreshSourceRead {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "refreshing indexed files");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 1 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
 
     #[test]
     fn refresh_source_uses_captured_override_without_rereading_path() {
-        let overrides = BTreeMap::from([("missing.py".to_string(), "cached source".to_string())]);
+        let deadline = ExpireAfterRefreshSourceRead {
+            checks: Cell::new(0),
+        };
 
-        let source = refresh_source(Path::new("missing.py"), "missing.py", &overrides)
-            .expect("captured source should not require the path to remain readable");
+        let source = read_existing_refresh_source_with_deadline(
+            Path::new("missing.py"),
+            WorkspaceScanLimits::default(),
+            Some("cached source"),
+            &deadline,
+            "refreshing indexed files",
+        )
+        .expect("captured source should not require the path to remain readable");
 
         assert_eq!(source, "cached source");
+        assert_eq!(deadline.checks.get(), 0);
+    }
+
+    #[test]
+    fn refresh_source_checks_deadline_after_reading_file() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("lib.rs");
+        let deadline = ExpireAfterRefreshSourceRead {
+            checks: Cell::new(0),
+        };
+
+        let error = read_existing_refresh_source_with_deadline(
+            &source_path,
+            WorkspaceScanLimits::default(),
+            None,
+            &deadline,
+            "refreshing indexed files",
+        )
+        .expect_err("deadline should stop after reading the refresh source");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during refreshing indexed files")
+        );
+        assert_eq!(deadline.checks.get(), 2);
     }
 }
