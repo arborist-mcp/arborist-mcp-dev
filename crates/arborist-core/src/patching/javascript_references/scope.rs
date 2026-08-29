@@ -212,8 +212,32 @@ fn walk_javascript_block(
         is_function_scope: false,
         bindings: Vec::new(),
     });
+    {
+        let scope = scopes
+            .last_mut()
+            .expect("a JavaScript block scope was just pushed");
+        hoist_javascript_block_function_declarations(node, source, scope, scan)?;
+    }
     walk_javascript_children(node, source, scopes, scan, deadline)?;
     scopes.pop();
+    Ok(())
+}
+
+fn hoist_javascript_block_function_declarations(
+    node: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+    scan: &mut JavaScriptScopeScan,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if matches!(
+            child.kind(),
+            "function_declaration" | "generator_function_declaration"
+        ) {
+            bind_javascript_function_declaration_name(child, source, scope, scan)?;
+        }
+    }
     Ok(())
 }
 
@@ -224,16 +248,16 @@ fn walk_javascript_function(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // A nested function declaration binds its own name in the enclosing scope
-    // so recursive and later calls resolve. The patched symbol itself has no
-    // enclosing scope here; its name resolves through same-file items.
+    // Block-scoped function declarations are hoisted before their enclosing
+    // block is walked. Keep this fallback for declaration contexts that do
+    // not pass through the block pre-scan; the helper avoids duplicate binding
+    // evidence when the declaration was already hoisted.
     if matches!(
         node.kind(),
         "function_declaration" | "generator_function_declaration"
-    ) && let Some(name_node) = node.child_by_field_name("name")
-        && let Some(enclosing) = scopes.last_mut()
+    ) && let Some(enclosing) = scopes.last_mut()
     {
-        bind_javascript_name(name_node, source, node.kind(), enclosing, scan)?;
+        bind_javascript_function_declaration_name(node, source, enclosing, scan)?;
     }
     let (function_scope, defaults) = collect_javascript_callable_bindings(node, source, scan)?;
     scopes.push(function_scope);
@@ -636,6 +660,23 @@ fn collect_javascript_pattern_bindings<'tree>(
         _ => {}
     }
     Ok(())
+}
+
+fn bind_javascript_function_declaration_name(
+    node: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+    scan: &mut JavaScriptScopeScan,
+) -> Result<()> {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return Ok(());
+    };
+    if scope.bindings.iter().any(|binding| {
+        binding.start_byte == name_node.start_byte() && binding.end_byte == name_node.end_byte()
+    }) {
+        return Ok(());
+    }
+    bind_javascript_name(name_node, source, node.kind(), scope, scan)
 }
 
 fn bind_javascript_name(

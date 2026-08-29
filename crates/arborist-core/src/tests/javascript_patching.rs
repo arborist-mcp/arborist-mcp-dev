@@ -469,6 +469,25 @@ fn javascript_patch_binding_validation_resolves_nested_function_declarations() {
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_hoisted_nested_function_declarations() {
+    let source = r#"function outer(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function outer(value) {
+    const result = inner(value);
+    function inner(input) {
+        return input + 1;
+    }
+    return result;
+}"#;
+    let result = patch_ast_node(Path::new("outer.js"), source, "outer", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_references_outside_nested_block_scope() {
     let source = r#"function compute(value) {
     return value;
