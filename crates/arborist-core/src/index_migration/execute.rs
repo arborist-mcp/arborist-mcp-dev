@@ -9,7 +9,8 @@ use crate::index_schema::{
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
     load_optional_metadata_value, load_symbol_index_workspace_root,
-    migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema_with_deadline,
+    migrate_symbol_index_schema_to_current_with_deadline,
+    require_legacy_symbol_index_schema_with_deadline,
     require_older_symbol_index_schema_with_deadline,
     require_oldest_symbol_index_schema_with_deadline,
     require_previous_symbol_index_schema_with_deadline, require_symbol_index_tables_with_deadline,
@@ -98,7 +99,7 @@ fn migrate_symbol_index_inner(
         }
     }
     check_optional_deadline(deadline, "migrating symbol index schema")?;
-    migrate_symbol_index_schema_to_current(connection)
+    migrate_symbol_index_schema_to_current_with_deadline(connection, deadline)
 }
 
 fn check_optional_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
