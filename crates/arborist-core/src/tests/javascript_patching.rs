@@ -469,6 +469,32 @@ fn javascript_patch_binding_validation_resolves_nested_function_declarations() {
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_references_outside_nested_block_scope() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    {
+        const helper = (input) => input + 1;
+        helper(value);
+    }
+    return helper(value);
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn tsx_patch_binding_validation_ignores_jsx_tag_and_attribute_names() {
     let source = r#"function format(value: number): string {
     return String(value);
