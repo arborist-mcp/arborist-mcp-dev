@@ -89,6 +89,9 @@ pub(crate) fn persist_symbol_index(
             ])?;
         }
     }
+    if let Some(deadline) = deadline {
+        deadline.check("committing symbol index persistence")?;
+    }
     tx.commit()?;
     Ok(())
 }

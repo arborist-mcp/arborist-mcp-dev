@@ -138,6 +138,9 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         }
     }
 
+    if let Some(deadline) = context.deadline {
+        deadline.check("committing symbol index refresh")?;
+    }
     tx.commit()?;
     Ok(())
 }

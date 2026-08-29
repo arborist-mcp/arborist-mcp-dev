@@ -40,6 +40,19 @@ impl DeadlineCheck for FailOnSecondDeadlineCheck {
     }
 }
 
+struct FailOnPhase {
+    phase: &'static str,
+}
+
+impl DeadlineCheck for FailOnPhase {
+    fn check(&self, phase: &str) -> anyhow::Result<()> {
+        if phase == self.phase {
+            anyhow::bail!("deadline expired during {phase}");
+        }
+        Ok(())
+    }
+}
+
 #[test]
 fn persisted_byte_range_rejects_inverted_ranges() {
     let symbol = SymbolMeta {
@@ -85,6 +98,39 @@ fn persist_symbol_index_rolls_back_metadata_on_row_failure() {
     assert_eq!(indexed_files_metadata(&db_path), "7");
 }
 
+#[test]
+fn persist_symbol_index_rolls_back_when_deadline_expires_before_commit() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    seed_indexed_files_metadata(&db_path, "7");
+    let deadline = FailOnPhase {
+        phase: "committing symbol index persistence",
+    };
+
+    let error = persist_symbol_index(
+        &db_path,
+        &workspace,
+        &[valid_indexed_symbol(&normalized_file)],
+        &[valid_symbol_meta(&normalized_file)],
+        &[PersistedFileState {
+            file_path: normalized_file,
+            fingerprint: 1,
+        }],
+        1,
+        Some(&deadline),
+    )
+    .expect_err("expired deadline should roll back the rebuild transaction");
+
+    assert!(
+        error
+            .to_string()
+            .contains("deadline expired during committing symbol index persistence")
+    );
+    assert_eq!(indexed_files_metadata(&db_path), "7");
+}
 #[test]
 fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
     let dir = temporary_dir();
@@ -240,6 +286,41 @@ fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
     assert_eq!(indexed_files_metadata(&db_path), "7");
 }
 
+#[test]
+fn persist_symbol_refresh_rolls_back_when_deadline_expires_before_commit() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    seed_indexed_files_metadata(&db_path, "7");
+    let raw_symbol = valid_indexed_symbol(&normalized_file);
+    let symbol = valid_symbol_meta(&normalized_file);
+    let deadline = FailOnPhase {
+        phase: "committing symbol index refresh",
+    };
+
+    let error = persist_symbol_refresh(SymbolRefreshPersistence {
+        db_path: &db_path,
+        workspace_root: &workspace,
+        raw_symbols: std::slice::from_ref(&raw_symbol),
+        symbols: std::slice::from_ref(&symbol),
+        resolved_symbols_by_id: &BTreeMap::from([("helper".to_string(), symbol.clone())]),
+        file_states: &BTreeMap::from([(normalized_file.clone(), 1)]),
+        changed_file_paths: &BTreeSet::from([normalized_file]),
+        impacted_paths: &BTreeSet::new(),
+        indexed_files: 1,
+        deadline: Some(&deadline),
+    })
+    .expect_err("expired deadline should roll back the refresh transaction");
+
+    assert!(
+        error
+            .to_string()
+            .contains("deadline expired during committing symbol index refresh")
+    );
+    assert_eq!(indexed_files_metadata(&db_path), "7");
+}
 #[test]
 fn persist_symbol_refresh_checks_expired_deadline_before_writes() {
     let dir = temporary_dir();
