@@ -488,6 +488,65 @@ fn javascript_patch_binding_validation_resolves_hoisted_nested_function_declarat
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_hoisted_var_bindings() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const previous = helper;
+    var helper = value + 1;
+    return previous;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_nested_function_var_scope_escapes() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    function nested() {
+        var hidden = value + 1;
+        return hidden;
+    }
+    nested();
+    return hidden;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["hidden"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "hidden"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_references_outside_nested_block_scope() {
     let source = r#"function compute(value) {
     return value;

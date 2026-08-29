@@ -265,9 +265,65 @@ fn walk_javascript_function(
         walk_javascript_node(default, source, scopes, scan, deadline)?;
     }
     if let Some(body) = javascript_callable_body(node) {
+        {
+            let function_scope = scopes
+                .last_mut()
+                .expect("a JavaScript function scope was just pushed");
+            hoist_javascript_function_var_bindings(body, source, function_scope, scan, deadline)?;
+        }
         walk_javascript_node(body, source, scopes, scan, deadline)?;
     }
     scopes.pop();
+    Ok(())
+}
+
+fn hoist_javascript_function_var_bindings(
+    node: Node<'_>,
+    source: &str,
+    function_scope: &mut Scope,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning JavaScript hoisted var bindings")?;
+    }
+    if matches!(
+        node.kind(),
+        "function_declaration"
+            | "generator_function_declaration"
+            | "function_expression"
+            | "arrow_function"
+            | "method_definition"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "class"
+            | "class_static_block"
+    ) {
+        return Ok(());
+    }
+    if node.kind() == "variable_declaration" {
+        let mut cursor = node.walk();
+        for declarator in node.named_children(&mut cursor) {
+            if declarator.kind() != "variable_declarator" {
+                continue;
+            }
+            if let Some(name) = declarator.child_by_field_name("name") {
+                let mut defaults = Vec::new();
+                collect_javascript_pattern_bindings(
+                    name,
+                    source,
+                    "variable_declarator",
+                    function_scope,
+                    scan,
+                    &mut defaults,
+                )?;
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        hoist_javascript_function_var_bindings(child, source, function_scope, scan, deadline)?;
+    }
     Ok(())
 }
 
@@ -671,11 +727,6 @@ fn bind_javascript_function_declaration_name(
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(());
     };
-    if scope.bindings.iter().any(|binding| {
-        binding.start_byte == name_node.start_byte() && binding.end_byte == name_node.end_byte()
-    }) {
-        return Ok(());
-    }
     bind_javascript_name(name_node, source, node.kind(), scope, scan)
 }
 
@@ -687,7 +738,11 @@ fn bind_javascript_name(
     scan: &mut JavaScriptScopeScan,
 ) -> Result<()> {
     let name = node_text(name_node, source)?.trim().to_string();
-    if name.is_empty() {
+    if name.is_empty()
+        || scope.bindings.iter().any(|binding| {
+            binding.start_byte == name_node.start_byte() && binding.end_byte == name_node.end_byte()
+        })
+    {
         return Ok(());
     }
     let binding = JavaScriptBinding {
