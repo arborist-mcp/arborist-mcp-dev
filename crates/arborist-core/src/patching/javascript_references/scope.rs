@@ -123,7 +123,7 @@ fn walk_javascript_node(
             walk_javascript_function(node, source, scopes, scan, false, deadline)
         }
         "class_declaration" | "abstract_class_declaration" => {
-            walk_javascript_class(node, source, scopes, scan, deadline)
+            walk_javascript_class(node, source, scopes, scan, false, deadline)
         }
         "public_field_definition" | "field_definition" => {
             if let Some(value) = node.child_by_field_name("value") {
@@ -152,6 +152,7 @@ fn walk_javascript_node(
         | "method_signature"
         | "abstract_method_signature" => Ok(()),
         "call_expression" => walk_javascript_call_expression(node, source, scopes, scan, deadline),
+        "new_expression" => walk_javascript_new_expression(node, source, scopes, scan, deadline),
         "member_expression" | "subscript_expression" | "optional_chain" => {
             if let Some(object) = node.child_by_field_name("object") {
                 walk_javascript_node(object, source, scopes, scan, deadline)?;
@@ -347,6 +348,7 @@ fn walk_javascript_class(
     source: &str,
     scopes: &mut Vec<Scope>,
     scan: &mut JavaScriptScopeScan,
+    immediately_constructed: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(name_node) = node.child_by_field_name("name")
@@ -361,10 +363,46 @@ fn walk_javascript_class(
         initializing_names: BTreeSet::new(),
     });
     if let Some(body) = javascript_class_body(node) {
-        walk_javascript_node(body, source, scopes, scan, deadline)?;
+        walk_javascript_class_body(
+            body,
+            source,
+            scopes,
+            scan,
+            immediately_constructed,
+            deadline,
+        )?;
     }
     scopes.pop();
     Ok(())
+}
+
+fn walk_javascript_class_body(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    immediately_constructed: bool,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if immediately_constructed && is_javascript_constructor(child, source)? {
+            walk_javascript_function(child, source, scopes, scan, true, deadline)?;
+        } else {
+            walk_javascript_node(child, source, scopes, scan, deadline)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_javascript_constructor(node: Node<'_>, source: &str) -> Result<bool> {
+    if node.kind() != "method_definition" {
+        return Ok(false);
+    }
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(false);
+    };
+    Ok(name.kind() == "property_identifier" && node_text(name, source)?.trim() == "constructor")
 }
 
 fn walk_javascript_declaration(
@@ -646,7 +684,7 @@ fn walk_javascript_call_expression(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(function) = node.child_by_field_name("function") {
-        if let Some(callable) = javascript_immediately_invoked_callable(function) {
+        if let Some(callable) = javascript_immediately_invoked_callable(function, true) {
             walk_javascript_function(callable, source, scopes, scan, true, deadline)?;
         } else {
             walk_javascript_node(function, source, scopes, scan, deadline)?;
@@ -658,22 +696,63 @@ fn walk_javascript_call_expression(
     Ok(())
 }
 
-/// Returns a function expression that is evaluated immediately because it is
-/// the callee of a direct call. Parentheses and TypeScript value-level casts do
-/// not defer the invocation.
-fn javascript_immediately_invoked_callable(node: Node<'_>) -> Option<Node<'_>> {
-    match node.kind() {
-        "arrow_function" | "function_expression" => Some(node),
-        "parenthesized_expression" => {
-            let mut cursor = node.walk();
-            node.named_children(&mut cursor)
-                .next()
-                .and_then(javascript_immediately_invoked_callable)
+fn walk_javascript_new_expression(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(constructor) = node.child_by_field_name("constructor") {
+        // Unlike direct calls, `new` cannot execute an arrow-function body.
+        if let Some(class) = javascript_immediately_constructed_class(constructor) {
+            walk_javascript_class(class, source, scopes, scan, true, deadline)?;
+        } else if let Some(callable) = javascript_immediately_invoked_callable(constructor, false) {
+            walk_javascript_function(callable, source, scopes, scan, true, deadline)?;
+        } else {
+            walk_javascript_node(constructor, source, scopes, scan, deadline)?;
         }
-        "as_expression" | "satisfies_expression" => node
-            .child_by_field_name("left")
-            .and_then(javascript_immediately_invoked_callable),
+    }
+    if let Some(arguments) = node.child_by_field_name("arguments") {
+        walk_javascript_node(arguments, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+
+fn javascript_immediately_constructed_class(node: Node<'_>) -> Option<Node<'_>> {
+    let node = javascript_unwrap_value_expression(node);
+    (node.kind() == "class").then_some(node)
+}
+
+/// Returns a function expression that is evaluated immediately by a direct
+/// call or constructor. Parentheses and TypeScript value-level casts do not
+/// defer the invocation.
+fn javascript_immediately_invoked_callable(
+    node: Node<'_>,
+    allows_arrow_function: bool,
+) -> Option<Node<'_>> {
+    let node = javascript_unwrap_value_expression(node);
+    match node.kind() {
+        "function_expression" => Some(node),
+        "arrow_function" if allows_arrow_function => Some(node),
         _ => None,
+    }
+}
+
+fn javascript_unwrap_value_expression(mut node: Node<'_>) -> Node<'_> {
+    loop {
+        let next = match node.kind() {
+            "parenthesized_expression" => {
+                let mut cursor = node.walk();
+                node.named_children(&mut cursor).next()
+            }
+            "as_expression" | "satisfies_expression" => node.child_by_field_name("left"),
+            _ => None,
+        };
+        let Some(next) = next else {
+            return node;
+        };
+        node = next;
     }
 }
 
