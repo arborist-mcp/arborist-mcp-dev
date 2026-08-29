@@ -799,14 +799,9 @@ fn walk_javascript_for_in(
             )?;
         }
     } else if let Some(left) = left {
-        collect_javascript_pattern_bindings(
-            left,
-            source,
-            "loop_variable",
-            scopes.last_mut().expect("loop scope is active"),
-            scan,
-            &mut post_iterable_defaults,
-        )?;
+        // Assignment targets do not declare bindings. Scan them as values so
+        // unresolved identifiers and computed member components are validated.
+        walk_javascript_node(left, source, scopes, scan, deadline)?;
     }
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;

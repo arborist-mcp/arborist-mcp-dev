@@ -858,6 +858,60 @@ fn javascript_patch_binding_validation_rejects_inline_constructed_instance_field
 }
 
 #[test]
+fn javascript_patch_binding_validation_uses_outer_bindings_for_loop_assignment_targets() {
+    let source = r#"function compute(entry) {
+    return entry;
+}
+"#;
+    let replacement = r#"function compute(entry) {
+    for (entry of entry) {
+        continue;
+    }
+    return entry;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "entry")
+        .expect("entry should resolve to the function parameter");
+    assert_eq!(decision.candidates[0].node_kind, "parameter", "{result:#?}");
+}
+#[test]
+fn javascript_patch_binding_validation_rejects_unresolved_loop_assignment_targets() {
+    let source = r#"function compute(items) {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(items) {
+    for (missing of items) {
+        continue;
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
+}
+#[test]
 fn javascript_patch_binding_validation_resolves_var_loop_bindings_after_the_loop() {
     let source = r#"function compute(items) {
     return 0;
