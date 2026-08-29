@@ -107,9 +107,18 @@ fn csharp_namespace_scope_path(
     let file_scoped_namespaces = root
         .named_children(&mut root_cursor)
         .filter(|node| node.kind() == "file_scoped_namespace_declaration")
-        .filter_map(|node| csharp_symbol_name(node, source).transpose())
+        .filter_map(|node| {
+            csharp_symbol_name(node, source)
+                .transpose()
+                .map(|namespace| namespace.map(|namespace| (node, namespace)))
+        })
         .collect::<Result<Vec<_>>>()?;
-    if let [namespace] = file_scoped_namespaces.as_slice() {
+    // A file-scoped namespace applies only to the root items that follow its
+    // declaration. Root-level using aliases before `namespace Demo;` retain
+    // file-root scope even though patched symbols after it are in `Demo`.
+    if let [(file_scoped_namespace, namespace)] = file_scoped_namespaces.as_slice()
+        && file_scoped_namespace.start_byte() < symbol_node.start_byte()
+    {
         parts.extend(namespace.split('.').map(str::to_string));
     }
 

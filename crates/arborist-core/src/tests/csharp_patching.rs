@@ -477,6 +477,47 @@ namespace Demo.Other {
 }
 
 #[test]
+fn csharp_patch_binding_validation_scopes_file_namespace_aliases_by_declaration_order() {
+    let source = r#"using Alias = System.RootAlias;
+
+namespace Demo;
+
+using Alias = System.ScopedAlias;
+
+public class Counter {
+    public int Compute(int value) {
+        return value;
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Counter::Compute",
+        "public int Compute(int value) {
+    return Alias.Run(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .find(|decision| decision.name == "Alias")
+            .and_then(|decision| decision.selected_symbol_id.as_deref())
+            .is_some_and(|symbol_id| {
+                symbol_id.contains("::Demo::using_directive::Alias")
+                    && !symbol_id.contains("::<module>::using_directive::Alias")
+            }),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn csharp_patch_binding_validation_prefers_nearest_alias_and_rejects_ambiguous_aliases() {
     let shadowing_source = r#"using Alias = Demo.Tools.RootToolbox;
 
