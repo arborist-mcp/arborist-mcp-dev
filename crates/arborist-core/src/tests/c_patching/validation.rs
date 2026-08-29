@@ -1,6 +1,56 @@
 use super::*;
 
 #[test]
+fn rejects_c_patch_with_reference_outside_nested_block_scope() {
+    let source = "int compute(int value) {
+    return value;
+}
+";
+    let result = patch_ast_node(
+        Path::new("sample.c"),
+        source,
+        "compute",
+        "int compute(int value) {
+    {
+        int helper = value + 1;
+        (void)helper;
+    }
+    return helper;
+}
+",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn rejects_cpp_patch_with_reference_outside_for_scope() {
+    let source = "int compute(int value) {
+    return value;
+}
+";
+    let result = patch_ast_node(
+        Path::new("sample.cpp"),
+        source,
+        "compute",
+        "int compute(int value) {
+    for (int helper = value; helper > 0; --helper) {
+    }
+    return helper;
+}
+",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

@@ -27,6 +27,8 @@ pub(crate) use name_collection::{
 };
 pub(super) use name_collection::{
     collect_c_local_definitions, collect_c_local_definitions_with_deadline,
+    collect_c_scope_escaped_local_definition_names,
+    collect_c_scope_escaped_local_definition_names_with_deadline,
 };
 use receivers::*;
 pub(super) use receivers::{

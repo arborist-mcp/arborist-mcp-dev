@@ -27,7 +27,8 @@ use accessibility::{
 use ambiguity::{ambiguity_disambiguation_context, ambiguity_reason};
 use references::{
     collect_c_local_definitions, collect_c_local_definitions_with_deadline,
-    collect_c_references_with_deadline,
+    collect_c_references_with_deadline, collect_c_scope_escaped_local_definition_names,
+    collect_c_scope_escaped_local_definition_names_with_deadline,
 };
 
 pub(crate) fn collect_c_reference_validation_with_deadline(
@@ -61,6 +62,21 @@ pub(crate) fn collect_c_reference_validation_with_deadline(
         None => collect_c_local_definitions(symbol_node, source, &mut local_definitions)?,
     }
 
+    let mut scope_escaped_local_definitions = BTreeSet::new();
+    match deadline {
+        Some(deadline) => collect_c_scope_escaped_local_definition_names_with_deadline(
+            symbol_node,
+            source,
+            &mut scope_escaped_local_definitions,
+            Some(deadline),
+        )?,
+        None => collect_c_scope_escaped_local_definition_names(
+            symbol_node,
+            source,
+            &mut scope_escaped_local_definitions,
+        )?,
+    }
+
     let mut references = BTreeSet::new();
     match deadline {
         Some(deadline) => collect_c_references_with_deadline(
@@ -84,7 +100,7 @@ pub(crate) fn collect_c_reference_validation_with_deadline(
         if let Some(deadline) = deadline {
             deadline.check("validating C/C++ references")?;
         }
-        if local_definitions.contains(&name) {
+        if local_definitions.contains(&name) && !scope_escaped_local_definitions.contains(&name) {
             continue;
         }
 

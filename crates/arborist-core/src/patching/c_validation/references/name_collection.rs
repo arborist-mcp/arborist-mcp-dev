@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use tree_sitter::Node;
@@ -54,6 +54,130 @@ fn collect_c_local_definitions_in_node(
         None => visit_tree(node, &mut callback),
     }
     Ok(())
+}
+
+pub(in super::super) fn collect_c_scope_escaped_local_definition_names(
+    node: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+) -> Result<()> {
+    collect_c_scope_escaped_local_definition_names_with_deadline(node, source, names, None)
+}
+
+pub(in super::super) fn collect_c_scope_escaped_local_definition_names_with_deadline(
+    node: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let mut definitions = BTreeMap::new();
+    let mut collect_definition = |candidate: Node<'_>| {
+        if let Some(parent) = candidate.parent()
+            && candidate.kind() == "identifier"
+            && is_c_local_definition_parent(parent.kind())
+            && let Some(scope) = c_local_definition_scope(candidate)
+            && let Ok(name) = node_text(candidate, source)
+        {
+            let name = name.trim();
+            if !name.is_empty() {
+                definitions
+                    .entry(name.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(CScopedLocalDefinition {
+                        declaration_start: candidate.start_byte(),
+                        scope_range: (scope.start_byte(), scope.end_byte()),
+                    });
+            }
+        }
+    };
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut collect_definition, deadline)?,
+        None => visit_tree(node, &mut collect_definition),
+    }
+
+    if definitions.is_empty() {
+        return Ok(());
+    }
+
+    let mut collect_scope_escapes = |candidate: Node<'_>| {
+        if candidate.kind() != "identifier"
+            || is_c_enumerator_name(candidate)
+            || candidate
+                .parent()
+                .is_some_and(|parent| is_c_local_definition_parent(parent.kind()))
+        {
+            return;
+        }
+        let Ok(name) = node_text(candidate, source) else {
+            return;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let Some(name_definitions) = definitions.get(name) else {
+            return;
+        };
+        let reference_start = candidate.start_byte();
+        let reference_end = candidate.end_byte();
+        let is_visible = name_definitions.iter().any(|definition| {
+            definition.declaration_start <= reference_start
+                && definition.scope_range.0 <= reference_start
+                && definition.scope_range.1 >= reference_end
+        });
+        if !is_visible {
+            names.insert(name.to_string());
+        }
+    };
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut collect_scope_escapes, deadline),
+        None => {
+            visit_tree(node, &mut collect_scope_escapes);
+            Ok(())
+        }
+    }
+}
+
+struct CScopedLocalDefinition {
+    declaration_start: usize,
+    scope_range: (usize, usize),
+}
+
+fn is_c_local_definition_parent(kind: &str) -> bool {
+    matches!(
+        kind,
+        "declaration"
+            | "init_declarator"
+            | "parameter_declaration"
+            | "optional_parameter_declaration"
+            | "variadic_parameter_declaration"
+            | "variadic_declarator"
+            | "pointer_declarator"
+            | "array_declarator"
+    )
+}
+
+fn c_local_definition_scope(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            "for_statement"
+                | "for_range_loop"
+                | "if_statement"
+                | "switch_statement"
+                | "while_statement"
+                | "catch_clause"
+                | "compound_statement"
+        ) {
+            return Some(candidate);
+        }
+        if candidate.kind() == "function_definition" {
+            return candidate.child_by_field_name("body");
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 fn collect_cpp_template_parameter_definitions(
