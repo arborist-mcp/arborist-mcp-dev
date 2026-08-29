@@ -299,6 +299,7 @@ pub(crate) fn load_indexed_files_metadata_with_deadline(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::Path;
     use std::time::{Duration, Instant};
 
@@ -322,6 +323,22 @@ mod tests {
         }
     }
 
+    struct ExpireAfterOpening {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterOpening {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "opening persisted index");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 1 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
     #[test]
     fn opening_writable_index_checks_deadline_before_opening_database() {
         let error = open_symbol_index_with_deadline(
@@ -335,6 +352,22 @@ mod tests {
                 .to_string()
                 .contains("test deadline expired during opening persisted index")
         );
+    }
+
+    #[test]
+    fn opening_writable_index_checks_deadline_after_opening_database() {
+        let deadline = ExpireAfterOpening {
+            checks: Cell::new(0),
+        };
+        let error = open_symbol_index_with_deadline(Path::new(":memory:"), Some(&deadline))
+            .expect_err("deadline should stop after opening the database");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during opening persisted index")
+        );
+        assert_eq!(deadline.checks.get(), 2);
     }
 
     #[test]
