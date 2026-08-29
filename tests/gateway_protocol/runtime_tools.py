@@ -93,6 +93,28 @@ def _valid_patch_ast_node_result() -> dict[str, object]:
 
 
 class GatewayRuntimeToolsTestsMixin:
+    def test_tools_call_survives_broken_exception_stringifier(self) -> None:
+        class BrokenStringifierError(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("cannot render exception")
+
+        def execute_tool(_tool_name: str, _arguments: dict[str, object]) -> object:
+            raise BrokenStringifierError()
+
+        result = tools_call(
+            {
+                "name": "arborist/get_semantic_skeleton",
+                "arguments": {},
+            },
+            execute_tool,
+        )
+
+        self.assertTrue(result["isError"])
+        self.assertEqual(
+            result["content"][0]["text"],
+            "BrokenStringifierError (exception text unavailable)",
+        )
+
     def test_tools_call_returns_mcp_error_for_non_serializable_tool_result(self) -> None:
         result = tools_call(
             {

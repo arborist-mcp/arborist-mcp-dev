@@ -68,6 +68,34 @@ class GatewayRuntimeTransportTestsMixin:
         self.assertEqual(decoded["error"]["code"], -32602)
         self.assertEqual(decoded["error"]["message"], "core failed: caf\u00e9 \\ud800")
 
+    def test_legacy_error_response_survives_broken_exception_stringifier(self) -> None:
+        class BrokenStringifierError(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("cannot render exception")
+
+        gateway = self.make_gateway(object())
+        tool_name = "arborist/get_semantic_skeleton"
+        with mock.patch.object(
+            gateway,
+            gateway_module.tool_spec(tool_name).handler,
+            side_effect=BrokenStringifierError(),
+        ):
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 26,
+                    "method": tool_name,
+                    "params": {},
+                }
+            )
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=26,
+            code=-32000,
+            contains="BrokenStringifierError (exception text unavailable)",
+        )
+
     def test_once_valid_request_with_core_load_failure_prints_error_response(self) -> None:
         with mock.patch.object(gateway_module, "_load_core_class", side_effect=ImportError("boom")):
             with mock.patch(

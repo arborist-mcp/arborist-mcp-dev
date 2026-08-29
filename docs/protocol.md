@@ -135,6 +135,7 @@ Current protocol-boundary checks include:
 - Invalid UTF-8 text anywhere in a tool result, including unconstrained nested fields.
 - Invalid UTF-8 text in an MCP tool error message.
 - Invalid UTF-8 text in a JSON-RPC error message.
+- Broken exception stringification during error handling.
 - Nulls for defaulted string parameters.
 - Negative numeric parameters.
 - Non-standard response JSON.

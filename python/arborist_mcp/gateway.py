@@ -28,6 +28,7 @@ from .jsonrpc import (
     loads_strict,
     parse_request_json,
     print_response as _print_response,
+    safe_exception_text,
     serialize_response as _serialize_response,
     write_response as _write_response,
 )
@@ -148,7 +149,10 @@ class ArboristGateway(
                 core = core_class()
                 self._core = core
             except Exception as exc:  # noqa: BLE001
-                raise JsonRpcError(-32000, f"failed to load arborist core: {exc}") from exc
+                raise JsonRpcError(
+                    -32000,
+                    f"failed to load arborist core: {safe_exception_text(exc)}",
+                ) from exc
         return core
 
     def handle_request(self, request: Any) -> dict[str, Any]:
@@ -206,11 +210,11 @@ class ArboristGateway(
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except JsonRpcError as exc:
-            return error_response(response_id, exc.code, str(exc))
+            return error_response(response_id, exc.code, safe_exception_text(exc))
         except ValueError as exc:
-            return error_response(response_id, -32602, str(exc))
+            return error_response(response_id, -32602, safe_exception_text(exc))
         except Exception as exc:  # noqa: BLE001
-            return error_response(response_id, -32000, str(exc))
+            return error_response(response_id, -32000, safe_exception_text(exc))
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return initialize(

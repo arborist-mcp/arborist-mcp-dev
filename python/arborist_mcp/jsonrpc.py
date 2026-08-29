@@ -76,6 +76,15 @@ def safe_error_text(message: str) -> str:
     return message
 
 
+def safe_exception_text(exc: BaseException) -> str:
+    """Render an exception without letting a broken ``__str__`` escape."""
+    try:
+        message = str(exc)
+    except Exception:  # noqa: BLE001
+        message = f"{type(exc).__name__} (exception text unavailable)"
+    return safe_error_text(message)
+
+
 def _reject_nonstandard_json_constant(name: str) -> Any:
     raise ValueError(f"non-standard JSON constant: {name}")
 

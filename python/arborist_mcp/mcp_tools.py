@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from .jsonrpc import safe_error_text
+from .jsonrpc import safe_exception_text, safe_error_text
 from .mcp_result_validation import validate_tool_result_shape
 from .mcp_validation import reject_unexpected_params
 from .tool_manifest import build_tool_catalog
@@ -45,11 +45,11 @@ def tools_call(params: dict[str, Any], execute_tool: ToolExecutor) -> dict[str, 
         validate_tool_result_shape(tool_name, tool_result, deep=True)
         return mcp_tool_result(tool_result)
     except JsonRpcError as exc:
-        return mcp_tool_error(str(exc))
+        return mcp_tool_error(safe_exception_text(exc))
     except ValueError as exc:
-        return mcp_tool_error(str(exc))
+        return mcp_tool_error(safe_exception_text(exc))
     except Exception as exc:  # noqa: BLE001
-        return mcp_tool_error(str(exc))
+        return mcp_tool_error(safe_exception_text(exc))
 
 
 def mcp_tool_result(tool_result: Any) -> dict[str, Any]:
