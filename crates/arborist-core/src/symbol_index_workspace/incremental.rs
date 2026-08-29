@@ -54,9 +54,7 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     let mut reused_files = 0;
 
     for path in &indexed_paths {
-        deadline.check("indexing workspace files")?;
-        validate_source_file_size(path, limits)?;
-        let source = read_source(path)?;
+        let source = read_incremental_source_with_deadline(path, limits, deadline)?;
         let normalized_path = normalize_path(path);
         let fingerprint = source_fingerprint(&source);
 
@@ -106,4 +104,67 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
         rebuilt_files,
         reused_files,
     ))
+}
+
+fn read_incremental_source_with_deadline(
+    path: &Path,
+    limits: WorkspaceScanLimits,
+    deadline: &dyn DeadlineCheck,
+) -> Result<String> {
+    deadline.check("indexing workspace files")?;
+    validate_source_file_size(path, limits)?;
+    deadline.check("indexing workspace files")?;
+    let source = read_source(path);
+    deadline.check("indexing workspace files")?;
+    source
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::path::Path;
+
+    use super::read_incremental_source_with_deadline;
+    use crate::deadline::DeadlineCheck;
+    use crate::workspace_scan::WorkspaceScanLimits;
+
+    struct ExpireAfterIncrementalSourceRead {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterIncrementalSourceRead {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "indexing workspace files");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 2 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn incremental_source_read_checks_deadline_after_filesystem_work() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("lib.rs");
+        let deadline = ExpireAfterIncrementalSourceRead {
+            checks: Cell::new(0),
+        };
+
+        let error = read_incremental_source_with_deadline(
+            &source_path,
+            WorkspaceScanLimits::default(),
+            &deadline,
+        )
+        .expect_err("deadline should stop after reading the incremental source");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during indexing workspace files")
+        );
+        assert_eq!(deadline.checks.get(), 3);
+    }
 }
