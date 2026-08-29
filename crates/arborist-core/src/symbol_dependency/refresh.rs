@@ -38,6 +38,9 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         file_overrides,
         deadline,
     } = inputs;
+    if let Some(deadline) = deadline {
+        deadline.check("preparing refresh symbol indexes")?;
+    }
     let name_index = build_name_index(raw_symbols);
     if let Some(deadline) = deadline {
         deadline.check("building refresh symbol indexes")?;
