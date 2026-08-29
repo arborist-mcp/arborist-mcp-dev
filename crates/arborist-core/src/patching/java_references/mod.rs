@@ -32,6 +32,12 @@ pub(crate) fn collect_java_reference_validation_with_deadline(
 
     let mut validation = ReferenceValidation::default();
     for name in &scope_scan.local_references {
+        // The validation report has one decision per identifier spelling. When
+        // the spelling also appears outside the local binding's scope, validate
+        // the external reference instead of accepting every site as local.
+        if scope_scan.external_references.contains(name) {
+            continue;
+        }
         let Some(binding) = scope_scan
             .local_bindings
             .iter()
@@ -51,13 +57,6 @@ pub(crate) fn collect_java_reference_validation_with_deadline(
     for name in &scope_scan.external_references {
         if let Some(deadline) = deadline {
             deadline.check("validating Java references")?;
-        }
-        // A name that is also visible as a local binding anywhere in the symbol
-        // resolves locally; a reference site outside that binding's scope is
-        // conservatively treated as the same visible binding rather than being
-        // reported unresolved.
-        if scope_scan.local_references.contains(name) {
-            continue;
         }
         if JAVA_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;

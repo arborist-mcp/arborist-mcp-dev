@@ -423,6 +423,51 @@ fn rejects_java_method_patch_with_unresolved_receiver_and_local_initializer() {
 }
 
 #[test]
+fn java_patch_binding_validation_rejects_references_outside_nested_block_scope() {
+    let source = r#"package com.example;
+
+public class Main {
+    public int compute(int value) {
+        return value;
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        r#"public int compute(int value) {
+    {
+        int helper = value + 1;
+        int ignored = helper;
+    }
+    return helper;
+}"#,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "helper"),
+        "{result:#?}"
+    );
+    let helper_decisions = result
+        .validation
+        .binding_decisions
+        .iter()
+        .filter(|decision| decision.name == "helper")
+        .collect::<Vec<_>>();
+    assert_eq!(helper_decisions.len(), 1, "{result:#?}");
+    assert_eq!(helper_decisions[0].status, "unresolved");
+}
+
+#[test]
 fn java_patch_binding_validation_rejects_sibling_class_members() {
     let source = r#"package com.example;
 
