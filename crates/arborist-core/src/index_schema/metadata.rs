@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{builtin_language_registry, normalize_absolute_path, normalize_path};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -78,10 +79,12 @@ pub(crate) fn persist_current_analysis_provenance(tx: &Transaction<'_>) -> Resul
     Ok(())
 }
 
-pub(crate) fn validate_symbol_index_analysis_provenance(
+pub(crate) fn validate_symbol_index_analysis_provenance_with_deadline(
     connection: &Connection,
     db_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_deadline(deadline, "validating index analysis provenance")?;
     let Some(stored) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = ?1",
@@ -95,6 +98,7 @@ pub(crate) fn validate_symbol_index_analysis_provenance(
             db_path.display()
         );
     };
+    check_deadline(deadline, "validating index analysis provenance")?;
     let stored: AnalysisProvenance = serde_json::from_str(&stored).map_err(|error| {
         anyhow!(
             "invalid analysis_provenance metadata in symbol index {}: {error}",
@@ -102,6 +106,7 @@ pub(crate) fn validate_symbol_index_analysis_provenance(
         )
     })?;
     let expected = current_analysis_provenance();
+    check_deadline(deadline, "validating index analysis provenance")?;
     if stored != expected {
         bail!(
             "analysis_provenance metadata in symbol index {} does not match current analysis behavior; rebuild the index",
@@ -167,10 +172,12 @@ pub(crate) fn load_symbol_index_workspace_root_with_deadline(
     Ok(normalized_workspace)
 }
 
-pub(crate) fn validate_symbol_index_schema_version(
+pub(crate) fn validate_symbol_index_schema_version_with_deadline(
     connection: &Connection,
     db_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_deadline(deadline, "validating index schema version")?;
     let Some(value) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = 'schema_version'",
@@ -184,6 +191,7 @@ pub(crate) fn validate_symbol_index_schema_version(
             db_path.display()
         ));
     };
+    check_deadline(deadline, "validating index schema version")?;
 
     if value != SYMBOL_INDEX_SCHEMA_VERSION {
         return Err(anyhow!(
@@ -194,6 +202,13 @@ pub(crate) fn validate_symbol_index_schema_version(
         ));
     }
 
+    Ok(())
+}
+
+fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
     Ok(())
 }
 

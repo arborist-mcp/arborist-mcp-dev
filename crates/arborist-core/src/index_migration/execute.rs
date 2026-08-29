@@ -9,9 +9,10 @@ use crate::index_schema::{
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
     load_optional_metadata_value, load_symbol_index_workspace_root,
-    migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema,
-    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
-    require_previous_symbol_index_schema, require_symbol_index_tables,
+    migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema_with_deadline,
+    require_older_symbol_index_schema_with_deadline,
+    require_oldest_symbol_index_schema_with_deadline,
+    require_previous_symbol_index_schema_with_deadline, require_symbol_index_tables_with_deadline,
 };
 use crate::index_store::{
     validate_legacy_indexed_symbols, validate_legacy_indexed_symbols_with_deadline,
@@ -39,7 +40,7 @@ fn migrate_symbol_index_inner(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     check_optional_deadline(deadline, "validating symbol index tables")?;
-    require_symbol_index_tables(connection, db_path)?;
+    require_symbol_index_tables_with_deadline(connection, db_path, deadline)?;
     check_optional_deadline(deadline, "loading symbol index schema version")?;
     let stored_version =
         load_optional_metadata_value(connection, "schema_version")?.ok_or_else(|| {
@@ -57,17 +58,17 @@ fn migrate_symbol_index_inner(
     }
 
     if stored_version == PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
-        require_previous_symbol_index_schema(connection, db_path)?;
+        require_previous_symbol_index_schema_with_deadline(connection, db_path, deadline)?;
     } else if stored_version == LEGACY_SYMBOL_INDEX_SCHEMA_VERSION {
-        require_legacy_symbol_index_schema(connection, db_path)?;
+        require_legacy_symbol_index_schema_with_deadline(connection, db_path, deadline)?;
     } else if stored_version == OLDER_SYMBOL_INDEX_SCHEMA_VERSION {
-        require_older_symbol_index_schema(connection, db_path)?;
+        require_older_symbol_index_schema_with_deadline(connection, db_path, deadline)?;
     } else {
         debug_assert!(matches!(
             stored_version.as_str(),
             OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION
         ));
-        require_oldest_symbol_index_schema(connection, db_path)?;
+        require_oldest_symbol_index_schema_with_deadline(connection, db_path, deadline)?;
     }
     check_optional_deadline(deadline, "validating legacy symbol index schema")?;
     load_symbol_index_workspace_root(connection, db_path)?;

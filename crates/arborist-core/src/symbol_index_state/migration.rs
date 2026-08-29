@@ -3,15 +3,18 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use rusqlite::Connection;
 
+use crate::deadline::DeadlineCheck;
 use crate::index_migration;
 use crate::index_schema::{
     ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_optional_metadata_value,
     load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root,
-    load_symbol_index_workspace_root_with_deadline, require_legacy_symbol_index_schema,
-    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
-    require_previous_symbol_index_schema, require_symbol_index_tables,
+    load_symbol_index_workspace_root_with_deadline,
+    require_legacy_symbol_index_schema_with_deadline,
+    require_older_symbol_index_schema_with_deadline,
+    require_oldest_symbol_index_schema_with_deadline,
+    require_previous_symbol_index_schema_with_deadline, require_symbol_index_tables_with_deadline,
 };
 use crate::index_store::{
     load_file_states_with_deadline, load_legacy_file_states, load_resolved_symbols,
@@ -76,19 +79,36 @@ fn migrate_symbol_index_inner(
         .as_deref()
         .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
     {
-        require_symbol_index_tables(&connection, &db_path)?;
+        let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+        require_symbol_index_tables_with_deadline(&connection, &db_path, schema_deadline)?;
         if schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
-            require_previous_symbol_index_schema(&connection, &db_path)?;
+            require_previous_symbol_index_schema_with_deadline(
+                &connection,
+                &db_path,
+                schema_deadline,
+            )?;
         } else if schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
-            require_legacy_symbol_index_schema(&connection, &db_path)?;
+            require_legacy_symbol_index_schema_with_deadline(
+                &connection,
+                &db_path,
+                schema_deadline,
+            )?;
         } else if schema_version.as_deref() == Some(OLDER_SYMBOL_INDEX_SCHEMA_VERSION) {
-            require_older_symbol_index_schema(&connection, &db_path)?;
+            require_older_symbol_index_schema_with_deadline(
+                &connection,
+                &db_path,
+                schema_deadline,
+            )?;
         } else {
             debug_assert!(matches!(
                 schema_version.as_deref(),
                 Some(OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION)
             ));
-            require_oldest_symbol_index_schema(&connection, &db_path)?;
+            require_oldest_symbol_index_schema_with_deadline(
+                &connection,
+                &db_path,
+                schema_deadline,
+            )?;
         }
         check_optional_deadline(deadline, "validating migratable symbol index schema")?;
         let workspace_root = match deadline {

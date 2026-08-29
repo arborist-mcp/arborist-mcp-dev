@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
+use crate::deadline::DeadlineCheck;
 use crate::index_migration;
 use crate::index_schema::{
     ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
@@ -9,10 +10,12 @@ use crate::index_schema::{
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
     load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
     load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only,
-    require_current_symbol_index_schema, require_legacy_symbol_index_schema,
-    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
-    require_previous_symbol_index_schema, require_symbol_index_tables,
-    validate_symbol_index_analysis_provenance,
+    require_current_symbol_index_schema_with_deadline,
+    require_legacy_symbol_index_schema_with_deadline,
+    require_older_symbol_index_schema_with_deadline,
+    require_oldest_symbol_index_schema_with_deadline,
+    require_previous_symbol_index_schema_with_deadline, require_symbol_index_tables_with_deadline,
+    validate_symbol_index_analysis_provenance_with_deadline,
 };
 use crate::index_store::{
     count_table_rows_with_deadline, load_file_states_with_deadline,
@@ -81,7 +84,13 @@ pub fn inspect_symbol_index_with_timeout(
     };
     deadline.check("opening persisted index")?;
 
-    if let Err(error) = require_symbol_index_tables(&connection, &db_path) {
+    let table_validation = require_symbol_index_tables_with_deadline(
+        &connection,
+        &db_path,
+        Some(&deadline as &dyn DeadlineCheck),
+    );
+    deadline.check("validating persisted index tables")?;
+    if let Err(error) = table_validation {
         health.issues.push(error.to_string());
         health.migration = index_migration::incomplete_or_foreign_database();
         health.validate_public_output()?;
@@ -120,18 +129,35 @@ pub fn inspect_symbol_index_with_timeout(
         );
         let schema_validation =
             if health.schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
-                require_previous_symbol_index_schema(&connection, &db_path)
+                require_previous_symbol_index_schema_with_deadline(
+                    &connection,
+                    &db_path,
+                    Some(&deadline as &dyn DeadlineCheck),
+                )
             } else if health.schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
-                require_legacy_symbol_index_schema(&connection, &db_path)
+                require_legacy_symbol_index_schema_with_deadline(
+                    &connection,
+                    &db_path,
+                    Some(&deadline as &dyn DeadlineCheck),
+                )
             } else if health.schema_version.as_deref() == Some(OLDER_SYMBOL_INDEX_SCHEMA_VERSION) {
-                require_older_symbol_index_schema(&connection, &db_path)
+                require_older_symbol_index_schema_with_deadline(
+                    &connection,
+                    &db_path,
+                    Some(&deadline as &dyn DeadlineCheck),
+                )
             } else {
                 debug_assert!(matches!(
                     health.schema_version.as_deref(),
                     Some(OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION)
                 ));
-                require_oldest_symbol_index_schema(&connection, &db_path)
+                require_oldest_symbol_index_schema_with_deadline(
+                    &connection,
+                    &db_path,
+                    Some(&deadline as &dyn DeadlineCheck),
+                )
             };
+        deadline.check("validating migratable persisted index schema")?;
         if let Err(error) = schema_validation {
             health.issues.push(error.to_string());
             health.migration = index_migration::incomplete_or_foreign_database();
@@ -148,14 +174,30 @@ pub fn inspect_symbol_index_with_timeout(
         health.migration = index_migration::unsupported_schema_version(
             health.schema_version.as_deref().unwrap_or_default(),
         );
-    } else if let Err(error) = require_current_symbol_index_schema(&connection, &db_path) {
-        health.issues.push(error.to_string());
-        health.migration = index_migration::incomplete_or_foreign_database();
-        health.validate_public_output()?;
-        return Ok(health);
-    } else if let Err(error) = validate_symbol_index_analysis_provenance(&connection, &db_path) {
-        health.issues.push(error.to_string());
-        health.migration = index_migration::failed_health_checks();
+    } else {
+        let current_schema_validation = require_current_symbol_index_schema_with_deadline(
+            &connection,
+            &db_path,
+            Some(&deadline as &dyn DeadlineCheck),
+        );
+        deadline.check("validating persisted index schema")?;
+        if let Err(error) = current_schema_validation {
+            health.issues.push(error.to_string());
+            health.migration = index_migration::incomplete_or_foreign_database();
+            health.validate_public_output()?;
+            return Ok(health);
+        }
+
+        let provenance_validation = validate_symbol_index_analysis_provenance_with_deadline(
+            &connection,
+            &db_path,
+            Some(&deadline as &dyn DeadlineCheck),
+        );
+        deadline.check("validating index analysis provenance")?;
+        if let Err(error) = provenance_validation {
+            health.issues.push(error.to_string());
+            health.migration = index_migration::failed_health_checks();
+        }
     }
 
     let workspace_root = match load_symbol_index_workspace_root_with_deadline(

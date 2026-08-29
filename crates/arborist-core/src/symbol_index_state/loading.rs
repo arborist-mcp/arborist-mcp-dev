@@ -3,10 +3,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::index_schema::{
     load_indexed_files_metadata_with_deadline, load_symbol_index_workspace_root_with_deadline,
-    open_symbol_index_read_only, require_current_symbol_index_schema, require_symbol_index_tables,
-    validate_symbol_index_analysis_provenance, validate_symbol_index_schema_version,
+    open_symbol_index_read_only, require_current_symbol_index_schema_with_deadline,
+    require_symbol_index_tables_with_deadline,
+    validate_symbol_index_analysis_provenance_with_deadline,
+    validate_symbol_index_schema_version_with_deadline,
 };
 use crate::index_store::{
     load_file_states, load_file_states_with_deadline, load_indexed_symbols_grouped_by_file,
@@ -61,11 +64,12 @@ fn load_symbol_index_internal(
     }
 
     let connection = open_symbol_index_read_only(db_path)?;
-    require_symbol_index_tables(&connection, db_path)?;
+    let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+    require_symbol_index_tables_with_deadline(&connection, db_path, schema_deadline)?;
     let indexed_files = load_indexed_files_metadata_with_deadline(&connection, deadline)?;
-    validate_symbol_index_schema_version(&connection, db_path)?;
-    require_current_symbol_index_schema(&connection, db_path)?;
-    validate_symbol_index_analysis_provenance(&connection, db_path)?;
+    validate_symbol_index_schema_version_with_deadline(&connection, db_path, schema_deadline)?;
+    require_current_symbol_index_schema_with_deadline(&connection, db_path, schema_deadline)?;
+    validate_symbol_index_analysis_provenance_with_deadline(&connection, db_path, schema_deadline)?;
     match deadline {
         Some(deadline) => {
             load_indexed_symbols_grouped_by_file_with_deadline(&connection, deadline)?
@@ -145,10 +149,11 @@ fn load_symbol_index_with_overrides_internal(
     }
 
     let connection = open_symbol_index_read_only(db_path)?;
-    require_symbol_index_tables(&connection, db_path)?;
-    validate_symbol_index_schema_version(&connection, db_path)?;
-    require_current_symbol_index_schema(&connection, db_path)?;
-    validate_symbol_index_analysis_provenance(&connection, db_path)?;
+    let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
+    require_symbol_index_tables_with_deadline(&connection, db_path, schema_deadline)?;
+    validate_symbol_index_schema_version_with_deadline(&connection, db_path, schema_deadline)?;
+    require_current_symbol_index_schema_with_deadline(&connection, db_path, schema_deadline)?;
+    validate_symbol_index_analysis_provenance_with_deadline(&connection, db_path, schema_deadline)?;
     let workspace_root =
         load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
     let normalized_file_overrides = normalize_source_overrides_for_workspace_with_deadline(
