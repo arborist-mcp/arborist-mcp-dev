@@ -936,6 +936,121 @@ fn javascript_patch_binding_validation_rejects_unresolved_computed_loop_assignme
     assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
 }
 #[test]
+fn javascript_patch_binding_validation_rejects_references_outside_switch_scope() {
+    let source = r#"function compute(value) { return value; }"#;
+    let replacement = r#"function compute(value) {
+    switch (value) {
+        case 1:
+            let helper = 1;
+            break;
+        default:
+            break;
+    }
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_switch_case_label_tdz_references() {
+    let source = r#"function compute(helper) { return helper; }"#;
+    let replacement = r#"function compute(helper) {
+    switch (1) {
+        case helper:
+            let helper = 2;
+            return helper;
+        default:
+            return 0;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_hoists_switch_case_function_declarations() {
+    let source = r#"function compute(value) { return value; }"#;
+    let replacement = r#"function compute(value) {
+    switch (value) {
+        case 0:
+            return helper();
+        case 1:
+            function helper() {
+                return 1;
+            }
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .expect("helper should resolve to the switch-scoped function declaration");
+    assert_eq!(decision.candidates[0].node_kind, "function_declaration");
+}
+
+#[test]
+fn javascript_patch_binding_validation_evaluates_switch_discriminants_outside_case_scope() {
+    let source = r#"function compute(helper) { return helper; }"#;
+    let replacement = r#"function compute(helper) {
+    switch (helper) {
+        case 1:
+            let helper = 2;
+            return helper;
+        default:
+            return 0;
+    }
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .expect("helper should resolve to the function parameter in the discriminant");
+    assert_eq!(decision.candidates[0].node_kind, "parameter");
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_switch_case_tdz_references() {
     let source = r#"function compute(value) { return value; }"#;
     let replacement = r#"function compute(value) {

@@ -127,6 +127,7 @@ fn walk_javascript_node(
         }
         "class_static_block" => walk_javascript_children(node, source, scopes, scan, deadline),
         "statement_block" => walk_javascript_block(node, source, scopes, scan, deadline),
+        "switch_statement" => walk_javascript_switch(node, source, scopes, scan, deadline),
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
         "catch_clause" => walk_javascript_catch(node, source, scopes, scan, deadline),
@@ -303,6 +304,95 @@ fn hoist_javascript_block_function_declarations(
             "function_declaration" | "generator_function_declaration"
         ) {
             bind_javascript_function_declaration_name(child, source, scope, scan)?;
+        }
+    }
+    Ok(())
+}
+
+fn walk_javascript_switch(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    // The discriminant is evaluated before the switch's lexical environment
+    // exists, so a declaration in a case cannot shadow an outer binding here.
+    if let Some(value) = node.child_by_field_name("value") {
+        walk_javascript_node(value, source, scopes, scan, deadline)?;
+    }
+
+    scopes.push(Scope {
+        is_function_scope: false,
+        defers_tdz_references: false,
+        bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
+    });
+    if let Some(body) = node.child_by_field_name("body") {
+        {
+            let scope = scopes
+                .last_mut()
+                .expect("a JavaScript switch scope was just pushed");
+            mark_javascript_switch_lexical_bindings_initializing(body, source, scope)?;
+            hoist_javascript_switch_function_declarations(body, source, scope, scan)?;
+        }
+        walk_javascript_node(body, source, scopes, scan, deadline)?;
+    }
+    scopes.pop();
+    Ok(())
+}
+
+fn mark_javascript_switch_lexical_bindings_initializing(
+    body: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+) -> Result<()> {
+    let mut case_cursor = body.walk();
+    for case_clause in body.named_children(&mut case_cursor) {
+        if !matches!(case_clause.kind(), "switch_case" | "switch_default") {
+            continue;
+        }
+        let mut statement_cursor = case_clause.walk();
+        for statement in case_clause.children_by_field_name("body", &mut statement_cursor) {
+            if !matches!(
+                statement.kind(),
+                "lexical_declaration" | "using_declaration"
+            ) {
+                continue;
+            }
+            let mut declarator_cursor = statement.walk();
+            for declarator in statement.named_children(&mut declarator_cursor) {
+                if declarator.kind() != "variable_declarator" {
+                    continue;
+                }
+                if let Some(name) = declarator.child_by_field_name("name") {
+                    mark_javascript_pattern_initializing(name, source, scope)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hoist_javascript_switch_function_declarations(
+    body: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+    scan: &mut JavaScriptScopeScan,
+) -> Result<()> {
+    let mut case_cursor = body.walk();
+    for case_clause in body.named_children(&mut case_cursor) {
+        if !matches!(case_clause.kind(), "switch_case" | "switch_default") {
+            continue;
+        }
+        let mut statement_cursor = case_clause.walk();
+        for statement in case_clause.children_by_field_name("body", &mut statement_cursor) {
+            if matches!(
+                statement.kind(),
+                "function_declaration" | "generator_function_declaration"
+            ) {
+                bind_javascript_function_declaration_name(statement, source, scope, scan)?;
+            }
         }
     }
     Ok(())
