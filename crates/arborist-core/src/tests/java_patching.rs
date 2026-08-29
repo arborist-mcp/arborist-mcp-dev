@@ -423,6 +423,70 @@ fn rejects_java_method_patch_with_unresolved_receiver_and_local_initializer() {
 }
 
 #[test]
+fn java_patch_binding_validation_rejects_sibling_class_members() {
+    let source = r#"package com.example;
+
+public class Main {
+    public int compute(int value) {
+        return value;
+    }
+}
+
+class Other {
+    static int sibling(int value) {
+        return value;
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        "public int compute(int value) {
+    return sibling(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["sibling"]);
+}
+
+#[test]
+fn java_patch_binding_validation_rejects_ambiguous_same_scope_overloads() {
+    let source = r#"package com.example;
+
+public class Main {
+    public int compute(int value) {
+        return value;
+    }
+
+    public int helper(int value) {
+        return value;
+    }
+
+    public String helper(String value) {
+        return value;
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.java"),
+        source,
+        "com::example::Main::compute",
+        "public int compute(int value) {
+    return helper(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn java_patch_binding_validation_resolves_scoped_patterns_and_closures() {
     let source = r#"package com.example;
 
