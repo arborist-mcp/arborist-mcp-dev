@@ -284,10 +284,23 @@ fn walk_javascript_block(
         let scope = scopes
             .last_mut()
             .expect("a JavaScript block scope was just pushed");
+        mark_javascript_block_lexical_bindings_initializing(node, source, scope)?;
         hoist_javascript_block_function_declarations(node, source, scope, scan)?;
     }
     walk_javascript_children(node, source, scopes, scan, deadline)?;
     scopes.pop();
+    Ok(())
+}
+
+fn mark_javascript_block_lexical_bindings_initializing(
+    node: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for statement in node.named_children(&mut cursor) {
+        mark_javascript_lexical_declaration_initializing(statement, source, scope)?;
+    }
     Ok(())
 }
 
@@ -354,21 +367,27 @@ fn mark_javascript_switch_lexical_bindings_initializing(
         }
         let mut statement_cursor = case_clause.walk();
         for statement in case_clause.children_by_field_name("body", &mut statement_cursor) {
-            if !matches!(
-                statement.kind(),
-                "lexical_declaration" | "using_declaration"
-            ) {
-                continue;
-            }
-            let mut declarator_cursor = statement.walk();
-            for declarator in statement.named_children(&mut declarator_cursor) {
-                if declarator.kind() != "variable_declarator" {
-                    continue;
-                }
-                if let Some(name) = declarator.child_by_field_name("name") {
-                    mark_javascript_pattern_initializing(name, source, scope)?;
-                }
-            }
+            mark_javascript_lexical_declaration_initializing(statement, source, scope)?;
+        }
+    }
+    Ok(())
+}
+
+fn mark_javascript_lexical_declaration_initializing(
+    node: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+) -> Result<()> {
+    if !matches!(node.kind(), "lexical_declaration" | "using_declaration") {
+        return Ok(());
+    }
+    let mut cursor = node.walk();
+    for declarator in node.named_children(&mut cursor) {
+        if declarator.kind() != "variable_declarator" {
+            continue;
+        }
+        if let Some(name) = declarator.child_by_field_name("name") {
+            mark_javascript_pattern_initializing(name, source, scope)?;
         }
     }
     Ok(())

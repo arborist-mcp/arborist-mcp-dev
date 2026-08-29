@@ -578,6 +578,29 @@ fn javascript_patch_binding_validation_rejects_lexical_tdz_references() {
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_outer_bindings_shadowed_by_block_tdz() {
+    let source = r#"function compute(helper) { return helper; }"#;
+    let replacement = r#"function compute(helper) {
+    {
+        console.log(helper);
+        let helper = 1;
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_lexical_bindings_captured_by_initializers() {
     let source = r#"function compute(value) {
     return value;
