@@ -176,6 +176,7 @@ fn load_symbol_index_with_overrides_internal(
     let file_overrides = remap_file_overrides_to_persisted_paths(
         &normalized_file_overrides,
         &persisted_file_states,
+        deadline,
     )?;
     let (resolved_symbols, persisted_indexed_files) = match deadline {
         Some(deadline) => load_resolved_symbols_with_deadline(&connection, Some(deadline))?,

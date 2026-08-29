@@ -21,16 +21,33 @@ pub(crate) fn resolve_persisted_file_path(
     file_path: &Path,
     file_states: &BTreeMap<String, u64>,
 ) -> Result<PathBuf> {
+    resolve_persisted_file_path_with_deadline(file_path, file_states, None)
+}
+
+fn resolve_persisted_file_path_with_deadline(
+    file_path: &Path,
+    file_states: &BTreeMap<String, u64>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<PathBuf> {
+    if let Some(deadline) = deadline {
+        deadline.check("remapping indexed source overlays")?;
+    }
+
     let normalized_path = normalize_path(file_path);
     if !cfg!(windows) {
         return Ok(file_path.to_path_buf());
     }
 
     let normalized_identity = path_identity(&normalized_path);
-    let matches = file_states
-        .keys()
-        .filter(|persisted_path| path_identity(persisted_path) == normalized_identity)
-        .collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    for persisted_path in file_states.keys() {
+        if let Some(deadline) = deadline {
+            deadline.check("remapping indexed source overlays")?;
+        }
+        if path_identity(persisted_path) == normalized_identity {
+            matches.push(persisted_path);
+        }
+    }
     match matches.as_slice() {
         [] => Ok(file_path.to_path_buf()),
         [persisted_path] => Ok(PathBuf::from(persisted_path)),
@@ -44,10 +61,19 @@ pub(crate) fn resolve_persisted_file_path(
 pub(crate) fn remap_file_overrides_to_persisted_paths(
     file_overrides: &BTreeMap<String, String>,
     file_states: &BTreeMap<String, u64>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<BTreeMap<String, String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("remapping indexed source overlays")?;
+    }
+
     let mut remapped_overrides = BTreeMap::new();
     for (file_path, source) in file_overrides {
-        let resolved_path = resolve_persisted_file_path(Path::new(file_path), file_states)?;
+        if let Some(deadline) = deadline {
+            deadline.check("remapping indexed source overlays")?;
+        }
+        let resolved_path =
+            resolve_persisted_file_path_with_deadline(Path::new(file_path), file_states, deadline)?;
         let normalized_path = normalize_path(&resolved_path);
         if remapped_overrides
             .insert(normalized_path.clone(), source.clone())
@@ -263,7 +289,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        symbol_index_freshness_issues, validate_persisted_index_paths_with_overrides_and_deadline,
+        remap_file_overrides_to_persisted_paths, symbol_index_freshness_issues,
+        validate_persisted_index_paths_with_overrides_and_deadline,
     };
     use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -282,6 +309,27 @@ mod tests {
             error
                 .to_string()
                 .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn persisted_overlay_remapping_rejects_expired_deadline() {
+        let file_overrides =
+            BTreeMap::from([("C:\\workspace\\source.py".to_owned(), String::new())]);
+        let file_states = BTreeMap::from([("C:\\workspace\\source.py".to_owned(), 0)]);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error =
+            remap_file_overrides_to_persisted_paths(&file_overrides, &file_states, Some(&deadline))
+                .expect_err("expired deadline should reject persisted overlay remapping");
+
+        assert!(
+            error
+                .to_string()
+                .contains("remapping indexed source overlays")
         );
     }
 
