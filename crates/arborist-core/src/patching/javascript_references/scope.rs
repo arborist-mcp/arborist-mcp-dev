@@ -603,6 +603,78 @@ fn walk_javascript_declaration(
     Ok(())
 }
 
+fn mark_javascript_pattern_initializing(
+    node: Node<'_>,
+    source: &str,
+    scope: &mut Scope,
+) -> Result<()> {
+    let mut names = BTreeSet::new();
+    let mut ignored_defaults = Vec::new();
+    collect_javascript_pattern_initialization(node, source, &mut names, &mut ignored_defaults)?;
+    scope.initializing_names.extend(names);
+    Ok(())
+}
+
+fn walk_javascript_lexical_loop_binding(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            let name = node_text(node, source)?.trim().to_string();
+            let scope = scopes.last_mut().expect("loop scope is active");
+            scope.initializing_names.remove(&name);
+            bind_javascript_name(node, source, "loop_variable", scope, scan)
+        }
+        "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(right) = node.child_by_field_name("right") {
+                walk_javascript_node(right, source, scopes, scan, deadline)?;
+            }
+            if let Some(left) = node.child_by_field_name("left") {
+                walk_javascript_lexical_loop_binding(left, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
+        "rest_pattern" | "array_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                walk_javascript_lexical_loop_binding(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
+        "object_pattern" => {
+            let mut cursor = node.walk();
+            for member in node.named_children(&mut cursor) {
+                if member.kind() == "pair_pattern" {
+                    if let Some(key) = member.child_by_field_name("key") {
+                        walk_javascript_computed_property_name(
+                            key, source, scopes, scan, deadline,
+                        )?;
+                    }
+                    if let Some(value) = member.child_by_field_name("value") {
+                        walk_javascript_lexical_loop_binding(
+                            value, source, scopes, scan, deadline,
+                        )?;
+                    }
+                } else {
+                    walk_javascript_lexical_loop_binding(member, source, scopes, scan, deadline)?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn javascript_for_in_has_lexical_binding(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children_by_field_name("kind", &mut cursor)
+        .any(|kind| matches!(kind.kind(), "const" | "let" | "using"))
+}
+
 fn collect_javascript_pattern_initialization<'tree>(
     node: Node<'tree>,
     source: &str,
@@ -693,26 +765,37 @@ fn walk_javascript_for_in(
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
-    if let Some(left) = node.child_by_field_name("left") {
-        if matches!(left.kind(), "lexical_declaration" | "variable_declaration") {
-            walk_javascript_declaration(left, source, scopes, scan, deadline)?;
-        } else {
-            let mut defaults = Vec::new();
-            collect_javascript_pattern_bindings(
-                left,
-                source,
-                "loop_variable",
-                scopes.last_mut().expect("loop scope is active"),
-                scan,
-                &mut defaults,
-            )?;
-            for default in defaults {
-                walk_javascript_node(default, source, scopes, scan, deadline)?;
-            }
+    let left = node.child_by_field_name("left");
+    let lexical_left = javascript_for_in_has_lexical_binding(node)
+        .then_some(left)
+        .flatten();
+    if let Some(left) = lexical_left {
+        // The iterable expression runs while the per-loop lexical bindings
+        // exist but are still in their temporal dead zone.
+        mark_javascript_pattern_initializing(
+            left,
+            source,
+            scopes.last_mut().expect("loop scope is active"),
+        )?;
+    } else if let Some(left) = left {
+        let mut defaults = Vec::new();
+        collect_javascript_pattern_bindings(
+            left,
+            source,
+            "loop_variable",
+            scopes.last_mut().expect("loop scope is active"),
+            scan,
+            &mut defaults,
+        )?;
+        for default in defaults {
+            walk_javascript_node(default, source, scopes, scan, deadline)?;
         }
     }
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
+    }
+    if let Some(left) = lexical_left {
+        walk_javascript_lexical_loop_binding(left, source, scopes, scan, deadline)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
         walk_javascript_node(body, source, scopes, scan, deadline)?;

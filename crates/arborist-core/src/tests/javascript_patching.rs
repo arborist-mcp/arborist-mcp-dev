@@ -858,6 +858,114 @@ fn javascript_patch_binding_validation_rejects_inline_constructed_instance_field
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_loop_iterables() {
+    let source = r#"function compute() {
+    return [];
+}
+"#;
+    let replacement = r#"function compute() {
+    for (const entry of entry) {
+        return entry;
+    }
+    return [];
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["entry"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "entry"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_async_loop_iterables() {
+    let source = r#"async function compute() {
+    return [];
+}
+"#;
+    let replacement = r#"async function compute() {
+    for await (const entry of entry) {
+        return entry;
+    }
+    return [];
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["entry"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_prior_loop_destructuring_bindings() {
+    let source = r#"function compute(pairs) {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(pairs) {
+    for (const [head, tail = head] of pairs) {
+        return tail;
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_later_loop_destructuring_bindings() {
+    let source = r#"function compute(pairs) {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(pairs) {
+    for (const [head = tail, tail] of pairs) {
+        return head;
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["tail"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_lexical_references_in_class_heritage() {
     let source = r#"function compute(value) {
     return value;
