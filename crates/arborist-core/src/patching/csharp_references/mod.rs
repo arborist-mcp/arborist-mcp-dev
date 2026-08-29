@@ -72,9 +72,10 @@ pub(crate) fn collect_csharp_reference_validation_with_deadline(
         if CSHARP_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
         }
-        let item = file_items.get(name).or_else(|| {
-            visible_csharp_using_alias(&using_aliases, name, namespace_scope_path.as_deref())
-        });
+        let item =
+            visible_csharp_file_item(&file_items, name, scope_path.as_deref()).or_else(|| {
+                visible_csharp_using_alias(&using_aliases, name, namespace_scope_path.as_deref())
+            });
         match item {
             Some(item) => {
                 let summary = csharp_item_symbol_summary(&normalized_path, source, item);
@@ -139,9 +140,9 @@ fn csharp_namespace_scope_path(
     Ok((!parts.is_empty()).then(|| parts.join("::")))
 }
 
-fn csharp_visible_import_scope_paths(namespace_scope_path: Option<&str>) -> Vec<Option<String>> {
+fn csharp_visible_scope_paths(scope_path: Option<&str>) -> Vec<Option<String>> {
     let mut scope_paths = Vec::new();
-    let mut current_scope_path = namespace_scope_path;
+    let mut current_scope_path = scope_path;
     while let Some(scope_path) = current_scope_path {
         scope_paths.push(Some(scope_path.to_string()));
         current_scope_path = scope_path
@@ -152,13 +153,32 @@ fn csharp_visible_import_scope_paths(namespace_scope_path: Option<&str>) -> Vec<
     scope_paths
 }
 
+fn visible_csharp_file_item<'tree>(
+    file_items: &'tree BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
+    name: &str,
+    scope_path: Option<&str>,
+) -> Option<&'tree CSharpFileItem<'tree>> {
+    let items = file_items.get(name)?;
+    for scope_path in csharp_visible_scope_paths(scope_path) {
+        let mut candidates = items.iter().filter(|item| item.parent_path == scope_path);
+        let Some(candidate) = candidates.next() else {
+            continue;
+        };
+        if candidates.next().is_some() {
+            return None;
+        }
+        return Some(candidate);
+    }
+    None
+}
+
 fn visible_csharp_using_alias<'tree>(
     using_aliases: &'tree BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     name: &str,
     namespace_scope_path: Option<&str>,
 ) -> Option<&'tree CSharpFileItem<'tree>> {
     let aliases = using_aliases.get(name)?;
-    for scope_path in csharp_visible_import_scope_paths(namespace_scope_path) {
+    for scope_path in csharp_visible_scope_paths(namespace_scope_path) {
         let mut candidates = aliases
             .iter()
             .filter(|alias| alias.parent_path == scope_path);
@@ -271,7 +291,7 @@ struct CSharpFileItem<'tree> {
 fn collect_csharp_file_items<'tree>(
     root: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     using_aliases: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
@@ -282,7 +302,7 @@ fn walk_csharp_file_items<'tree>(
     root: Node<'tree>,
     node: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     using_aliases: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
@@ -331,7 +351,7 @@ fn insert_csharp_declaration_item<'tree>(
     node: Node<'tree>,
     source: &str,
     node_kind: &'static str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(());
@@ -341,17 +361,14 @@ fn insert_csharp_declaration_item<'tree>(
         return Ok(());
     }
     let semantic_path = csharp_semantic_path(root, node, source, &name)?;
-    items.insert(
-        name.clone(),
-        CSharpFileItem {
-            name,
-            node_kind,
-            node,
-            origin_type: "module_scope",
-            parent_path: semantic_parent_path(&semantic_path),
-            semantic_path,
-        },
-    );
+    items.entry(name.clone()).or_default().push(CSharpFileItem {
+        name,
+        node_kind,
+        node,
+        origin_type: "module_scope",
+        parent_path: semantic_parent_path(&semantic_path),
+        semantic_path,
+    });
     Ok(())
 }
 
@@ -359,7 +376,7 @@ fn collect_csharp_record_component_items<'tree>(
     root: Node<'tree>,
     record: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(parameters) = csharp_record_parameter_list(record) else {
         return Ok(());
@@ -377,17 +394,14 @@ fn collect_csharp_record_component_items<'tree>(
             continue;
         }
         let semantic_path = csharp_semantic_path(root, parameter, source, &name)?;
-        items.insert(
-            name.clone(),
-            CSharpFileItem {
-                name,
-                node_kind: "record_parameter",
-                node: parameter,
-                origin_type: "module_scope",
-                parent_path: semantic_parent_path(&semantic_path),
-                semantic_path,
-            },
-        );
+        items.entry(name.clone()).or_default().push(CSharpFileItem {
+            name,
+            node_kind: "record_parameter",
+            node: parameter,
+            origin_type: "module_scope",
+            parent_path: semantic_parent_path(&semantic_path),
+            semantic_path,
+        });
     }
     Ok(())
 }
@@ -397,7 +411,7 @@ fn collect_csharp_declarator_items<'tree>(
     declaration: Node<'tree>,
     source: &str,
     node_kind: &'static str,
-    items: &mut BTreeMap<String, CSharpFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<CSharpFileItem<'tree>>>,
 ) -> Result<()> {
     // A C# field or event field wraps its declarators in a
     // `variable_declaration` node.
@@ -419,17 +433,14 @@ fn collect_csharp_declarator_items<'tree>(
                 continue;
             }
             let semantic_path = csharp_semantic_path(root, declarator, source, &name)?;
-            items.insert(
-                name.clone(),
-                CSharpFileItem {
-                    name,
-                    node_kind,
-                    node: declarator,
-                    origin_type: "module_scope",
-                    parent_path: semantic_parent_path(&semantic_path),
-                    semantic_path,
-                },
-            );
+            items.entry(name.clone()).or_default().push(CSharpFileItem {
+                name,
+                node_kind,
+                node: declarator,
+                origin_type: "module_scope",
+                parent_path: semantic_parent_path(&semantic_path),
+                semantic_path,
+            });
         }
     }
     Ok(())

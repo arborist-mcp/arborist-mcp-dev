@@ -597,6 +597,39 @@ namespace Demo {
 }
 
 #[test]
+fn csharp_patch_binding_validation_rejects_sibling_member_declarations() {
+    let source = r#"namespace Demo.Core {
+    public class Counter {
+        public int Compute(int value) {
+            return value;
+        }
+    }
+}
+
+namespace Demo.Other {
+    public class Other {
+        public static int Sibling(int value) {
+            return value;
+        }
+    }
+}
+"#;
+    let result = patch_ast_node(
+        Path::new("Main.cs"),
+        source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return Sibling(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["Sibling"]);
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {
