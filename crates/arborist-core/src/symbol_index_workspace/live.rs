@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{
     normalize_absolute_path, normalize_path, parse_document, parse_document_with_timeout,
     path_identity, read_source,
@@ -287,12 +288,11 @@ fn build_workspace_index_with_deadline(
 
     for path in paths {
         deadline.check("indexing workspace files")?;
-        validate_source_file_size(path, limits)?;
         let normalized_path = normalize_path(path);
-        let source = match file_overrides.and_then(|overrides| overrides.get(&normalized_path)) {
-            Some(source) => source.clone(),
-            None => read_source(path)?,
-        };
+        let source_override = file_overrides
+            .and_then(|overrides| overrides.get(&normalized_path))
+            .map(String::as_str);
+        let source = read_workspace_source_with_deadline(path, source_override, limits, deadline)?;
         deadline.check("parsing workspace files")?;
         let document = parse_document_with_timeout(
             path,
@@ -312,14 +312,76 @@ fn build_workspace_index_with_deadline(
     Ok(symbols)
 }
 
+fn read_workspace_source_with_deadline(
+    path: &Path,
+    source_override: Option<&str>,
+    limits: WorkspaceScanLimits,
+    deadline: &dyn DeadlineCheck,
+) -> Result<String> {
+    validate_source_file_size(path, limits)?;
+    deadline.check("indexing workspace files")?;
+    let source = source_override
+        .map(str::to_owned)
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path));
+    deadline.check("indexing workspace files")?;
+    source
+}
+
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use super::{append_override_paths, remap_overrides_to_indexed_paths_with_deadline};
-    use crate::workspace_scan::WorkspaceScanDeadline;
+    use super::{
+        append_override_paths, read_workspace_source_with_deadline,
+        remap_overrides_to_indexed_paths_with_deadline,
+    };
+    use crate::deadline::DeadlineCheck;
+    use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
+
+    struct ExpireAfterLiveWorkspaceSourceRead {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterLiveWorkspaceSourceRead {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "indexing workspace files");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 1 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn live_workspace_source_read_checks_deadline_after_filesystem_work() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("lib.rs");
+        let deadline = ExpireAfterLiveWorkspaceSourceRead {
+            checks: Cell::new(0),
+        };
+
+        let error = read_workspace_source_with_deadline(
+            &source_path,
+            None,
+            WorkspaceScanLimits::default(),
+            &deadline,
+        )
+        .expect_err("deadline should stop after reading the live workspace source");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during indexing workspace files")
+        );
+        assert_eq!(deadline.checks.get(), 2);
+    }
 
     #[test]
     fn override_paths_respect_workspace_file_limit() {
