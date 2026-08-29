@@ -113,12 +113,19 @@ pub(crate) fn collect_javascript_reference_validation_with_deadline(
     let scope_path = javascript_symbol_scope_path(symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();
+    for name in &scope_scan.tdz_references {
+        validation
+            .binding_decisions
+            .push(unresolved_binding_decision(name));
+        validation.unresolved_identifiers.push(name.clone());
+    }
     for name in &scope_scan.local_references {
         // The public validation report carries one decision per identifier
         // spelling. If the spelling is also referenced outside its local scope,
         // validate it as an external reference instead of claiming every site
         // resolves to the local binding.
-        if scope_scan.external_references.contains(name) {
+        if scope_scan.external_references.contains(name) || scope_scan.tdz_references.contains(name)
+        {
             continue;
         }
         let Some(binding) = scope_scan
@@ -138,6 +145,9 @@ pub(crate) fn collect_javascript_reference_validation_with_deadline(
         });
     }
     for name in &scope_scan.external_references {
+        if scope_scan.tdz_references.contains(name) {
+            continue;
+        }
         if let Some(deadline) = deadline {
             deadline.check("validating JavaScript references")?;
         }

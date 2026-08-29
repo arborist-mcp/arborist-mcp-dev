@@ -18,6 +18,7 @@ pub(super) struct JavaScriptScopeScan {
     pub(super) local_bindings: Vec<JavaScriptBinding>,
     pub(super) local_references: BTreeSet<String>,
     pub(super) external_references: BTreeSet<String>,
+    pub(super) tdz_references: BTreeSet<String>,
 }
 
 /// A scope in the walker stack. `is_function_scope` marks function-like
@@ -26,6 +27,7 @@ pub(super) struct JavaScriptScopeScan {
 struct Scope {
     is_function_scope: bool,
     bindings: Vec<JavaScriptBinding>,
+    initializing_names: BTreeSet<String>,
 }
 
 /// Walks the patched JavaScript/TypeScript symbol node and classifies
@@ -45,6 +47,7 @@ pub(super) fn scan_javascript_symbol_scope(
         local_bindings: Vec::new(),
         local_references: BTreeSet::new(),
         external_references: BTreeSet::new(),
+        tdz_references: BTreeSet::new(),
     };
     let mut scopes: Vec<Scope> = Vec::new();
 
@@ -67,6 +70,7 @@ pub(super) fn scan_javascript_symbol_scope(
             scopes.push(Scope {
                 is_function_scope: false,
                 bindings: Vec::new(),
+                initializing_names: BTreeSet::new(),
             });
             if let Some(body) = javascript_class_body(symbol_node) {
                 walk_javascript_node(body, source, &mut scopes, &mut scan, deadline)?;
@@ -211,6 +215,7 @@ fn walk_javascript_block(
     scopes.push(Scope {
         is_function_scope: false,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     });
     {
         let scope = scopes
@@ -342,6 +347,7 @@ fn walk_javascript_class(
     scopes.push(Scope {
         is_function_scope: false,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     });
     if let Some(body) = javascript_class_body(node) {
         walk_javascript_node(body, source, scopes, scan, deadline)?;
@@ -357,9 +363,6 @@ fn walk_javascript_declaration(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // `var` is function-scoped; `let`/`const` are block-scoped. Bind into the
-    // target scope but still walk initializer values in the current block
-    // scope, matching JavaScript evaluation semantics conservatively.
     let is_var = node.kind() == "variable_declaration";
     let mut cursor = node.walk();
     let declarators = node
@@ -374,31 +377,126 @@ fn walk_javascript_declaration(
     let Some(target_index) = target_index else {
         return Ok(());
     };
-    let mut deferred = Vec::new();
-    {
-        let target_scope = &mut scopes[target_index];
-        for declarator in &declarators {
-            let mut defaults = Vec::new();
-            if let Some(name_node) = declarator.child_by_field_name("name") {
-                collect_javascript_pattern_bindings(
-                    name_node,
-                    source,
-                    "variable_declarator",
-                    target_scope,
-                    scan,
-                    &mut defaults,
-                )?;
+
+    if is_var {
+        let mut deferred = Vec::new();
+        {
+            let target_scope = &mut scopes[target_index];
+            for declarator in &declarators {
+                let mut defaults = Vec::new();
+                if let Some(name_node) = declarator.child_by_field_name("name") {
+                    collect_javascript_pattern_bindings(
+                        name_node,
+                        source,
+                        "variable_declarator",
+                        target_scope,
+                        scan,
+                        &mut defaults,
+                    )?;
+                }
+                deferred.push((defaults, declarator.child_by_field_name("value")));
             }
-            deferred.push((defaults, declarator.child_by_field_name("value")));
         }
+        for (defaults, value) in deferred {
+            for default in defaults {
+                walk_javascript_node(default, source, scopes, scan, deadline)?;
+            }
+            if let Some(value) = value {
+                walk_javascript_node(value, source, scopes, scan, deadline)?;
+            }
+        }
+        return Ok(());
     }
-    for (defaults, value) in deferred {
+
+    // Lexical bindings exist for the entire declaration, but they remain in
+    // the temporal dead zone until each declarator initializer completes.
+    // Keep their names separate from visible bindings while walking defaults
+    // and values, then expose every declarator in source order.
+    let mut pending = Vec::new();
+    let mut initializing_names = BTreeSet::new();
+    for declarator in declarators {
+        let Some(name_node) = declarator.child_by_field_name("name") else {
+            continue;
+        };
+        let mut names = BTreeSet::new();
+        let mut defaults = Vec::new();
+        collect_javascript_pattern_initialization(name_node, source, &mut names, &mut defaults)?;
+        initializing_names.extend(names.iter().cloned());
+        pending.push((
+            name_node,
+            names,
+            defaults,
+            declarator.child_by_field_name("value"),
+        ));
+    }
+    scopes[target_index]
+        .initializing_names
+        .extend(initializing_names);
+
+    for (name_node, names, defaults, value) in pending {
         for default in defaults {
             walk_javascript_node(default, source, scopes, scan, deadline)?;
         }
         if let Some(value) = value {
             walk_javascript_node(value, source, scopes, scan, deadline)?;
         }
+        let target_scope = &mut scopes[target_index];
+        for name in names {
+            target_scope.initializing_names.remove(&name);
+        }
+        let mut ignored_defaults = Vec::new();
+        collect_javascript_pattern_bindings(
+            name_node,
+            source,
+            "variable_declarator",
+            target_scope,
+            scan,
+            &mut ignored_defaults,
+        )?;
+    }
+    Ok(())
+}
+
+fn collect_javascript_pattern_initialization<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    defaults: &mut Vec<Node<'tree>>,
+) -> Result<()> {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            let name = node_text(node, source)?.trim().to_string();
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+        "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                collect_javascript_pattern_initialization(left, source, names, defaults)?;
+            }
+            if let Some(right) = node.child_by_field_name("right") {
+                defaults.push(right);
+            }
+        }
+        "rest_pattern" | "array_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_javascript_pattern_initialization(child, source, names, defaults)?;
+            }
+        }
+        "object_pattern" => {
+            let mut cursor = node.walk();
+            for member in node.named_children(&mut cursor) {
+                if member.kind() == "pair_pattern" {
+                    if let Some(value) = member.child_by_field_name("value") {
+                        collect_javascript_pattern_initialization(value, source, names, defaults)?;
+                    }
+                } else {
+                    collect_javascript_pattern_initialization(member, source, names, defaults)?;
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -446,6 +544,7 @@ fn walk_javascript_for_in(
     scopes.push(Scope {
         is_function_scope: false,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     });
     if let Some(left) = node.child_by_field_name("left") {
         if matches!(left.kind(), "lexical_declaration" | "variable_declaration") {
@@ -485,6 +584,7 @@ fn walk_javascript_for_statement(
     scopes.push(Scope {
         is_function_scope: false,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     });
     walk_javascript_children(node, source, scopes, scan, deadline)?;
     scopes.pop();
@@ -501,6 +601,7 @@ fn walk_javascript_catch(
     scopes.push(Scope {
         is_function_scope: false,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     });
     if let Some(parameter) = node.child_by_field_name("parameter") {
         let mut defaults = Vec::new();
@@ -552,15 +653,25 @@ fn record_javascript_reference(
     if name.is_empty() {
         return Ok(());
     }
-    let visible = scopes
-        .iter()
-        .rev()
-        .any(|scope| scope.bindings.iter().any(|binding| binding.name == name));
-    if visible {
-        scan.local_references.insert(name);
-    } else {
-        scan.external_references.insert(name);
+    let mut crossed_function_scope = false;
+    for scope in scopes.iter().rev() {
+        if scope.initializing_names.contains(&name) {
+            if crossed_function_scope {
+                // A nested callable captures the binding after its initializer
+                // completes, so it does not read through the temporal dead zone.
+                scan.local_references.insert(name);
+            } else {
+                scan.tdz_references.insert(name);
+            }
+            return Ok(());
+        }
+        if scope.bindings.iter().any(|binding| binding.name == name) {
+            scan.local_references.insert(name);
+            return Ok(());
+        }
+        crossed_function_scope |= scope.is_function_scope;
     }
+    scan.external_references.insert(name);
     Ok(())
 }
 
@@ -583,6 +694,7 @@ fn collect_javascript_callable_bindings<'tree>(
     let mut scope = Scope {
         is_function_scope: true,
         bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
     };
     let mut defaults = Vec::new();
     // A named function expression binds its own name inside its scope.

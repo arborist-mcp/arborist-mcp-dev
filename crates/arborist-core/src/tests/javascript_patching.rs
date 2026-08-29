@@ -547,6 +547,60 @@ fn javascript_patch_binding_validation_rejects_nested_function_var_scope_escapes
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_lexical_tdz_references() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = helper(value);
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .all(|binding| binding.name != "helper"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_lexical_bindings_captured_by_initializers() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = () => helper;
+    return helper();
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_references_outside_nested_block_scope() {
     let source = r#"function compute(value) {
     return value;
