@@ -23,6 +23,9 @@ pub(crate) fn persist_symbol_index(
         deadline.check("opening symbol index database")?;
     }
     let connection = Connection::open(db_path)?;
+    if let Some(deadline) = deadline {
+        deadline.check("preparing symbol index schema")?;
+    }
     ensure_symbol_tables(&connection)?;
 
     let tx = connection.unchecked_transaction()?;

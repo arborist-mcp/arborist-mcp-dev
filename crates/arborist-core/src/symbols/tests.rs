@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
+use crate::deadline::DeadlineCheck;
 use crate::index_schema::ensure_symbol_tables;
 use crate::index_store::{
     SymbolRefreshPersistence, load_file_states, persist_symbol_index, persist_symbol_refresh,
@@ -17,6 +18,27 @@ use crate::symbol_index_workspace::transitive_local_file_dependents;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct FailOnSecondDeadlineCheck {
+    checks: std::sync::atomic::AtomicUsize,
+}
+
+impl FailOnSecondDeadlineCheck {
+    fn new() -> Self {
+        Self {
+            checks: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl DeadlineCheck for FailOnSecondDeadlineCheck {
+    fn check(&self, phase: &str) -> anyhow::Result<()> {
+        if self.checks.fetch_add(1, Ordering::Relaxed) >= 1 {
+            anyhow::bail!("deadline expired during {phase}");
+        }
+        Ok(())
+    }
+}
 
 #[test]
 fn persisted_byte_range_rejects_inverted_ranges() {
@@ -254,6 +276,55 @@ fn persist_symbol_refresh_checks_expired_deadline_before_writes() {
             .contains("workspace scan timeout exceeded")
     );
     assert_eq!(indexed_files_metadata(&db_path), "7");
+}
+
+#[test]
+fn persistence_checks_deadline_before_initializing_schema() {
+    let dir = temporary_dir();
+    let workspace = dir.join("workspace");
+    let refresh_db_path = dir.join("refresh.db");
+    let rebuild_db_path = dir.join("rebuild.db");
+    let rebuild_deadline = FailOnSecondDeadlineCheck::new();
+    let refresh_deadline = FailOnSecondDeadlineCheck::new();
+
+    persist_symbol_index(
+        &rebuild_db_path,
+        &workspace,
+        &[],
+        &[],
+        &[],
+        0,
+        Some(&rebuild_deadline),
+    )
+    .expect_err("rebuild persistence should stop before schema setup");
+    persist_symbol_refresh(SymbolRefreshPersistence {
+        db_path: &refresh_db_path,
+        workspace_root: &workspace,
+        raw_symbols: &[],
+        symbols: &[],
+        resolved_symbols_by_id: &BTreeMap::new(),
+        file_states: &BTreeMap::new(),
+        changed_file_paths: &BTreeSet::new(),
+        impacted_paths: &BTreeSet::new(),
+        indexed_files: 0,
+        deadline: Some(&refresh_deadline),
+    })
+    .expect_err("refresh persistence should stop before schema setup");
+
+    for db_path in [&rebuild_db_path, &refresh_db_path] {
+        let connection = Connection::open(db_path).unwrap();
+        let symbol_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('symbols', 'file_state', 'index_metadata')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            symbol_tables, 0,
+            "schema should not be initialized for {db_path:?}"
+        );
+    }
 }
 
 #[test]

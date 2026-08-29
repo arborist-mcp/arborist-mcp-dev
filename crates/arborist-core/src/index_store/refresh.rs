@@ -29,6 +29,9 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         deadline.check("opening symbol index database")?;
     }
     let connection = Connection::open(context.db_path)?;
+    if let Some(deadline) = context.deadline {
+        deadline.check("preparing symbol index schema")?;
+    }
     ensure_symbol_tables(&connection)?;
 
     let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols)?;
