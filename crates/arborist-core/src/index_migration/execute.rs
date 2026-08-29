@@ -7,8 +7,8 @@ use crate::deadline::DeadlineCheck;
 use crate::index_schema::{
     ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
     OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
-    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
-    load_optional_metadata_value, load_symbol_index_workspace_root,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata_with_deadline,
+    load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root_with_deadline,
     migrate_symbol_index_schema_to_current_with_deadline,
     require_legacy_symbol_index_schema_with_deadline,
     require_older_symbol_index_schema_with_deadline,
@@ -44,12 +44,13 @@ fn migrate_symbol_index_inner(
     require_symbol_index_tables_with_deadline(connection, db_path, deadline)?;
     check_optional_deadline(deadline, "loading symbol index schema version")?;
     let stored_version =
-        load_optional_metadata_value(connection, "schema_version")?.ok_or_else(|| {
-            anyhow!(
-                "missing schema_version metadata in symbol index {}",
-                db_path.display()
-            )
-        })?;
+        load_optional_metadata_value_with_deadline(connection, "schema_version", deadline)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "missing schema_version metadata in symbol index {}",
+                    db_path.display()
+                )
+            })?;
 
     if !is_migratable_symbol_index_schema_version(&stored_version) {
         bail!(
@@ -72,9 +73,9 @@ fn migrate_symbol_index_inner(
         require_oldest_symbol_index_schema_with_deadline(connection, db_path, deadline)?;
     }
     check_optional_deadline(deadline, "validating legacy symbol index schema")?;
-    load_symbol_index_workspace_root(connection, db_path)?;
+    load_symbol_index_workspace_root_with_deadline(connection, db_path, deadline)?;
     check_optional_deadline(deadline, "loading legacy indexed workspace")?;
-    load_indexed_files_metadata(connection)?;
+    load_indexed_files_metadata_with_deadline(connection, deadline)?;
     check_optional_deadline(deadline, "loading legacy indexed file count")?;
     if stored_version == PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
         match deadline {

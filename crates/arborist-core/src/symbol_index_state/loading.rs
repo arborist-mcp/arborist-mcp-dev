@@ -66,7 +66,7 @@ fn load_symbol_index_internal(
     let connection = open_symbol_index_read_only(db_path)?;
     let schema_deadline = deadline.map(|deadline| deadline as &dyn DeadlineCheck);
     require_symbol_index_tables_with_deadline(&connection, db_path, schema_deadline)?;
-    let indexed_files = load_indexed_files_metadata_with_deadline(&connection, deadline)?;
+    let indexed_files = load_indexed_files_metadata_with_deadline(&connection, schema_deadline)?;
     validate_symbol_index_schema_version_with_deadline(&connection, db_path, schema_deadline)?;
     require_current_symbol_index_schema_with_deadline(&connection, db_path, schema_deadline)?;
     validate_symbol_index_analysis_provenance_with_deadline(&connection, db_path, schema_deadline)?;
@@ -95,7 +95,7 @@ fn load_symbol_index_internal(
     }
     validate_indexed_file_count(indexed_files, file_states.len())?;
     let workspace_root =
-        load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
+        load_symbol_index_workspace_root_with_deadline(&connection, db_path, schema_deadline)?;
     validate_persisted_index_paths_with_overrides_and_deadline(
         &workspace_root,
         &file_states,
@@ -155,7 +155,7 @@ fn load_symbol_index_with_overrides_internal(
     require_current_symbol_index_schema_with_deadline(&connection, db_path, schema_deadline)?;
     validate_symbol_index_analysis_provenance_with_deadline(&connection, db_path, schema_deadline)?;
     let workspace_root =
-        load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
+        load_symbol_index_workspace_root_with_deadline(&connection, db_path, schema_deadline)?;
     let normalized_file_overrides = normalize_source_overrides_for_workspace_with_deadline(
         &workspace_root,
         file_overrides,

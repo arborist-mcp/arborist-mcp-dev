@@ -84,7 +84,7 @@ fn rebuild_symbol_index_with_deadline(
             &connection,
             &workspace_root,
             &db_path,
-            Some(deadline),
+            Some(deadline as &dyn DeadlineCheck),
         )?;
         load_indexed_files_metadata_with_deadline(&connection, Some(deadline))?;
         validate_symbol_index_schema_version_with_deadline(
@@ -186,7 +186,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         &connection,
         &workspace_root,
         &db_path,
-        Some(&deadline),
+        Some(&deadline as &dyn DeadlineCheck),
     )?;
     load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))?;
     validate_symbol_index_schema_version_with_deadline(

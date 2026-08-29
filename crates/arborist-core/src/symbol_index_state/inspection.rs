@@ -97,15 +97,18 @@ pub fn inspect_symbol_index_with_timeout(
         return Ok(health);
     }
 
-    health.schema_version =
-        load_optional_metadata_value_with_deadline(&connection, "schema_version", Some(&deadline))
-            .map_err(|error| {
-                anyhow!(
-                    "failed to inspect schema_version metadata in {}: {}",
-                    db_path.display(),
-                    error
-                )
-            })?;
+    health.schema_version = load_optional_metadata_value_with_deadline(
+        &connection,
+        "schema_version",
+        Some(&deadline as &dyn DeadlineCheck),
+    )
+    .map_err(|error| {
+        anyhow!(
+            "failed to inspect schema_version metadata in {}: {}",
+            db_path.display(),
+            error
+        )
+    })?;
     deadline.check("loading schema metadata")?;
     if health.schema_version.is_none() {
         health.issues.push(format!(
@@ -203,7 +206,7 @@ pub fn inspect_symbol_index_with_timeout(
     let workspace_root = match load_symbol_index_workspace_root_with_deadline(
         &connection,
         &db_path,
-        Some(&deadline),
+        Some(&deadline as &dyn DeadlineCheck),
     ) {
         Ok(workspace_root) => {
             health.workspace_root = Some(normalize_path(&workspace_root));
@@ -216,7 +219,10 @@ pub fn inspect_symbol_index_with_timeout(
     };
     deadline.check("loading indexed workspace root")?;
 
-    match load_indexed_files_metadata_with_deadline(&connection, Some(&deadline)) {
+    match load_indexed_files_metadata_with_deadline(
+        &connection,
+        Some(&deadline as &dyn DeadlineCheck),
+    ) {
         Ok(indexed_files) => health.indexed_files = Some(indexed_files),
         Err(error) => health.issues.push(error.to_string()),
     }

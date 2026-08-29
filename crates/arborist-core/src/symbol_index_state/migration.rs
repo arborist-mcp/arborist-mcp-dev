@@ -71,7 +71,7 @@ fn migrate_symbol_index_inner(
         Some(deadline) => load_optional_metadata_value_with_deadline(
             &connection,
             "schema_version",
-            Some(deadline),
+            Some(deadline as &dyn DeadlineCheck),
         )?,
         None => load_optional_metadata_value(&connection, "schema_version")?,
     };

@@ -198,7 +198,10 @@ pub(crate) fn load_resolved_symbols_with_deadline(
     connection: &Connection,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
-    let indexed_files = load_indexed_files_metadata_with_deadline(connection, deadline)?;
+    let indexed_files = load_indexed_files_metadata_with_deadline(
+        connection,
+        deadline.map(|deadline| deadline as &dyn crate::deadline::DeadlineCheck),
+    )?;
 
     let mut statement = connection.prepare(
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,

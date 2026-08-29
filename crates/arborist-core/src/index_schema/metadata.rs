@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{builtin_language_registry, normalize_absolute_path, normalize_path};
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 use super::schema::SYMBOL_INDEX_SCHEMA_VERSION;
 
@@ -126,11 +125,9 @@ pub(crate) fn load_symbol_index_workspace_root(
 pub(crate) fn load_symbol_index_workspace_root_with_deadline(
     connection: &Connection,
     db_path: &Path,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<PathBuf> {
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed workspace root")?;
-    }
+    check_deadline(deadline, "loading indexed workspace root")?;
     let Some(stored_workspace) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = 'workspace_root'",
@@ -144,9 +141,7 @@ pub(crate) fn load_symbol_index_workspace_root_with_deadline(
             db_path.display()
         ));
     };
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed workspace root")?;
-    }
+    check_deadline(deadline, "loading indexed workspace root")?;
 
     let stored_workspace_path = Path::new(&stored_workspace);
     if !stored_workspace_path.is_absolute() {
@@ -158,9 +153,7 @@ pub(crate) fn load_symbol_index_workspace_root_with_deadline(
     }
 
     let normalized_workspace = normalize_absolute_path(stored_workspace_path)?;
-    if let Some(deadline) = deadline {
-        deadline.check("validating indexed workspace root")?;
-    }
+    check_deadline(deadline, "validating indexed workspace root")?;
     if normalize_path(&normalized_workspace) != stored_workspace {
         return Err(anyhow!(
             "workspace_root metadata in symbol index {} is not a normalized absolute path: {}",
@@ -222,19 +215,15 @@ pub(crate) fn load_optional_metadata_value(
 pub(crate) fn load_optional_metadata_value_with_deadline(
     connection: &Connection,
     key: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<String>> {
-    if let Some(deadline) = deadline {
-        deadline.check("loading index metadata")?;
-    }
+    check_deadline(deadline, "loading index metadata")?;
     let value = connection
         .query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
             row.get::<_, String>(0)
         })
         .optional()?;
-    if let Some(deadline) = deadline {
-        deadline.check("loading index metadata")?;
-    }
+    check_deadline(deadline, "loading index metadata")?;
     Ok(value)
 }
 
@@ -242,7 +231,7 @@ pub(crate) fn validate_symbol_index_workspace_with_deadline(
     connection: &Connection,
     workspace_root: &Path,
     db_path: &Path,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let expected_workspace = normalize_path(workspace_root);
     let stored_workspace =
@@ -258,23 +247,15 @@ pub(crate) fn validate_symbol_index_workspace_with_deadline(
         ));
     }
 
-    if let Some(deadline) = deadline {
-        deadline.check("validating indexed workspace")?;
-    }
+    check_deadline(deadline, "validating indexed workspace")?;
     Ok(())
-}
-
-pub(crate) fn load_indexed_files_metadata(connection: &Connection) -> Result<usize> {
-    load_indexed_files_metadata_with_deadline(connection, None)
 }
 
 pub(crate) fn load_indexed_files_metadata_with_deadline(
     connection: &Connection,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<usize> {
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed file metadata")?;
-    }
+    check_deadline(deadline, "loading indexed file metadata")?;
     let Some(value) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = 'indexed_files'",
@@ -289,9 +270,7 @@ pub(crate) fn load_indexed_files_metadata_with_deadline(
     let indexed_files = value
         .parse::<usize>()
         .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))?;
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed file metadata")?;
-    }
+    check_deadline(deadline, "loading indexed file metadata")?;
     Ok(indexed_files)
 }
 
@@ -302,6 +281,7 @@ mod tests {
 
     use rusqlite::Connection;
 
+    use crate::deadline::DeadlineCheck;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
     use super::{
@@ -318,8 +298,11 @@ mod tests {
             timeout_ms: Some(1),
         };
 
-        let error = load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))
-            .expect_err("expired deadline should stop before metadata loading");
+        let error = load_indexed_files_metadata_with_deadline(
+            &connection,
+            Some(&deadline as &dyn DeadlineCheck),
+        )
+        .expect_err("expired deadline should stop before metadata loading");
 
         assert!(
             error
