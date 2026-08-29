@@ -43,6 +43,12 @@ pub(crate) fn collect_go_reference_validation_with_deadline(
 
     let mut validation = ReferenceValidation::default();
     for name in &scope_scan.local_references {
+        // The validation report has one decision per identifier spelling. When
+        // the spelling also appears outside the local binding's scope, validate
+        // the external reference instead of accepting every site as local.
+        if scope_scan.external_references.contains(name) {
+            continue;
+        }
         let Some(binding) = scope_scan
             .local_bindings
             .iter()

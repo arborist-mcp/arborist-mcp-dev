@@ -701,6 +701,33 @@ fn go_patch_binding_validation_resolves_scoped_patterns_guards_and_closures() {
 }
 
 #[test]
+fn go_patch_binding_validation_rejects_references_outside_nested_block_scope() {
+    let source = "package sample
+
+func compute(value int) int {
+	return value
+}
+";
+    let result = patch_ast_node(
+        Path::new("sample.go"),
+        source,
+        "compute",
+        "func compute(value int) int {
+	{
+		helper := value + 1
+		_ = helper
+	}
+	return helper
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn go_patch_binding_validation_resolves_method_bodies_without_member_checks() {
     let source = r#"package sample
 
