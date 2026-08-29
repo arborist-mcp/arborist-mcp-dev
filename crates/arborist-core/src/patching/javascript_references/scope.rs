@@ -26,6 +26,9 @@ pub(super) struct JavaScriptScopeScan {
 /// `let`/`const` bind to the innermost block scope.
 struct Scope {
     is_function_scope: bool,
+    // Callable bodies usually defer evaluation until after the initializer
+    // completes. Directly invoked function expressions are the exception.
+    defers_tdz_references: bool,
     bindings: Vec<JavaScriptBinding>,
     initializing_names: BTreeSet<String>,
 }
@@ -53,7 +56,7 @@ pub(super) fn scan_javascript_symbol_scope(
 
     match symbol_node.kind() {
         "function_declaration" | "generator_function_declaration" | "method_definition" => {
-            walk_javascript_function(symbol_node, source, &mut scopes, &mut scan, deadline)?;
+            walk_javascript_function(symbol_node, source, &mut scopes, &mut scan, false, deadline)?;
         }
         // A callable variable declarator (`const f = (...) => ...`) is the
         // patched symbol; validate the callable's parameters and body.
@@ -61,7 +64,7 @@ pub(super) fn scan_javascript_symbol_scope(
             if let Some(value) = symbol_node.child_by_field_name("value")
                 && matches!(value.kind(), "arrow_function" | "function_expression")
             {
-                walk_javascript_function(value, source, &mut scopes, &mut scan, deadline)?;
+                walk_javascript_function(value, source, &mut scopes, &mut scan, false, deadline)?;
             } else {
                 walk_javascript_children(symbol_node, source, &mut scopes, &mut scan, deadline)?;
             }
@@ -69,6 +72,7 @@ pub(super) fn scan_javascript_symbol_scope(
         "class_declaration" | "abstract_class_declaration" => {
             scopes.push(Scope {
                 is_function_scope: false,
+                defers_tdz_references: false,
                 bindings: Vec::new(),
                 initializing_names: BTreeSet::new(),
             });
@@ -115,7 +119,9 @@ fn walk_javascript_node(
         | "generator_function_declaration"
         | "function_expression"
         | "arrow_function"
-        | "method_definition" => walk_javascript_function(node, source, scopes, scan, deadline),
+        | "method_definition" => {
+            walk_javascript_function(node, source, scopes, scan, false, deadline)
+        }
         "class_declaration" | "abstract_class_declaration" => {
             walk_javascript_class(node, source, scopes, scan, deadline)
         }
@@ -145,6 +151,7 @@ fn walk_javascript_node(
         | "function_signature"
         | "method_signature"
         | "abstract_method_signature" => Ok(()),
+        "call_expression" => walk_javascript_call_expression(node, source, scopes, scan, deadline),
         "member_expression" | "subscript_expression" | "optional_chain" => {
             if let Some(object) = node.child_by_field_name("object") {
                 walk_javascript_node(object, source, scopes, scan, deadline)?;
@@ -214,6 +221,7 @@ fn walk_javascript_block(
 ) -> Result<()> {
     scopes.push(Scope {
         is_function_scope: false,
+        defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -251,6 +259,7 @@ fn walk_javascript_function(
     source: &str,
     scopes: &mut Vec<Scope>,
     scan: &mut JavaScriptScopeScan,
+    immediately_invoked: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     // Block-scoped function declarations are hoisted before their enclosing
@@ -264,7 +273,8 @@ fn walk_javascript_function(
     {
         bind_javascript_function_declaration_name(node, source, enclosing, scan)?;
     }
-    let (function_scope, defaults) = collect_javascript_callable_bindings(node, source, scan)?;
+    let (function_scope, defaults) =
+        collect_javascript_callable_bindings(node, source, scan, !immediately_invoked)?;
     scopes.push(function_scope);
     for default in defaults {
         walk_javascript_node(default, source, scopes, scan, deadline)?;
@@ -346,6 +356,7 @@ fn walk_javascript_class(
     }
     scopes.push(Scope {
         is_function_scope: false,
+        defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -543,6 +554,7 @@ fn walk_javascript_for_in(
 ) -> Result<()> {
     scopes.push(Scope {
         is_function_scope: false,
+        defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -583,6 +595,7 @@ fn walk_javascript_for_statement(
 ) -> Result<()> {
     scopes.push(Scope {
         is_function_scope: false,
+        defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -600,6 +613,7 @@ fn walk_javascript_catch(
 ) -> Result<()> {
     scopes.push(Scope {
         is_function_scope: false,
+        defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -622,6 +636,45 @@ fn walk_javascript_catch(
     }
     scopes.pop();
     Ok(())
+}
+
+fn walk_javascript_call_expression(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(function) = node.child_by_field_name("function") {
+        if let Some(callable) = javascript_immediately_invoked_callable(function) {
+            walk_javascript_function(callable, source, scopes, scan, true, deadline)?;
+        } else {
+            walk_javascript_node(function, source, scopes, scan, deadline)?;
+        }
+    }
+    if let Some(arguments) = node.child_by_field_name("arguments") {
+        walk_javascript_node(arguments, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+
+/// Returns a function expression that is evaluated immediately because it is
+/// the callee of a direct call. Parentheses and TypeScript value-level casts do
+/// not defer the invocation.
+fn javascript_immediately_invoked_callable(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "arrow_function" | "function_expression" => Some(node),
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .next()
+                .and_then(javascript_immediately_invoked_callable)
+        }
+        "as_expression" | "satisfies_expression" => node
+            .child_by_field_name("left")
+            .and_then(javascript_immediately_invoked_callable),
+        _ => None,
+    }
 }
 
 fn walk_javascript_jsx_element(
@@ -653,12 +706,13 @@ fn record_javascript_reference(
     if name.is_empty() {
         return Ok(());
     }
-    let mut crossed_function_scope = false;
+    let mut crossed_deferred_callable = false;
     for scope in scopes.iter().rev() {
         if scope.initializing_names.contains(&name) {
-            if crossed_function_scope {
-                // A nested callable captures the binding after its initializer
-                // completes, so it does not read through the temporal dead zone.
+            if crossed_deferred_callable {
+                // A deferred nested callable captures the binding after its
+                // initializer completes, so it does not read through the
+                // temporal dead zone.
                 scan.local_references.insert(name);
             } else {
                 scan.tdz_references.insert(name);
@@ -669,7 +723,7 @@ fn record_javascript_reference(
             scan.local_references.insert(name);
             return Ok(());
         }
-        crossed_function_scope |= scope.is_function_scope;
+        crossed_deferred_callable |= scope.defers_tdz_references;
     }
     scan.external_references.insert(name);
     Ok(())
@@ -690,9 +744,11 @@ fn collect_javascript_callable_bindings<'tree>(
     node: Node<'tree>,
     source: &str,
     scan: &mut JavaScriptScopeScan,
+    defers_tdz_references: bool,
 ) -> Result<(Scope, Vec<Node<'tree>>)> {
     let mut scope = Scope {
         is_function_scope: true,
+        defers_tdz_references,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     };

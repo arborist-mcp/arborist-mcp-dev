@@ -601,6 +601,53 @@ fn javascript_patch_binding_validation_resolves_lexical_bindings_captured_by_ini
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_immediately_invoked_lexical_captures() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = (() => helper)();
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_prior_lexical_declarators() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const first = value + 1,
+        second = first + 1;
+    return second;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_references_outside_nested_block_scope() {
     let source = r#"function compute(value) {
     return value;
