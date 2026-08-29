@@ -344,6 +344,16 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/version_consistency.py", workflow)
         self.assertIn("python scripts/tool_catalog.py --check", workflow)
 
+    def test_linux_ci_checks_tracked_files_for_whitespace_errors(self) -> None:
+        workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'git diff --check "$(git hash-object -t tree /dev/null)" HEAD',
+            workflow,
+        )
+
     def test_unix_ci_runs_rust_formatting_and_lint_checks(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
             encoding="utf-8"
