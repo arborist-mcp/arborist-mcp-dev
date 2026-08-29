@@ -112,6 +112,18 @@ fn rebuild_symbol_index_with_deadline(
     Ok(result)
 }
 
+fn refresh_source(
+    refresh_path: &Path,
+    normalized_refresh_path: &str,
+    refresh_path_overrides: &BTreeMap<String, String>,
+) -> Result<String> {
+    refresh_path_overrides
+        .get(normalized_refresh_path)
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(refresh_path))
+}
+
 pub fn refresh_symbol_index_for_file(
     workspace_root: &Path,
     db_path: &Path,
@@ -228,10 +240,11 @@ pub fn refresh_symbol_index_for_file_with_limits(
 
         if refresh_path.exists() && !skip_refresh_path {
             validate_source_file_size(refresh_path, limits)?;
-            let source = refresh_path_overrides
-                .get(&normalized_refresh_path)
-                .cloned()
-                .unwrap_or(read_source(refresh_path)?);
+            let source = refresh_source(
+                refresh_path,
+                &normalized_refresh_path,
+                &refresh_path_overrides,
+            )?;
             let document = parse_document_with_timeout(
                 refresh_path,
                 &source,
@@ -339,4 +352,22 @@ pub fn refresh_symbol_index_for_file_with_limits(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    use super::refresh_source;
+
+    #[test]
+    fn refresh_source_uses_captured_override_without_rereading_path() {
+        let overrides = BTreeMap::from([("missing.py".to_string(), "cached source".to_string())]);
+
+        let source = refresh_source(Path::new("missing.py"), "missing.py", &overrides)
+            .expect("captured source should not require the path to remain readable");
+
+        assert_eq!(source, "cached source");
+    }
 }
