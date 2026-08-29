@@ -122,7 +122,7 @@ pub(crate) fn validate_persisted_index_paths_with_overrides_and_deadline(
         file_states,
         symbols,
         file_overrides,
-        deadline,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
     )
 }
 
@@ -145,7 +145,7 @@ pub(super) fn validate_persisted_symbol_paths_with_deadline(
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
     file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut sources_by_path = BTreeMap::new();
     let mut validated_paths = BTreeSet::new();
@@ -163,12 +163,22 @@ pub(super) fn validate_persisted_symbol_paths_with_deadline(
             );
         }
         let path = Path::new(&symbol.file_path);
-        if path.exists()
+        let exists = path.exists();
+        if let Some(deadline) = deadline {
+            deadline.check("validating persisted symbol paths")?;
+        }
+        if exists
             && !file_overrides.is_some_and(|overrides| overrides.contains_key(&symbol.file_path))
         {
             let source = match sources_by_path.entry(symbol.file_path.clone()) {
                 Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => entry.insert(read_source(path)?),
+                Entry::Vacant(entry) => {
+                    let source = read_source(path);
+                    if let Some(deadline) = deadline {
+                        deadline.check("validating persisted symbol paths")?;
+                    }
+                    entry.insert(source?)
+                }
             };
             if source
                 .get(symbol.byte_range.0..symbol.byte_range.1)
@@ -332,10 +342,11 @@ mod tests {
     use super::{
         remap_file_overrides_to_persisted_paths, symbol_index_freshness_issues,
         validate_persisted_index_paths_with_overrides_and_deadline,
+        validate_persisted_symbol_paths_with_deadline,
     };
     use crate::deadline::DeadlineCheck;
-    #[cfg(windows)]
     use crate::language::normalize_path;
+    use crate::model::SymbolMeta;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
     #[cfg(windows)]
@@ -401,6 +412,57 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    struct ExpireAfterPersistedSymbolRead {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterPersistedSymbolRead {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "validating persisted symbol paths");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 2 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn persisted_symbol_path_validation_checks_deadline_after_reading_source() {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let source_path = workspace_root.join("src").join("lib.rs");
+        let file_path = normalize_path(&source_path);
+        let file_states = BTreeMap::from([(file_path.clone(), 0)]);
+        let symbols = [SymbolMeta {
+            symbol_id: "test".to_owned(),
+            semantic_path: "test".to_owned(),
+            file_path,
+            node_kind: "function_item".to_owned(),
+            byte_range: (0, 1),
+            ..Default::default()
+        }];
+        let deadline = ExpireAfterPersistedSymbolRead {
+            checks: Cell::new(0),
+        };
+
+        let error = validate_persisted_symbol_paths_with_deadline(
+            workspace_root,
+            &file_states,
+            &symbols,
+            None,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after reading the persisted source");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during validating persisted symbol paths")
+        );
+        assert_eq!(deadline.checks.get(), 3);
     }
 
     #[test]

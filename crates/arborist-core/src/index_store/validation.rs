@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
+use crate::deadline::DeadlineCheck;
 use crate::model::SymbolMeta;
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn validate_resolved_symbol_edges_with_deadline(
     symbols: &[SymbolMeta],
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut symbols_by_id = BTreeMap::new();
     for symbol in symbols {

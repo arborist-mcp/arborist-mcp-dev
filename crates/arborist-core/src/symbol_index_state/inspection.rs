@@ -294,7 +294,7 @@ pub fn inspect_symbol_index_with_timeout(
                 file_states,
                 resolved_symbols,
                 None,
-                Some(&deadline),
+                Some(&deadline as &dyn DeadlineCheck),
             )
         {
             record_persisted_path_validation_error(
