@@ -32,6 +32,13 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     inspect_symbol_index_with_timeout(db_path, None)
 }
 
+fn symbol_index_exists_with_deadline(db_path: &Path, deadline: &dyn DeadlineCheck) -> Result<bool> {
+    deadline.check("checking symbol index path")?;
+    let exists = db_path.exists();
+    deadline.check("checking symbol index path")?;
+    Ok(exists)
+}
+
 pub fn inspect_symbol_index_with_timeout(
     db_path: &Path,
     timeout_ms: Option<u64>,
@@ -42,10 +49,11 @@ pub fn inspect_symbol_index_with_timeout(
     })?;
     let db_path = normalize_absolute_path(db_path)?;
     let db_path_display = normalize_path(&db_path);
+    let index_exists = symbol_index_exists_with_deadline(&db_path, &deadline)?;
     let mut health = SymbolIndexHealth {
         response_schema_version: SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION.to_string(),
         db_path: db_path_display,
-        exists: db_path.exists(),
+        exists: index_exists,
         ok: false,
         schema_version: None,
         expected_schema_version: SYMBOL_INDEX_SCHEMA_VERSION.to_string(),
@@ -366,11 +374,17 @@ fn record_unindexed_workspace_scan_error(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use anyhow::anyhow;
 
-    use super::{record_persisted_path_validation_error, record_unindexed_workspace_scan_error};
+    use super::{
+        record_persisted_path_validation_error, record_unindexed_workspace_scan_error,
+        symbol_index_exists_with_deadline,
+    };
+    use crate::deadline::DeadlineCheck;
     use crate::model::SymbolIndexHealth;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -394,6 +408,40 @@ mod tests {
             unindexed_files: Vec::new(),
             issues: Vec::new(),
         }
+    }
+
+    struct ExpireAfterSymbolIndexExistenceProbe {
+        checks: Cell<usize>,
+    }
+
+    impl DeadlineCheck for ExpireAfterSymbolIndexExistenceProbe {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "checking symbol index path");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks == 1 {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn symbol_index_existence_probe_checks_deadline_after_filesystem_work() {
+        let deadline = ExpireAfterSymbolIndexExistenceProbe {
+            checks: Cell::new(0),
+        };
+
+        let error =
+            symbol_index_exists_with_deadline(Path::new("missing-symbol-index.db"), &deadline)
+                .expect_err("an expired post-probe deadline should fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during checking symbol index path")
+        );
+        assert_eq!(deadline.checks.get(), 2);
     }
 
     #[test]
