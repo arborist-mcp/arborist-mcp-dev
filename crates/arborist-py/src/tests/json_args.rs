@@ -60,6 +60,21 @@ fn parse_json_arg_rejects_excessive_nesting() {
     assert!(error.to_string().contains("maximum nesting depth"));
 }
 #[test]
+fn parse_json_arg_rejects_empty_containers_beyond_maximum_depth() {
+    prepare_python();
+
+    let payload = format!(
+        "{}{}",
+        "[".repeat(MAX_JSON_ARG_DEPTH + 1),
+        "]".repeat(MAX_JSON_ARG_DEPTH + 1),
+    );
+
+    let error = parse_json_arg::<Value>(&payload)
+        .expect_err("empty containers beyond the depth limit should be rejected");
+    assert!(error.to_string().contains("maximum nesting depth"));
+}
+
+#[test]
 fn parse_json_arg_rejects_missing_nested_trace_fields() {
     prepare_python();
 

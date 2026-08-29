@@ -45,7 +45,7 @@ impl<'de> DeserializeSeed<'de> for DuplicateCheckedJsonSeed {
     where
         D: Deserializer<'de>,
     {
-        if self.depth > MAX_JSON_ARG_DEPTH {
+        if self.depth >= MAX_JSON_ARG_DEPTH {
             return Err(de::Error::custom(format!(
                 "JSON argument exceeds maximum nesting depth of {MAX_JSON_ARG_DEPTH}"
             )));
