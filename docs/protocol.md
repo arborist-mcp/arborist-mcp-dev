@@ -133,6 +133,7 @@ Current protocol-boundary checks include:
 - Float request IDs.
 - Invalid or wrong-shaped JSON returned by the core.
 - Invalid UTF-8 text anywhere in a tool result, including unconstrained nested fields.
+- Invalid UTF-8 text in an MCP tool error message.
 - Nulls for defaulted string parameters.
 - Negative numeric parameters.
 - Non-standard response JSON.

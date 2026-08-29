@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from arborist_mcp import gateway as gateway_module
 from arborist_mcp.batch_tools import batch_tools
+from arborist_mcp.jsonrpc import serialize_response
 from arborist_mcp.mcp_tools import tools_call
 from arborist_mcp.tool_result_schemas import JsonRpcError
 
@@ -107,6 +110,24 @@ class GatewayRuntimeToolsTestsMixin:
         self.assertTrue(result["isError"])
         self.assertNotIn("structuredContent", result)
         self.assertIn("Out of range float values", result["content"][0]["text"])
+
+    def test_tools_call_preserves_mcp_error_for_invalid_utf8_error_text(self) -> None:
+        result = tools_call(
+            {
+                "name": "arborist/get_semantic_skeleton",
+                "arguments": {},
+            },
+            lambda _tool_name, _arguments: (_ for _ in ()).throw(
+                ValueError("backend failed: caf\u00e9 \ud800")
+            ),
+        )
+
+        self.assertTrue(result["isError"])
+        self.assertEqual(result["content"][0]["text"], "backend failed: caf\u00e9 \\ud800")
+        payload = serialize_response({"jsonrpc": "2.0", "id": 1, "result": result})
+        decoded = json.loads(payload)
+        self.assertTrue(decoded["result"]["isError"])
+        self.assertEqual(decoded["result"]["content"][0]["text"], "backend failed: caf\u00e9 \\ud800")
 
     def test_tools_call_rejects_invalid_utf8_result_text(self) -> None:
         result = tools_call(
