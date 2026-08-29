@@ -477,6 +477,85 @@ namespace Demo.Other {
 }
 
 #[test]
+fn csharp_patch_binding_validation_prefers_nearest_alias_and_rejects_ambiguous_aliases() {
+    let shadowing_source = r#"using Alias = Demo.Tools.RootToolbox;
+
+namespace Demo.Tools {
+    public class RootToolbox {}
+    public class ScopedToolbox {}
+}
+
+namespace Demo {
+    using Alias = Demo.Tools.ScopedToolbox;
+
+    namespace Core {
+        public class Counter {
+            public int Compute(int value) {
+                return value;
+            }
+        }
+    }
+}
+"#;
+    let shadowing = patch_ast_node(
+        Path::new("Main.cs"),
+        shadowing_source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return Alias.Run(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(shadowing.applied, "{shadowing:#?}");
+    assert!(
+        shadowing
+            .validation
+            .binding_decisions
+            .iter()
+            .find(|decision| decision.name == "Alias")
+            .and_then(|decision| decision.selected_symbol_id.as_deref())
+            .is_some_and(|symbol_id| {
+                symbol_id.contains("::Demo::using_directive::Alias")
+                    && !symbol_id.contains("::<module>::using_directive::Alias")
+            }),
+        "{shadowing:#?}"
+    );
+
+    let ambiguous_source = r#"namespace Demo.Tools {
+    public class Toolbox {}
+}
+
+namespace Demo {
+    using Alias = Demo.Tools.Toolbox;
+    using Alias = Demo.Tools.Toolbox;
+
+    namespace Core {
+        public class Counter {
+            public int Compute(int value) {
+                return value;
+            }
+        }
+    }
+}
+"#;
+    let ambiguous = patch_ast_node(
+        Path::new("Main.cs"),
+        ambiguous_source,
+        "Demo::Core::Counter::Compute",
+        "public int Compute(int value) {
+    return Alias.Run(value);
+}",
+        None,
+    )
+    .unwrap();
+
+    assert!(!ambiguous.applied, "{ambiguous:#?}");
+    assert_eq!(ambiguous.validation.unresolved_identifiers, ["Alias"]);
+}
+
+#[test]
 fn rejects_csharp_method_patch_with_unresolved_identifier() {
     let source = r#"namespace Demo.Core {
     public class Counter {
