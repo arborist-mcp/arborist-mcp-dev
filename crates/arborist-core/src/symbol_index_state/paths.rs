@@ -218,6 +218,30 @@ pub(crate) fn unindexed_workspace_files(
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
+    let mut indexed_path_identities = BTreeSet::new();
+    for file_path in file_states.keys() {
+        if let Some(deadline) = deadline {
+            deadline.check("preparing indexed file identities")?;
+        }
+        if !indexed_path_identities.insert(path_identity(file_path)) {
+            bail!(
+                "persisted index contains multiple case-insensitive file_state paths for {file_path}"
+            );
+        }
+    }
+
+    let mut override_path_identities = BTreeSet::new();
+    if let Some(file_overrides) = file_overrides {
+        for file_path in file_overrides.keys() {
+            if let Some(deadline) = deadline {
+                deadline.check("preparing indexed file identities")?;
+            }
+            if !override_path_identities.insert(path_identity(file_path)) {
+                bail!("source overlay contains duplicate file path {file_path}");
+            }
+        }
+    }
+
     let max_files = file_states
         .len()
         .saturating_add(DEFAULT_WORKSPACE_MAX_FILES)
@@ -233,8 +257,9 @@ pub(crate) fn unindexed_workspace_files(
             deadline.check("filtering unindexed workspace files")?;
         }
         let path = normalize_path(&path);
-        if !file_states.contains_key(&path)
-            && !file_overrides.is_some_and(|overrides| overrides.contains_key(&path))
+        let path_identity = path_identity(&path);
+        if !indexed_path_identities.contains(&path_identity)
+            && !override_path_identities.contains(&path_identity)
         {
             unindexed.push(path);
         }
@@ -286,13 +311,70 @@ pub(crate) fn symbol_index_freshness_issues(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    #[cfg(windows)]
+    use std::fs;
     use std::time::{Duration, Instant};
+    #[cfg(windows)]
+    use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[cfg(windows)]
+    use super::unindexed_workspace_files;
     use super::{
         remap_file_overrides_to_persisted_paths, symbol_index_freshness_issues,
         validate_persisted_index_paths_with_overrides_and_deadline,
     };
+    #[cfg(windows)]
+    use crate::language::normalize_path;
     use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[cfg(windows)]
+    #[test]
+    fn unindexed_workspace_files_reuses_case_insensitive_persisted_identity() {
+        let workspace = temporary_dir("case-insensitive-indexed-file");
+        let scanned_path = workspace.join("helper.py");
+        let persisted_path = workspace.join("Helper.py");
+        fs::write(&scanned_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let file_states = BTreeMap::from([(normalize_path(&persisted_path), 0)]);
+        let unindexed = unindexed_workspace_files(&workspace, &file_states, None, None)
+            .expect("case-variant persisted file state should cover scanned file");
+
+        assert!(unindexed.is_empty());
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unindexed_workspace_files_rejects_duplicate_persisted_identities() {
+        let workspace = temporary_dir("duplicate-indexed-identities");
+        let lower = normalize_path(&workspace.join("helper.py"));
+        let upper = normalize_path(&workspace.join("Helper.py"));
+        let file_states = BTreeMap::from([(lower, 0), (upper, 0)]);
+
+        let error = unindexed_workspace_files(&workspace, &file_states, None, None)
+            .expect_err("duplicate Windows persisted identities should fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("multiple case-insensitive file_state paths")
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn temporary_dir(label: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "arborist-persisted-paths-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     #[test]
     fn freshness_checks_reject_expired_deadline_before_reading_files() {
