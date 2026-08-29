@@ -8,7 +8,10 @@ use crate::language::{
     path_identity, read_source,
 };
 use crate::model::SymbolMeta;
-use crate::source_overlay::normalize_source_overrides_for_workspace;
+use crate::source_overlay::{
+    normalize_source_overrides_for_workspace,
+    normalize_source_overrides_for_workspace_with_deadline,
+};
 use crate::symbol_dependency::{
     assign_symbol_ids, assign_symbol_ids_with_deadline, resolve_symbol_dependencies,
     resolve_symbol_dependencies_with_overrides,
@@ -94,14 +97,19 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     file_overrides: &BTreeMap<String, String>,
     timeout_ms: Option<u64>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_overrides =
-        normalize_source_overrides_for_workspace(&workspace_root, file_overrides, "workspace")?;
     let limits = WorkspaceScanLimits {
         timeout_ms,
         ..WorkspaceScanLimits::default()
     };
     let deadline = WorkspaceScanDeadline::new(limits)?;
+    deadline.check("normalizing workspace source overlays")?;
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_overrides = normalize_source_overrides_for_workspace_with_deadline(
+        &workspace_root,
+        file_overrides,
+        "workspace",
+        Some(&deadline),
+    )?;
     let mut indexed_paths = collect_source_files_with_deadline(&workspace_root, limits, &deadline)?;
     let file_overrides =
         remap_overrides_to_indexed_paths_with_deadline(&indexed_paths, &file_overrides, &deadline)?;

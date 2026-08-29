@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::language;
 use crate::workspace_scan::should_skip_index_path;
 
@@ -11,10 +12,31 @@ pub(crate) fn normalize_source_overrides_for_workspace(
     file_overrides: &BTreeMap<String, String>,
     workspace_description: &str,
 ) -> Result<BTreeMap<String, String>> {
+    normalize_source_overrides_for_workspace_with_deadline(
+        workspace_root,
+        file_overrides,
+        workspace_description,
+        None,
+    )
+}
+
+pub(crate) fn normalize_source_overrides_for_workspace_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    workspace_description: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeMap<String, String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("normalizing source overlays")?;
+    }
+
     let mut normalized_overrides = BTreeMap::new();
     let mut duplicate_keys = BTreeSet::new();
 
     for (file_path, source) in file_overrides {
+        if let Some(deadline) = deadline {
+            deadline.check("normalizing source overlays")?;
+        }
         let file_path = language::normalize_absolute_path(Path::new(file_path))?;
         if !language::path_is_inside_workspace(workspace_root, &file_path)? {
             bail!(
@@ -48,6 +70,9 @@ pub(crate) fn normalize_source_overrides_for_workspace(
         normalized_overrides.insert(normalized_path, source.clone());
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("normalizing source overlays")?;
+    }
     Ok(normalized_overrides)
 }
 
@@ -55,9 +80,35 @@ pub(crate) fn normalize_source_overrides_for_workspace(
 mod tests {
     use std::collections::BTreeMap;
     use std::env;
+    use std::time::{Duration, Instant};
 
-    use super::normalize_source_overrides_for_workspace;
+    use super::{
+        normalize_source_overrides_for_workspace,
+        normalize_source_overrides_for_workspace_with_deadline,
+    };
     use crate::language::normalize_absolute_path;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[test]
+    fn rejects_expired_deadline_before_normalizing_source_overlays() {
+        let workspace = normalize_absolute_path(&env::current_dir().unwrap()).unwrap();
+        let file_path = workspace.join("deadline_overlay.py");
+        let overrides = BTreeMap::from([(file_path.to_string_lossy().into_owned(), String::new())]);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = normalize_source_overrides_for_workspace_with_deadline(
+            &workspace,
+            &overrides,
+            "workspace",
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop source-overlay normalization");
+
+        assert!(error.to_string().contains("normalizing source overlays"));
+    }
 
     #[test]
     fn rejects_duplicate_normalized_overlay_paths() {

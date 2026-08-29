@@ -7,7 +7,10 @@ use crate::language;
 
 mod validation;
 
-pub(crate) use validation::normalize_source_overrides_for_workspace;
+pub(crate) use validation::{
+    normalize_source_overrides_for_workspace,
+    normalize_source_overrides_for_workspace_with_deadline,
+};
 
 pub(crate) fn source_override_for_path(
     path: &Path,

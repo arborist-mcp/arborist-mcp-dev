@@ -15,7 +15,7 @@ use crate::index_store::{
 };
 use crate::language::{normalize_path, parse_document, parse_document_with_timeout};
 use crate::model::SymbolMeta;
-use crate::source_overlay::normalize_source_overrides_for_workspace;
+use crate::source_overlay::normalize_source_overrides_for_workspace_with_deadline;
 use crate::symbol_dependency::{
     RefreshResolutionInputs, assign_symbol_ids, assign_symbol_ids_with_deadline,
     materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
@@ -151,10 +151,11 @@ fn load_symbol_index_with_overrides_internal(
     validate_symbol_index_analysis_provenance(&connection, db_path)?;
     let workspace_root =
         load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
-    let normalized_file_overrides = normalize_source_overrides_for_workspace(
+    let normalized_file_overrides = normalize_source_overrides_for_workspace_with_deadline(
         &workspace_root,
         file_overrides,
         "indexed workspace",
+        deadline.map(|deadline| deadline as &dyn crate::deadline::DeadlineCheck),
     )?;
 
     let mut grouped_symbols = match deadline {
