@@ -38,9 +38,9 @@ struct Scope {
 /// arrow-function parameters, local `const`/`let`/`var` bindings including
 /// destructured declarations, `for`/`for-in`/`for-of` loop variables, catch
 /// parameters, and nested callable parameters) versus names that must resolve
-/// at file scope (same-file declarations and imports). Property names, object
-/// keys, labels, JSX tag and attribute names, and TypeScript type spellings
-/// are not value references and are skipped.
+/// at file scope (same-file declarations and imports). Non-computed property
+/// names and object keys, labels, JSX tag and attribute names, and TypeScript
+/// type spellings are not value references and are skipped.
 pub(super) fn scan_javascript_symbol_scope(
     symbol_node: Node<'_>,
     source: &str,
@@ -126,6 +126,12 @@ fn walk_javascript_node(
             walk_javascript_class(node, source, scopes, scan, false, deadline)
         }
         "public_field_definition" | "field_definition" => {
+            if let Some(name) = node
+                .child_by_field_name("property")
+                .or_else(|| node.child_by_field_name("name"))
+            {
+                walk_javascript_computed_property_name(name, source, scopes, scan, deadline)?;
+            }
             if let Some(value) = node.child_by_field_name("value") {
                 walk_javascript_node(value, source, scopes, scan, deadline)?;
             }
@@ -165,6 +171,9 @@ fn walk_javascript_node(
             Ok(())
         }
         "pair" => {
+            if let Some(key) = node.child_by_field_name("key") {
+                walk_javascript_computed_property_name(key, source, scopes, scan, deadline)?;
+            }
             if let Some(value) = node.child_by_field_name("value") {
                 walk_javascript_node(value, source, scopes, scan, deadline)?;
             }
@@ -197,6 +206,19 @@ fn walk_javascript_node(
             }
         }
     }
+}
+
+fn walk_javascript_computed_property_name(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if node.kind() == "computed_property_name" {
+        walk_javascript_node(node, source, scopes, scan, deadline)?;
+    }
+    Ok(())
 }
 
 fn walk_javascript_children(
@@ -263,6 +285,11 @@ fn walk_javascript_function(
     immediately_invoked: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    if node.kind() == "method_definition"
+        && let Some(name) = node.child_by_field_name("name")
+    {
+        walk_javascript_computed_property_name(name, source, scopes, scan, deadline)?;
+    }
     // Block-scoped function declarations are hoisted before their enclosing
     // block is walked. Keep this fallback for declaration contexts that do
     // not pass through the block pre-scan; the helper avoids duplicate binding

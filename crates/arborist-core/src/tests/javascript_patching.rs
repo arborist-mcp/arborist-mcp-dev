@@ -676,6 +676,113 @@ fn javascript_patch_binding_validation_rejects_lexical_captures_in_inline_class_
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_computed_method_keys() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = class {
+        [helper]() {
+            return value;
+        }
+    };
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_computed_object_keys() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = { [helper]: value };
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_lexical_references_in_computed_field_keys() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const helper = class {
+        [helper] = value;
+    };
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_initialized_computed_property_keys() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    const key = "result";
+    const helper = { [key]: value };
+    return helper[key];
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "key" && decision.status == "resolved"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn javascript_patch_binding_validation_resolves_prior_lexical_declarators() {
     let source = r#"function compute(value) {
     return value;
