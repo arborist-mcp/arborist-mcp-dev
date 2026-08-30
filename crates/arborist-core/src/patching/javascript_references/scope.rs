@@ -556,10 +556,69 @@ fn walk_javascript_function(
                 .expect("a JavaScript function scope was just pushed");
             hoist_javascript_function_var_bindings(body, source, function_scope, scan, deadline)?;
         }
-        walk_javascript_node(body, source, scopes, scan, deadline)?;
+        if immediately_invoked && javascript_callable_is_async(node) {
+            walk_javascript_immediately_invoked_async_body(body, source, scopes, scan, deadline)?;
+        } else {
+            walk_javascript_node(body, source, scopes, scan, deadline)?;
+        }
     }
     scopes.pop();
     Ok(())
+}
+
+fn javascript_callable_is_async(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "async")
+}
+
+/// Walks an immediately invoked async callable body. A direct `await`
+/// expression statement suspends before each following statement runs, so
+/// references in that continuation cannot read through the initializer TDZ.
+fn walk_javascript_immediately_invoked_async_body(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if node.kind() != "statement_block" {
+        return walk_javascript_node(node, source, scopes, scan, deadline);
+    }
+
+    scopes.push(Scope {
+        captures_var_bindings: false,
+        defers_tdz_references: false,
+        bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
+    });
+    {
+        let scope = scopes
+            .last_mut()
+            .expect("an async JavaScript callable block scope was just pushed");
+        mark_javascript_block_lexical_bindings_initializing(node, source, scope)?;
+        hoist_javascript_block_function_declarations(node, source, scope, scan)?;
+    }
+
+    let mut cursor = node.walk();
+    for statement in node.named_children(&mut cursor) {
+        walk_javascript_node(statement, source, scopes, scan, deadline)?;
+        if javascript_statement_suspends_async_continuation(statement) {
+            scopes
+                .last_mut()
+                .expect("an async JavaScript callable block scope is active")
+                .defers_tdz_references = true;
+        }
+    }
+    scopes.pop();
+    Ok(())
+}
+
+fn javascript_statement_suspends_async_continuation(node: Node<'_>) -> bool {
+    node.kind() == "expression_statement"
+        && node
+            .named_child(0)
+            .is_some_and(|expression| expression.kind() == "await_expression")
 }
 
 fn hoist_javascript_function_var_bindings(

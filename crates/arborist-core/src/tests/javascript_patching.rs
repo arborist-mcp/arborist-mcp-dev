@@ -1703,6 +1703,58 @@ fn javascript_patch_binding_validation_rejects_immediately_invoked_lexical_captu
 }
 
 #[test]
+fn javascript_patch_binding_validation_allows_async_iife_references_after_await() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        await Promise.resolve();
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_before_await() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        const initial = value;
+        await Promise.resolve();
+        return initial;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_lexical_captures_in_function_constructors() {
     let source = r#"function compute(value) {
     return value;
