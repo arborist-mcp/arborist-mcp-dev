@@ -518,6 +518,9 @@ fn collect_javascript_import_names<'tree>(
 ) -> Result<()> {
     let mut pending = vec![node];
     while let Some(current) = pending.pop() {
+        if javascript_type_only_import(current) {
+            continue;
+        }
         match current.kind() {
             "namespace_import" => {
                 if let Some(name_node) = current.child_by_field_name("name") {
@@ -577,6 +580,18 @@ fn collect_javascript_import_names<'tree>(
         }
     }
     Ok(())
+}
+
+fn javascript_type_only_import(node: Node<'_>) -> bool {
+    match node.kind() {
+        "import_statement" => node.child(1).is_some_and(is_typescript_type_modifier),
+        "import_specifier" => node.child(0).is_some_and(is_typescript_type_modifier),
+        _ => false,
+    }
+}
+
+fn is_typescript_type_modifier(node: Node<'_>) -> bool {
+    !node.is_named() && matches!(node.kind(), "type" | "typeof")
 }
 
 fn insert_javascript_file_item<'tree>(

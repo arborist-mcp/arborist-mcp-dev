@@ -523,6 +523,72 @@ export function compute(value: number): number {
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_type_only_import_values() {
+    let source = r#"import type { Shape } from "./shapes";
+
+export function compute(): unknown {
+    return Shape;
+}
+"#;
+    let replacement = r#"export function compute(): unknown {
+    return Shape;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .unresolved_identifiers
+            .iter()
+            .any(|name| name == "Shape"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn typescript_patch_binding_validation_keeps_runtime_bindings_from_mixed_type_imports() {
+    let source = r#"import { type as typeValue, type Shape, transform } from "./shapes";
+
+export function compute(value: number): number {
+    return transform(value) + typeValue(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return transform(value) + typeValue(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .any(|binding| binding.name == "transform"),
+        "{result:#?}"
+    );
+    assert!(
+        result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .any(|binding| binding.name == "typeValue"),
+        "{result:#?}"
+    );
+    assert!(
+        !result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .any(|binding| binding.name == "Shape"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");
