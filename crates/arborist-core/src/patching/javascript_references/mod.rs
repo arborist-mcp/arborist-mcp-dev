@@ -1,6 +1,6 @@
 mod scope;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -110,6 +110,7 @@ pub(crate) fn collect_javascript_reference_validation_with_deadline(
     let scope_scan = scan_javascript_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
     collect_javascript_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
+    exclude_typescript_type_only_import_aliases(&mut file_items, source)?;
     let scope_path = javascript_symbol_scope_path(symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();
@@ -304,6 +305,97 @@ fn javascript_file_item_provides_runtime_binding(item: &JavaScriptFileItem<'_>) 
 
 fn typescript_const_enum_declaration(node: Node<'_>) -> bool {
     node.child(0).is_some_and(|child| child.kind() == "const")
+}
+
+fn exclude_typescript_type_only_import_aliases(
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'_>>>,
+    source: &str,
+) -> Result<()> {
+    let known_paths = items
+        .values()
+        .flatten()
+        .map(|item| item.semantic_path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut type_only_paths = javascript_type_only_semantic_paths(items);
+
+    loop {
+        let aliases = items
+            .values()
+            .flatten()
+            .filter(|item| item.node_kind == "import_alias")
+            .map(|item| {
+                Ok((
+                    item.semantic_path.clone(),
+                    typescript_import_alias_target_paths(item, source)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut changed = false;
+        for (alias_path, target_paths) in aliases {
+            let Some(target_path) = target_paths
+                .iter()
+                .find(|target_path| known_paths.contains(*target_path))
+            else {
+                continue;
+            };
+            if type_only_paths.contains(target_path) {
+                changed |= type_only_paths.insert(alias_path);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for bindings in items.values_mut() {
+        bindings.retain(|item| {
+            item.node_kind != "import_alias" || !type_only_paths.contains(&item.semantic_path)
+        });
+    }
+    Ok(())
+}
+
+fn javascript_type_only_semantic_paths(
+    items: &BTreeMap<String, Vec<JavaScriptFileItem<'_>>>,
+) -> BTreeSet<String> {
+    let mut type_only_paths = BTreeSet::new();
+    let mut runtime_paths = BTreeSet::new();
+    for item in items.values().flatten() {
+        if javascript_file_item_provides_runtime_binding(item) {
+            runtime_paths.insert(item.semantic_path.clone());
+        } else {
+            type_only_paths.insert(item.semantic_path.clone());
+        }
+    }
+    type_only_paths.retain(|path| !runtime_paths.contains(path));
+    type_only_paths
+}
+
+fn typescript_import_alias_target_paths(
+    item: &JavaScriptFileItem<'_>,
+    source: &str,
+) -> Result<Vec<String>> {
+    let Some(target) = item.node.named_child(1) else {
+        return Ok(Vec::new());
+    };
+    let target_path = node_text(target, source)?
+        .trim()
+        .split('.')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>()
+        .join("::");
+    if target_path.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    let mut scope_path = item.parent_path.as_deref();
+    while let Some(scope) = scope_path {
+        candidates.push(format!("{scope}::{target_path}"));
+        scope_path = scope.rsplit_once("::").map(|(parent, _)| parent);
+    }
+    candidates.push(target_path);
+    Ok(candidates)
 }
 
 fn javascript_file_items_merge(
