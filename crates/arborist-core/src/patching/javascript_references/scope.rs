@@ -183,13 +183,7 @@ fn walk_javascript_node(
             }
             Ok(())
         }
-        "as_expression" | "satisfies_expression" => {
-            if let Some(left) = node.child_by_field_name("left") {
-                walk_javascript_node(left, source, scopes, scan, deadline)?;
-            }
-            Ok(())
-        }
-        "type_assertion" | "non_null_expression" => {
+        "as_expression" | "satisfies_expression" | "type_assertion" | "non_null_expression" => {
             if let Some(expression) = javascript_value_wrapper_expression(node) {
                 walk_javascript_node(expression, source, scopes, scan, deadline)?;
             }
@@ -1360,7 +1354,11 @@ fn javascript_value_wrapper_expression(node: Node<'_>) -> Option<Node<'_>> {
     match node.kind() {
         // A type assertion has type arguments before its expression operand.
         "type_assertion" => node.named_children(&mut cursor).last(),
-        "non_null_expression" => node.named_children(&mut cursor).next(),
+        // TypeScript `as` and `satisfies` expressions expose positional
+        // children, not a `left` field; their value operand comes first.
+        "as_expression" | "satisfies_expression" | "non_null_expression" => {
+            node.named_children(&mut cursor).next()
+        }
         _ => None,
     }
 }
@@ -1372,8 +1370,9 @@ fn javascript_unwrap_value_expression(mut node: Node<'_>) -> Node<'_> {
                 let mut cursor = node.walk();
                 node.named_children(&mut cursor).next()
             }
-            "as_expression" | "satisfies_expression" => node.child_by_field_name("left"),
-            "type_assertion" | "non_null_expression" => javascript_value_wrapper_expression(node),
+            "as_expression" | "satisfies_expression" | "type_assertion" | "non_null_expression" => {
+                javascript_value_wrapper_expression(node)
+            }
             _ => None,
         };
         let Some(next) = next else {

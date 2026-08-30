@@ -1272,6 +1272,31 @@ function outer() {
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_unresolved_value_wrapper_operands() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(): unknown {
+    return [missingAs as number, missingSatisfies satisfies number];
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        ["missingAs", "missingSatisfies"]
+    );
+}
+
+#[test]
 fn typescript_patch_binding_validation_resolves_class_fields_and_imports() {
     let source = r#"import { helper } from "./util";
 const defaultCount = 5;
