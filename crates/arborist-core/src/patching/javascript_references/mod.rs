@@ -590,21 +590,86 @@ fn collect_javascript_top_level_declarator_names<'tree>(
         let Some(name_node) = declarator.child_by_field_name("name") else {
             continue;
         };
-        if name_node.kind() != "identifier" {
-            continue;
-        }
-        let name = node_text(name_node, source)?.trim().to_string();
-        if name.is_empty() {
-            continue;
-        }
-        insert_javascript_file_item(
-            name,
-            "variable_declarator",
+        collect_javascript_top_level_pattern_names(
+            name_node,
+            source,
             declarator,
-            "module_scope",
             parent_path,
             items,
-        );
+        )?;
+    }
+    Ok(())
+}
+
+fn collect_javascript_top_level_pattern_names<'tree>(
+    pattern: Node<'tree>,
+    source: &str,
+    declarator: Node<'tree>,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+) -> Result<()> {
+    match pattern.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            let name = node_text(pattern, source)?.trim().to_string();
+            if !name.is_empty() {
+                insert_javascript_file_item(
+                    name,
+                    "variable_declarator",
+                    declarator,
+                    "module_scope",
+                    parent_path,
+                    items,
+                );
+            }
+        }
+        "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(left) = pattern.child_by_field_name("left") {
+                collect_javascript_top_level_pattern_names(
+                    left,
+                    source,
+                    declarator,
+                    parent_path,
+                    items,
+                )?;
+            }
+        }
+        "rest_pattern" | "array_pattern" => {
+            let mut cursor = pattern.walk();
+            for child in pattern.named_children(&mut cursor) {
+                collect_javascript_top_level_pattern_names(
+                    child,
+                    source,
+                    declarator,
+                    parent_path,
+                    items,
+                )?;
+            }
+        }
+        "object_pattern" => {
+            let mut cursor = pattern.walk();
+            for member in pattern.named_children(&mut cursor) {
+                if member.kind() == "pair_pattern" {
+                    if let Some(value) = member.child_by_field_name("value") {
+                        collect_javascript_top_level_pattern_names(
+                            value,
+                            source,
+                            declarator,
+                            parent_path,
+                            items,
+                        )?;
+                    }
+                } else {
+                    collect_javascript_top_level_pattern_names(
+                        member,
+                        source,
+                        declarator,
+                        parent_path,
+                        items,
+                    )?;
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

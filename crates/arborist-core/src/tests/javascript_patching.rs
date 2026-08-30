@@ -860,6 +860,44 @@ fn rejects_invalid_typescript_replacements_without_writing_the_source_file() {
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_top_level_destructured_bindings() {
+    let source = r#"const { helper } = {
+    helper(value) {
+        return value + 1;
+    },
+};
+
+export function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"export function compute(value) {
+    return helper(value);
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "helper")
+        .expect("top-level destructured binding should resolve");
+    assert_eq!(helper.status, "resolved");
+    assert_eq!(
+        helper.candidates.first().unwrap().origin_type,
+        "module_scope"
+    );
+}
+
+#[test]
 fn validates_javascript_patch_bindings_for_params_locals_destructuring_and_imports() {
     let source = r#"import { helper as h } from "./util";
 import other from "./other";
