@@ -522,4 +522,4 @@ class GatewayParameterRequestValidationMixin:
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 38)
         self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("workspace_root", response["error"]["message"])\n
+        self.assertIn("workspace_root", response["error"]["message"])

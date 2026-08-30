@@ -346,4 +346,4 @@ class GatewayTimeoutRequestValidationMixin:
                 )
 
                 self.assertEqual(response["error"]["code"], -32602)
-                self.assertIn("timeout_ms", response["error"]["message"])\n
+                self.assertIn("timeout_ms", response["error"]["message"])

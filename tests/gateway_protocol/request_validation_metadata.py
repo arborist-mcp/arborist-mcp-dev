@@ -653,4 +653,4 @@ class GatewayMetadataRequestValidationMixin:
             capture_output=True,
             text=True,
         )
-        self.assertEqual(json.loads(completed.stdout), build_manifest_snapshot())\n
+        self.assertEqual(json.loads(completed.stdout), build_manifest_snapshot())

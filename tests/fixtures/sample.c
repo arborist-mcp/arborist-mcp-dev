@@ -7,4 +7,4 @@ void _Py_NewReference(PyObject *op);
 
 int add(int left, int right) {
     return left + right;
-}\n
+}

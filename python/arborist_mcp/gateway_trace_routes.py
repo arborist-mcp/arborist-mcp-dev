@@ -138,4 +138,4 @@ class GatewayTraceRoutes:
             index_db_path,
             timeout_ms,
         )
-        return self._decode_core_object(payload)\n
+        return self._decode_core_object(payload)

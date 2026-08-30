@@ -10,4 +10,4 @@ class GatewaySymbolRoutes(
     GatewaySymbolSearchRoutes,
     GatewaySymbolListRoutes,
 ):
-    """Symbol read/search/list route handlers for the MCP gateway."""\n
+    """Symbol read/search/list route handlers for the MCP gateway."""
