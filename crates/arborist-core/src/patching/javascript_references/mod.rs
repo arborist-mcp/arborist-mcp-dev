@@ -132,7 +132,7 @@ pub(crate) fn collect_javascript_reference_validation_with_deadline(
     let scope_scan = scan_javascript_symbol_scope(symbol_node, source, deadline)?;
     let mut file_items = BTreeMap::new();
     collect_javascript_file_items(document.tree.root_node(), source, &mut file_items, deadline)?;
-    exclude_typescript_type_only_import_aliases(&mut file_items, source)?;
+    exclude_typescript_type_only_import_aliases(&mut file_items, source, deadline)?;
     let scope_path = javascript_symbol_scope_path(symbol_node, source)?;
 
     let mut validation = ReferenceValidation::default();
@@ -335,28 +335,29 @@ fn typescript_const_enum_declaration(node: Node<'_>) -> bool {
 fn exclude_typescript_type_only_import_aliases(
     items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'_>>>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    let known_paths = items
-        .values()
-        .flatten()
-        .map(|item| item.semantic_path.clone())
-        .collect::<BTreeSet<_>>();
-    let mut type_only_paths = javascript_type_only_semantic_paths(items);
+    let mut known_paths = BTreeSet::new();
+    for item in items.values().flatten() {
+        check_javascript_type_only_bindings_deadline(deadline)?;
+        known_paths.insert(item.semantic_path.clone());
+    }
+    let mut type_only_paths = javascript_type_only_semantic_paths(items, deadline)?;
 
     loop {
-        let aliases = items
-            .values()
-            .flatten()
-            .filter(|item| item.node_kind == "import_alias")
-            .map(|item| {
-                Ok((
+        let mut aliases = Vec::new();
+        for item in items.values().flatten() {
+            check_javascript_type_only_bindings_deadline(deadline)?;
+            if item.node_kind == "import_alias" {
+                aliases.push((
                     item.semantic_path.clone(),
                     typescript_import_alias_target_paths(item, source)?,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
+                ));
+            }
+        }
         let mut changed = false;
         for (alias_path, target_paths) in aliases {
+            check_javascript_type_only_bindings_deadline(deadline)?;
             let Some(target_path) = target_paths
                 .iter()
                 .find(|target_path| known_paths.contains(*target_path))
@@ -373,6 +374,7 @@ fn exclude_typescript_type_only_import_aliases(
     }
 
     for bindings in items.values_mut() {
+        check_javascript_type_only_bindings_deadline(deadline)?;
         bindings.retain(|item| {
             item.node_kind != "import_alias" || !type_only_paths.contains(&item.semantic_path)
         });
@@ -382,10 +384,12 @@ fn exclude_typescript_type_only_import_aliases(
 
 fn javascript_type_only_semantic_paths(
     items: &BTreeMap<String, Vec<JavaScriptFileItem<'_>>>,
-) -> BTreeSet<String> {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<String>> {
     let mut type_only_paths = BTreeSet::new();
     let mut runtime_paths = BTreeSet::new();
     for item in items.values().flatten() {
+        check_javascript_type_only_bindings_deadline(deadline)?;
         if javascript_file_item_provides_runtime_binding(item) {
             runtime_paths.insert(item.semantic_path.clone());
         } else {
@@ -393,7 +397,16 @@ fn javascript_type_only_semantic_paths(
         }
     }
     type_only_paths.retain(|path| !runtime_paths.contains(path));
-    type_only_paths
+    Ok(type_only_paths)
+}
+
+fn check_javascript_type_only_bindings_deadline(
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("classifying JavaScript type-only bindings")?;
+    }
+    Ok(())
 }
 
 fn typescript_import_alias_target_paths(
@@ -903,4 +916,67 @@ fn collect_javascript_export_names<'tree>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    use anyhow::Result;
+
+    use super::{collect_javascript_file_items, exclude_typescript_type_only_import_aliases};
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        allowed_checks: usize,
+        checks: Cell<usize>,
+    }
+
+    impl RejectAfterChecks {
+        fn new(allowed_checks: usize) -> Self {
+            Self {
+                allowed_checks,
+                checks: Cell::new(0),
+            }
+        }
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.allowed_checks {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn type_only_import_alias_classification_respects_deadlines() {
+        let source = r#"interface TypeOnly {
+    value: number;
+}
+
+import Alias = TypeOnly;
+"#;
+        let document = parse_document(Path::new("sample.ts"), source).unwrap();
+        let mut items = BTreeMap::new();
+        collect_javascript_file_items(document.tree.root_node(), source, &mut items, None).unwrap();
+        let deadline = RejectAfterChecks::new(0);
+
+        let error =
+            exclude_typescript_type_only_import_aliases(&mut items, source, Some(&deadline))
+                .expect_err("deadline should interrupt type-only import alias classification");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached classifying JavaScript type-only bindings"),
+            "{error:#}"
+        );
+    }
 }
