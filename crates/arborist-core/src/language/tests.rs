@@ -4,10 +4,11 @@ use tree_sitter::Point;
 
 use super::{
     LanguageCapabilities, LanguageRegistry, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
-    c_companion_source_path, detect_language, ensure_path_inside_workspace, is_c_header_path,
-    normalize_absolute_path, offset_for_position, parse_document, path_is_inside_workspace,
-    point_for_offset, read_source, supported_languages,
+    c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
+    offset_for_position, parse_document, point_for_offset, read_source, supported_languages,
 };
+#[cfg(windows)]
+use super::{ensure_path_inside_workspace, path_is_inside_workspace};
 use crate::model::{LanguageId, Position};
 
 #[test]

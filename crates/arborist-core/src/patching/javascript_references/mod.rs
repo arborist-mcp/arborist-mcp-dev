@@ -297,10 +297,13 @@ fn visible_javascript_file_item<'tree>(
 }
 
 fn javascript_file_item_provides_runtime_binding(item: &JavaScriptFileItem<'_>) -> bool {
-    !matches!(
+    if matches!(
         item.node_kind,
         "interface_declaration" | "type_alias_declaration"
-    ) && !(item.node_kind == "enum_declaration" && typescript_const_enum_declaration(item.node))
+    ) {
+        return false;
+    }
+    item.node_kind != "enum_declaration" || !typescript_const_enum_declaration(item.node)
 }
 
 fn typescript_const_enum_declaration(node: Node<'_>) -> bool {
