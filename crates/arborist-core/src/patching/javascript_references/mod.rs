@@ -929,7 +929,10 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_javascript_file_items, exclude_typescript_type_only_import_aliases};
+    use super::{
+        collect_javascript_file_items, exclude_typescript_type_only_import_aliases,
+        scan_javascript_symbol_scope,
+    };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
 
@@ -956,6 +959,34 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn scope_scanning_respects_deadlines() {
+        let source = r#"function sample() {
+    const value = external;
+    return value;
+}
+"#;
+        let document = parse_document(Path::new("sample.js"), source).unwrap();
+        let symbol = document
+            .tree
+            .root_node()
+            .named_child(0)
+            .expect("test source must expose one function declaration");
+        let deadline = RejectAfterChecks::new(0);
+
+        let error = match scan_javascript_symbol_scope(symbol, source, Some(&deadline)) {
+            Ok(_) => panic!("deadline should interrupt JavaScript scope scanning"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning JavaScript hoisted var bindings"),
+            "{error:#}"
+        );
     }
 
     #[test]
