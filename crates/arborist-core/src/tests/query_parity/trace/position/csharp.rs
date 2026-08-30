@@ -6772,7 +6772,7 @@ class OtherUtil {
     // final member does not dispatch. Legitimate bare factory calls still
     // trace as direct callees when they resolve independently of the receiver
     // binding, and the resolvable receiver still dispatches.
-    for (caller, expected) in [
+    for (caller, mut expected) in [
         ("Other::Caller::UnknownFactory", Vec::<String>::new()),
         ("Other::Caller::ArityMismatchFactory", Vec::<String>::new()),
         (
@@ -6790,6 +6790,7 @@ class OtherUtil {
             vec![make_helper.clone(), "Demo::Helper::Run".to_string()],
         ),
     ] {
+        expected.sort();
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         let mut callees = live
             .callees
