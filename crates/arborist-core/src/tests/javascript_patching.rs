@@ -1478,6 +1478,84 @@ fn javascript_patch_binding_validation_rejects_lexical_references_in_class_herit
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_named_function_expression_bindings() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    const factory = function Hidden(value = Hidden) {
+        return value;
+    };
+    return factory();
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Hidden")
+        .expect("Hidden should resolve to the named function expression binding");
+    assert_eq!(decision.candidates[0].node_kind, "function_expression");
+}
+
+#[test]
+fn javascript_patch_binding_validation_keeps_named_function_expressions_scoped() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    const factory = function Hidden() {
+        return 1;
+    };
+    return Hidden;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["Hidden"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_named_generator_function_bindings() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    const factory = function* Hidden() {
+        yield Hidden;
+    };
+    return factory;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Hidden")
+        .expect("Hidden should resolve to the named generator function binding");
+    assert_eq!(decision.candidates[0].node_kind, "generator_function");
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_static_block_var_scope_leaks() {
     let source = r#"function compute() { return 0; }"#;
     let replacement = r#"function compute() {

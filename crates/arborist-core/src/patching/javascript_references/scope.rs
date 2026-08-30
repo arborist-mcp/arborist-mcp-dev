@@ -67,7 +67,10 @@ pub(super) fn scan_javascript_symbol_scope(
         // patched symbol; validate the callable's parameters and body.
         "variable_declarator" => {
             if let Some(value) = symbol_node.child_by_field_name("value")
-                && matches!(value.kind(), "arrow_function" | "function_expression")
+                && matches!(
+                    value.kind(),
+                    "arrow_function" | "function_expression" | "generator_function"
+                )
             {
                 walk_javascript_function(value, source, &mut scopes, &mut scan, false, deadline)?;
             } else {
@@ -118,6 +121,7 @@ fn walk_javascript_node(
         "function_declaration"
         | "generator_function_declaration"
         | "function_expression"
+        | "generator_function"
         | "arrow_function"
         | "method_definition" => {
             walk_javascript_function(node, source, scopes, scan, false, deadline)
@@ -530,6 +534,7 @@ fn hoist_javascript_function_var_bindings(
         "function_declaration"
             | "generator_function_declaration"
             | "function_expression"
+            | "generator_function"
             | "arrow_function"
             | "method_definition"
             | "class_declaration"
@@ -1330,12 +1335,18 @@ fn collect_javascript_callable_bindings<'tree>(
         initializing_names: BTreeSet::new(),
     };
     let mut parameter_patterns = Vec::new();
-    // A named function expression binds its own name inside its scope.
-    if node.kind() == "function_expression"
+    // Named function and generator expressions bind their own name inside
+    // their scope, including parameter default initializers.
+    let expression_node_kind = match node.kind() {
+        "function_expression" => Some("function_expression"),
+        "generator_function" => Some("generator_function"),
+        _ => None,
+    };
+    if let Some(node_kind) = expression_node_kind
         && let Some(name_node) = node.child_by_field_name("name")
         && name_node.kind() == "identifier"
     {
-        bind_javascript_name(name_node, source, "function_expression", &mut scope, scan)?;
+        bind_javascript_name(name_node, source, node_kind, &mut scope, scan)?;
     }
     let parameters = node
         .child_by_field_name("parameters")
