@@ -548,6 +548,37 @@ export function compute(): unknown {
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_local_type_only_values() {
+    let source = r#"interface Shape {
+    size: number;
+}
+
+type ShapeAlias = Shape;
+
+export function compute(): unknown {
+    return ShapeAlias;
+}
+"#;
+    let replacement = r#"export function compute(): unknown {
+    return Shape || ShapeAlias;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    for name in ["Shape", "ShapeAlias"] {
+        assert!(
+            result
+                .validation
+                .unresolved_identifiers
+                .iter()
+                .any(|unresolved| unresolved == name),
+            "expected {name} to remain unresolved: {result:#?}"
+        );
+    }
+}
+
+#[test]
 fn typescript_patch_binding_validation_keeps_runtime_bindings_from_mixed_type_imports() {
     let source = r#"import { type as typeValue, type Shape, transform } from "./shapes";
 

@@ -268,9 +268,10 @@ fn visible_javascript_file_item<'tree>(
     let items = file_items.get(name)?;
     let mut current_scope_path = scope_path;
     while let Some(scope_path) = current_scope_path {
-        let mut candidates = items
-            .iter()
-            .filter(|item| item.parent_path.as_deref() == Some(scope_path));
+        let mut candidates = items.iter().filter(|item| {
+            item.parent_path.as_deref() == Some(scope_path)
+                && javascript_file_item_provides_runtime_binding(item)
+        });
         let Some(candidate) = candidates.next() else {
             current_scope_path = scope_path
                 .rsplit_once("::")
@@ -283,13 +284,22 @@ fn visible_javascript_file_item<'tree>(
         return None;
     }
 
-    let mut root_candidates = items.iter().filter(|item| item.parent_path.is_none());
+    let mut root_candidates = items.iter().filter(|item| {
+        item.parent_path.is_none() && javascript_file_item_provides_runtime_binding(item)
+    });
     let candidate = root_candidates.next()?;
     if root_candidates.all(|other| javascript_file_items_merge(candidate, other)) {
         Some(candidate)
     } else {
         None
     }
+}
+
+fn javascript_file_item_provides_runtime_binding(item: &JavaScriptFileItem<'_>) -> bool {
+    !matches!(
+        item.node_kind,
+        "interface_declaration" | "type_alias_declaration"
+    )
 }
 
 fn javascript_file_items_merge(
