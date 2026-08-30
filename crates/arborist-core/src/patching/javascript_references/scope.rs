@@ -422,8 +422,19 @@ fn walk_javascript_switch(
 ) -> Result<()> {
     // The discriminant is evaluated before the switch's lexical environment
     // exists, so a declaration in a case cannot shadow an outer binding here.
-    if let Some(value) = node.child_by_field_name("value") {
+    let value = node.child_by_field_name("value");
+    if let Some(value) = value {
         walk_javascript_node(value, source, scopes, scan, deadline)?;
+    }
+    if javascript_async_continuation_scope_active(scopes)
+        && value.is_some_and(javascript_expression_suspends_async_continuation)
+    {
+        // The discriminant is evaluated before case matching, so a direct await
+        // here defers both case execution and later sibling references.
+        scopes
+            .last_mut()
+            .expect("a JavaScript switch enclosing scope is active")
+            .defers_tdz_references = true;
     }
 
     scopes.push(Scope {
