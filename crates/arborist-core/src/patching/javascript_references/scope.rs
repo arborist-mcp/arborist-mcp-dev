@@ -631,11 +631,18 @@ fn javascript_statement_suspends_async_continuation(node: Node<'_>) -> bool {
 
 fn javascript_expression_suspends_async_continuation(node: Node<'_>) -> bool {
     let node = javascript_unwrap_value_expression(node);
-    node.kind() == "await_expression"
-        || (node.kind() == "assignment_expression"
-            && node
-                .child_by_field_name("right")
-                .is_some_and(javascript_expression_suspends_async_continuation))
+    match node.kind() {
+        "await_expression" => true,
+        "assignment_expression" => node
+            .child_by_field_name("right")
+            .is_some_and(javascript_expression_suspends_async_continuation),
+        "sequence_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .any(javascript_expression_suspends_async_continuation)
+        }
+        _ => false,
+    }
 }
 
 fn mark_javascript_direct_await_continuation(value: Node<'_>, scopes: &mut [Scope]) {

@@ -1728,6 +1728,57 @@ fn javascript_patch_binding_validation_allows_async_iife_references_after_await(
 }
 
 #[test]
+fn javascript_patch_binding_validation_allows_async_iife_references_after_sequence_await() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        const ready = (0, await Promise.resolve());
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_before_sequence_await() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        const initial = value, ready = (0, await Promise.resolve());
+        return initial;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
 fn typescript_patch_binding_validation_allows_async_iife_references_after_wrapped_await() {
     let source = r#"function compute(): unknown {
     return 0;
