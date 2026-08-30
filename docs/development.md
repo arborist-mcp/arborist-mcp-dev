@@ -115,6 +115,25 @@ memory. For large workspaces, symbol-index resource usage can also be bounded
 with the core scan limits `max_files` and `max_file_bytes` where those options
 are exposed.
 
+### Low Disk Space
+
+Some VFS and index tests intentionally create source files above the configured
+source-size limit. If the Windows system temporary drive is low on space, direct
+`TEMP` and `TMP` to a directory on a drive with sufficient free space before
+running a test or check profile:
+
+```powershell
+$testTemp = "D:\arborist-test-temp"
+New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+$env:TEMP = $testTemp
+$env:TMP = $testTemp
+.\scripts\test.ps1 -Suite core
+```
+
+The variables apply only to the current PowerShell session. Do not use a source
+workspace or index directory whose contents you need to keep as the temporary
+directory, because the tests create isolated transient files there.
+
 The Rust unit suite is large and a few C++ trace scenarios are slow, so prefer
 a targeted filter during development and run the full suite at checkpoints:
 
