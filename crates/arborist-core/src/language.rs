@@ -66,7 +66,10 @@ pub(crate) use python::{python_local_file_dependency_paths, resolve_local_python
 pub use registry::{
     LanguageCapabilities, LanguageDescriptor, LanguageRegistry, builtin_language_registry,
 };
-pub(crate) use rust::{rust_direct_module_candidate_paths, rust_local_module_dependency_paths};
+pub(crate) use rust::{
+    rust_direct_module_candidate_paths, rust_local_module_dependency_paths,
+    rust_local_module_dependency_paths_with_deadline,
+};
 pub use tree::*;
 
 pub(crate) use io::write_source_atomic;

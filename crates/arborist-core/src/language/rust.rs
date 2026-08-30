@@ -5,15 +5,32 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
+use crate::deadline::DeadlineCheck;
 
 pub(crate) fn rust_local_module_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
+    rust_local_module_dependency_paths_with_deadline(path, root, source, None)
+}
+
+pub(crate) fn rust_local_module_dependency_paths_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
     let mut dependencies = BTreeSet::new();
-    collect_out_of_line_module_dependencies(path, root, source, &mut dependencies)?;
+    collect_out_of_line_module_dependencies(path, root, source, &mut dependencies, deadline)?;
     Ok(dependencies)
+}
+
+fn check_local_file_dependency_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
+    Ok(())
 }
 
 pub(crate) fn rust_direct_module_candidate_paths(
@@ -64,7 +81,9 @@ fn collect_out_of_line_module_dependencies(
     node: Node<'_>,
     source: &str,
     dependencies: &mut BTreeSet<PathBuf>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_local_file_dependency_deadline(deadline)?;
     if node.kind() == "mod_item"
         && node.child_by_field_name("body").is_none()
         && !has_path_semantics(node, source)?
@@ -82,7 +101,7 @@ fn collect_out_of_line_module_dependencies(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_out_of_line_module_dependencies(path, child, source, dependencies)?;
+        collect_out_of_line_module_dependencies(path, child, source, dependencies, deadline)?;
     }
     Ok(())
 }
@@ -290,12 +309,16 @@ fn normalize_rust_module_name(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::rust_local_module_dependency_paths;
+    use super::{
+        rust_local_module_dependency_paths, rust_local_module_dependency_paths_with_deadline,
+    };
+    use crate::deadline::DeadlineCheck;
     use crate::language::{normalize_absolute_path, parse_document};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -313,6 +336,49 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("arborist-rust-language-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    struct RejectAfterChecks {
+        checks: Cell<usize>,
+        reject_after: usize,
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.reject_after {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_module_dependency_extraction_honors_deadline_during_tree_walk() {
+        let source = "mod outer { mod inner { mod leaf; } }\n";
+        let path = Path::new("src/lib.rs");
+        let document = parse_document(path, source).expect("Rust source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 2,
+        };
+
+        let error = rust_local_module_dependency_paths_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency extraction should stop while walking the syntax tree");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies")
+        );
+        assert!(deadline.checks.get() >= 3);
     }
 
     #[test]
