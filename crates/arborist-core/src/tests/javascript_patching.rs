@@ -1478,6 +1478,86 @@ fn javascript_patch_binding_validation_rejects_lexical_references_in_class_herit
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_static_block_var_scope_leaks() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    class Container {
+        static {
+            var hidden = 1;
+        }
+    }
+    return hidden;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["hidden"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_hoists_static_block_var_bindings() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    class Container {
+        static {
+            console.log(hidden);
+            var hidden = 1;
+        }
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "hidden")
+        .expect("hidden should resolve to the static-block var binding");
+    assert_eq!(decision.candidates[0].node_kind, "variable_declarator");
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_static_block_lexical_tdz_references() {
+    let source = r#"function compute(hidden) { return hidden; }"#;
+    let replacement = r#"function compute(hidden) {
+    class Container {
+        static {
+            console.log(hidden);
+            let hidden = 1;
+        }
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["hidden"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_class_declaration_heritage_tdz_references() {
     let source = r#"function compute(helper) { return helper; }"#;
     let replacement = r#"function compute(helper) {

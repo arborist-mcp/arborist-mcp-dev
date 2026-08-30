@@ -26,11 +26,11 @@ struct JavaScriptParameter<'tree> {
     default_initializer: Option<Node<'tree>>,
 }
 
-/// A scope in the walker stack. `is_function_scope` marks function-like
-/// scopes so `var` declarations bind to the nearest function scope while
-/// `let`/`const` bind to the innermost block scope.
+/// A scope in the walker stack. `captures_var_bindings` marks scopes such as
+/// functions and class static blocks where `var` declarations are collected,
+/// while `let`/`const` bind to the innermost block scope.
 struct Scope {
-    is_function_scope: bool,
+    captures_var_bindings: bool,
     // Callable bodies usually defer evaluation until after the initializer
     // completes. Directly invoked function expressions are the exception.
     defers_tdz_references: bool,
@@ -128,7 +128,9 @@ fn walk_javascript_node(
         "public_field_definition" | "field_definition" => {
             walk_javascript_field_definition(node, source, scopes, scan, false, deadline)
         }
-        "class_static_block" => walk_javascript_children(node, source, scopes, scan, deadline),
+        "class_static_block" => {
+            walk_javascript_class_static_block(node, source, scopes, scan, deadline)
+        }
         "statement_block" => walk_javascript_block(node, source, scopes, scan, deadline),
         "switch_statement" => walk_javascript_switch(node, source, scopes, scan, deadline),
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
@@ -228,7 +230,7 @@ fn walk_javascript_field_definition(
     // is after a normal class-expression binding has finished initializing.
     // Model that delayed execution without making the field a `var` scope.
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: true,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -279,7 +281,7 @@ fn walk_javascript_block(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -326,6 +328,38 @@ fn hoist_javascript_block_function_declarations(
     Ok(())
 }
 
+fn walk_javascript_class_static_block(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    // Static initialization blocks are their own lexical and `var` scope.
+    // In particular, a `var` declared here must not leak to an enclosing
+    // function, but it is hoisted across the entire static block.
+    scopes.push(Scope {
+        captures_var_bindings: true,
+        defers_tdz_references: false,
+        bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
+    });
+    {
+        let static_scope = scopes
+            .last_mut()
+            .expect("a JavaScript static-block scope was just pushed");
+        mark_javascript_block_lexical_bindings_initializing(node, source, static_scope)?;
+        hoist_javascript_block_function_declarations(node, source, static_scope, scan)?;
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            hoist_javascript_function_var_bindings(child, source, static_scope, scan, deadline)?;
+        }
+    }
+    walk_javascript_children(node, source, scopes, scan, deadline)?;
+    scopes.pop();
+    Ok(())
+}
+
 fn walk_javascript_switch(
     node: Node<'_>,
     source: &str,
@@ -340,7 +374,7 @@ fn walk_javascript_switch(
     }
 
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -544,7 +578,7 @@ fn walk_javascript_enum(
     let created_scope = scopes.is_empty();
     if created_scope {
         scopes.push(Scope {
-            is_function_scope: false,
+            captures_var_bindings: false,
             defers_tdz_references: false,
             bindings: Vec::new(),
             initializing_names: BTreeSet::new(),
@@ -586,7 +620,7 @@ fn walk_javascript_class(
     // members. Keep that binding separate from the surrounding declaration
     // scope so named class expressions do not leak their internal name.
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -1019,7 +1053,7 @@ fn walk_javascript_for_in(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -1087,7 +1121,7 @@ fn walk_javascript_for_statement(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -1105,7 +1139,7 @@ fn walk_javascript_catch(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     scopes.push(Scope {
-        is_function_scope: false,
+        captures_var_bindings: false,
         defers_tdz_references: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
@@ -1274,7 +1308,7 @@ fn record_javascript_reference(
 
 fn javascript_var_target_scope_index(scopes: &[Scope]) -> Option<usize> {
     for (index, scope) in scopes.iter().enumerate().rev() {
-        if scope.is_function_scope {
+        if scope.captures_var_bindings {
             return Some(index);
         }
     }
@@ -1290,7 +1324,7 @@ fn collect_javascript_callable_bindings<'tree>(
     defers_tdz_references: bool,
 ) -> Result<(Scope, Vec<JavaScriptParameter<'tree>>)> {
     let mut scope = Scope {
-        is_function_scope: true,
+        captures_var_bindings: true,
         defers_tdz_references,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
