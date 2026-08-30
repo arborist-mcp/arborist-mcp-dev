@@ -1105,12 +1105,42 @@ fn javascript_for_in_has_var_binding(node: Node<'_>) -> bool {
         .any(|kind| kind.kind() == "var")
 }
 
-fn javascript_for_in_awaits_iteration(node: Node<'_>) -> bool {
-    let mut cursor = node.walk();
-    node.children(&mut cursor)
-        .any(|child| child.kind() == "await")
+fn javascript_async_continuation_scope_active(scopes: &[Scope]) -> bool {
+    for scope in scopes.iter().rev() {
+        if scope.tracks_async_continuations {
+            return true;
+        }
+        if scope.captures_var_bindings {
+            return false;
+        }
+    }
+    false
 }
 
+fn javascript_for_in_suspends_before_iteration(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    let is_for_await = node
+        .children(&mut cursor)
+        .any(|child| child.kind() == "await");
+    is_for_await
+        || node
+            .child_by_field_name("right")
+            .is_some_and(javascript_expression_suspends_async_continuation)
+}
+
+fn javascript_for_initializer_suspends_async_continuation(node: Node<'_>) -> bool {
+    match node.kind() {
+        "lexical_declaration" | "using_declaration" | "variable_declaration" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor).any(|declarator| {
+                declarator
+                    .child_by_field_name("value")
+                    .is_some_and(javascript_expression_suspends_async_continuation)
+            })
+        }
+        _ => javascript_expression_suspends_async_continuation(node),
+    }
+}
 fn collect_javascript_pattern_initialization<'tree>(
     node: Node<'tree>,
     source: &str,
@@ -1266,12 +1296,12 @@ fn walk_javascript_for_in(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // A `for await` loop suspends after evaluating its iterable and before
-    // initializing an iteration binding, entering its body, or advancing to a
-    // later sibling in the same lexical scope. Keep conditional branches
-    // conservative by only marking the current scope, not its parent.
-    let awaits_iteration = javascript_for_in_awaits_iteration(node)
-        && scopes.iter().any(|scope| scope.tracks_async_continuations);
+    // A `for await` loop, or an ordinary loop with a direct await in its
+    // iterable, suspends after evaluating that iterable and before initializing
+    // an iteration binding or entering its body. Keep conditional branches
+    // conservative and do not cross a nested callable boundary.
+    let suspends_before_iteration = javascript_for_in_suspends_before_iteration(node)
+        && javascript_async_continuation_scope_active(scopes);
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
@@ -1314,7 +1344,7 @@ fn walk_javascript_for_in(
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
     }
-    if awaits_iteration {
+    if suspends_before_iteration {
         scopes
             .last_mut()
             .expect("a for-await loop scope is active")
@@ -1337,7 +1367,7 @@ fn walk_javascript_for_in(
         walk_javascript_node(body, source, scopes, scan, deadline)?;
     }
     scopes.pop();
-    if awaits_iteration {
+    if suspends_before_iteration {
         scopes
             .last_mut()
             .expect("the tracked async callable scope remains active")
@@ -1353,6 +1383,7 @@ fn walk_javascript_for_statement(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let tracks_async_continuation = javascript_async_continuation_scope_active(scopes);
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
@@ -1360,8 +1391,34 @@ fn walk_javascript_for_statement(
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
-    walk_javascript_children(node, source, scopes, scan, deadline)?;
+    let initializer = node.child_by_field_name("initializer");
+    if let Some(initializer) = initializer {
+        walk_javascript_node(initializer, source, scopes, scan, deadline)?;
+    }
+    let suspends_before_loop = tracks_async_continuation
+        && initializer.is_some_and(javascript_for_initializer_suspends_async_continuation);
+    if suspends_before_loop {
+        scopes
+            .last_mut()
+            .expect("a JavaScript for-loop scope is active")
+            .defers_tdz_references = true;
+    }
+    if let Some(condition) = node.child_by_field_name("condition") {
+        walk_javascript_node(condition, source, scopes, scan, deadline)?;
+    }
+    if let Some(increment) = node.child_by_field_name("increment") {
+        walk_javascript_node(increment, source, scopes, scan, deadline)?;
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        walk_javascript_node(body, source, scopes, scan, deadline)?;
+    }
     scopes.pop();
+    if suspends_before_loop {
+        scopes
+            .last_mut()
+            .expect("the tracked async callable scope remains active")
+            .defers_tdz_references = true;
+    }
     Ok(())
 }
 
