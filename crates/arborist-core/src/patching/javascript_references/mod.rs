@@ -648,7 +648,12 @@ fn collect_javascript_import_names<'tree>(
         }
         match current.kind() {
             "namespace_import" => {
-                if let Some(name_node) = current.child_by_field_name("name") {
+                let name_node = current.child_by_field_name("name").or_else(|| {
+                    current
+                        .named_child(0)
+                        .filter(|name| name.kind() == "identifier")
+                });
+                if let Some(name_node) = name_node {
                     let name = node_text(name_node, source)?.trim().to_string();
                     if !name.is_empty() {
                         insert_javascript_file_item(

@@ -44,8 +44,9 @@ struct Scope {
 /// destructured declarations, `for`/`for-in`/`for-of` loop variables, catch
 /// parameters, and nested callable parameters) versus names that must resolve
 /// at file scope (same-file declarations and imports). Non-computed property
-/// names and object keys, labels, JSX tag and attribute names, and TypeScript
-/// type spellings are not value references and are skipped.
+/// names and object keys, labels, intrinsic JSX tag and attribute names, and
+/// TypeScript type spellings are not value references and are skipped. JSX
+/// component tags remain value references.
 pub(super) fn scan_javascript_symbol_scope(
     symbol_node: Node<'_>,
     source: &str,
@@ -1389,16 +1390,54 @@ fn walk_javascript_jsx_element(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // Tag names and attribute names are not value references; only expression
-    // content inside JSX is walked.
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        if matches!(child.kind(), "identifier" | "property_identifier") {
-            continue;
+    match node.kind() {
+        "jsx_opening_element" | "jsx_self_closing_element" => {
+            let mut cursor = node.walk();
+            let mut children = node.named_children(&mut cursor);
+            if let Some(tag) = children.next() {
+                walk_javascript_jsx_tag(tag, source, scopes, scan, deadline)?;
+            }
+            for child in children {
+                walk_javascript_node(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
         }
-        walk_javascript_node(child, source, scopes, scan, deadline)?;
+        // The matching closing tag is syntax, not a second runtime lookup.
+        "jsx_closing_element" => Ok(()),
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if matches!(child.kind(), "identifier" | "property_identifier") {
+                    continue;
+                }
+                walk_javascript_node(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
     }
-    Ok(())
+}
+
+fn walk_javascript_jsx_tag(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    match node.kind() {
+        "identifier" => {
+            let name = node_text(node, source)?.trim();
+            if name.chars().next().is_some_and(char::is_uppercase) {
+                record_javascript_reference(node, source, scopes, scan)?;
+            }
+            Ok(())
+        }
+        // Namespace tag names are syntax-only. A member-expression tag such
+        // as `<Widgets.Button />` resolves its leftmost runtime value through
+        // the normal member-expression walker.
+        "jsx_namespace_name" => Ok(()),
+        _ => walk_javascript_node(node, source, scopes, scan, deadline),
+    }
 }
 
 fn record_javascript_reference(

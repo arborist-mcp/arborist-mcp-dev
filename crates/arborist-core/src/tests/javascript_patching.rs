@@ -74,6 +74,63 @@ fn patches_exported_javascript_callable_variables_and_tsx_functions() {
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_unresolved_jsx_components() {
+    let source = "export function App() { return <main>ready</main>; }\n";
+    let replacement = "export function App() { return <MissingWidget />; }";
+    let result = patch_ast_node(Path::new("sample.tsx"), source, "App", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["MissingWidget"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_local_jsx_components() {
+    let source = "export function App() { return <main>ready</main>; }\n";
+    let replacement = r#"export function App() {
+    const Widget = () => <span>ready</span>;
+    return <Widget />;
+}"#;
+    let result = patch_ast_node(Path::new("sample.tsx"), source, "App", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "Widget" && decision.status == "resolved"),
+        "{result:#?}"
+    );
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_member_expression_jsx_components() {
+    let source = r#"import * as Widgets from "./widgets";
+
+export function App() {
+    return <main>ready</main>;
+}
+"#;
+    let replacement = r#"export function App() {
+    return <Widgets.Button />;
+}"#;
+    let result = patch_ast_node(Path::new("sample.tsx"), source, "App", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let widgets = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Widgets")
+        .expect("JSX member component root should resolve");
+    assert_eq!(widgets.status, "resolved");
+    assert_eq!(
+        widgets.candidates.first().unwrap().origin_type,
+        "imported_module"
+    );
+}
+
+#[test]
 fn patches_exported_javascript_generator_variables_by_semantic_path() {
     let source = "export const sequence = function* (value) { yield value; };\n";
     let replacement = "export const sequence = function* (value) { yield value + 1; };";
