@@ -1728,6 +1728,88 @@ fn javascript_patch_binding_validation_allows_async_iife_references_after_await(
 }
 
 #[test]
+fn javascript_patch_binding_validation_allows_async_iife_references_in_for_await_body() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        for await (const entry of [0]) {
+            return value;
+        }
+        return 0;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+}
+
+#[test]
+fn javascript_patch_binding_validation_allows_async_iife_references_after_for_await() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        for await (const entry of [0]) {
+            void entry;
+        }
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_in_for_await_iterable() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        for await (const entry of value) {
+            return entry;
+        }
+        return 0;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_allows_async_iife_references_after_sequence_await() {
     let source = r#"function compute(): unknown {
     return 0;

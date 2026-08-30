@@ -1105,6 +1105,12 @@ fn javascript_for_in_has_var_binding(node: Node<'_>) -> bool {
         .any(|kind| kind.kind() == "var")
 }
 
+fn javascript_for_in_awaits_iteration(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|child| child.kind() == "await")
+}
+
 fn collect_javascript_pattern_initialization<'tree>(
     node: Node<'tree>,
     source: &str,
@@ -1260,6 +1266,10 @@ fn walk_javascript_for_in(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let awaits_iteration = javascript_for_in_awaits_iteration(node)
+        && scopes
+            .last()
+            .is_some_and(|scope| scope.tracks_async_continuations);
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
@@ -1302,6 +1312,12 @@ fn walk_javascript_for_in(
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
     }
+    if awaits_iteration {
+        scopes
+            .last_mut()
+            .expect("a for-await loop scope is active")
+            .defers_tdz_references = true;
+    }
     for default in post_iterable_defaults {
         walk_javascript_node(default, source, scopes, scan, deadline)?;
     }
@@ -1319,6 +1335,12 @@ fn walk_javascript_for_in(
         walk_javascript_node(body, source, scopes, scan, deadline)?;
     }
     scopes.pop();
+    if awaits_iteration {
+        scopes
+            .last_mut()
+            .expect("the tracked async callable scope remains active")
+            .defers_tdz_references = true;
+    }
     Ok(())
 }
 
