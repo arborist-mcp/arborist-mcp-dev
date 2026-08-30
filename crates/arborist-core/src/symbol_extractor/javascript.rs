@@ -416,6 +416,30 @@ mod tests {
     }
 
     #[test]
+    fn indexes_typescript_nested_namespace_symbols_with_qualified_scope_paths() {
+        let source = r#"namespace outer.inner {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+"#;
+        let path = Path::new("sample.ts");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_javascript_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let helper = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "outer::inner::helper")
+            .unwrap();
+        assert_eq!(helper.symbol_id, "outer::inner::helper");
+        assert_eq!(helper.scope_path.as_deref(), Some("outer::inner"));
+        assert_eq!(helper.parameters, vec!["value: number"]);
+        assert_eq!(helper.return_type.as_deref(), Some("number"));
+    }
+
+    #[test]
     fn collects_namespace_member_call_facts() {
         let source = "import * as ns from \"./helper\";\nexport function caller(value) { return ns.helper(value) + ns.helper(value, 2); }\n";
         let path = Path::new("caller.ts");

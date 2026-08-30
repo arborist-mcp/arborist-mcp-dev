@@ -387,6 +387,30 @@ fn builds_javascript_typescript_and_tsx_semantic_skeletons() {
 }
 
 #[test]
+fn builds_typescript_namespace_skeletons_at_namespace_aware_depths() {
+    let source = r#"namespace outer.inner {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+"#;
+    let path = Path::new("sample.ts");
+
+    let shallow = get_semantic_skeleton(path, source, 1, &[]).unwrap();
+    assert!(shallow.available_paths.is_empty());
+
+    let skeleton = get_semantic_skeleton(path, source, 2, &[]).unwrap();
+    assert_eq!(skeleton.available_paths, vec!["outer::inner::helper"]);
+    let helper = &skeleton.available_symbols[0];
+    assert_eq!(helper.scope_path.as_deref(), Some("outer::inner"));
+    assert!(
+        skeleton
+            .skeleton
+            .contains("function helper(value: number): number")
+    );
+}
+
+#[test]
 fn expands_javascript_semantic_nodes_without_duplicating_members() {
     let source = "export class Counter { increment(value) { return value + 1; } }\n";
 

@@ -85,7 +85,7 @@ pub(crate) fn build_javascript_skeleton(
     let mut available_paths = Vec::new();
     let mut available_symbols = Vec::new();
     for (node, symbol) in collected_items {
-        if javascript_semantic_depth(node) > depth_limit
+        if javascript_semantic_depth(node, source)? > depth_limit
             && !expand_set.contains(symbol.semantic_path.as_str())
             && !expand_set.contains(symbol.symbol_id.as_str())
         {
@@ -217,12 +217,46 @@ pub(crate) fn javascript_semantic_path(node: Node<'_>, source: &str, name: &str)
             && let Some(parent_name) = javascript_symbol_name(parent, source)?
         {
             ancestors.push(parent_name);
+        } else if let Some(namespace_name) = javascript_namespace_scope_name(parent, source)? {
+            ancestors.push(namespace_name);
         }
         current = parent.parent();
     }
     ancestors.reverse();
     ancestors.push(name.to_string());
     Ok(ancestors.join("::"))
+}
+
+fn javascript_namespace_scope_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if !matches!(node.kind(), "internal_module" | "module") {
+        return Ok(None);
+    }
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    javascript_namespace_name(name, source)
+}
+
+fn javascript_namespace_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    match node.kind() {
+        "identifier" => node_text(node, source)
+            .map(|name| name.trim().to_string())
+            .map(|name| (!name.is_empty()).then_some(name)),
+        "nested_identifier" => {
+            let Some(object) = node.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            let Some(property) = node.child_by_field_name("property") else {
+                return Ok(None);
+            };
+            let Some(object) = javascript_namespace_name(object, source)? else {
+                return Ok(None);
+            };
+            let property = node_text(property, source)?.trim().to_string();
+            Ok((!property.is_empty()).then(|| format!("{object}::{property}")))
+        }
+        _ => Ok(None),
+    }
 }
 
 pub(crate) fn javascript_signature(node: Node<'_>, source: &str) -> Option<String> {
@@ -295,16 +329,18 @@ fn javascript_callable_value(node: Node<'_>) -> Node<'_> {
         .unwrap_or(node)
 }
 
-fn javascript_semantic_depth(node: Node<'_>) -> usize {
+fn javascript_semantic_depth(node: Node<'_>, source: &str) -> Result<usize> {
     let mut depth = 0;
     let mut current = Some(node);
     while let Some(candidate) = current {
-        if is_javascript_symbol_node(candidate) {
+        if is_javascript_symbol_node(candidate)
+            || javascript_namespace_scope_name(candidate, source)?.is_some()
+        {
             depth += 1;
         }
         current = candidate.parent();
     }
-    depth
+    Ok(depth)
 }
 
 fn collect_javascript_symbol_nodes<'tree>(

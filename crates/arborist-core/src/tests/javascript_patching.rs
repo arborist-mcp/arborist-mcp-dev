@@ -92,6 +92,38 @@ fn patches_exported_javascript_generator_variables_by_semantic_path() {
 }
 
 #[test]
+fn patches_typescript_namespace_functions_by_qualified_semantic_path() {
+    let source = r#"namespace first {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+namespace second {
+    export function helper(value: number): number {
+        return value + 2;
+    }
+}
+"#;
+    let replacement = r#"export function helper(value: number): number {
+    return value + 3;
+}"#;
+    let result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "first::helper",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.resolved_symbol_id, "first::helper");
+    assert!(result.updated_source.contains("return value + 3;"));
+    assert!(result.updated_source.contains("return value + 2;"));
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");
