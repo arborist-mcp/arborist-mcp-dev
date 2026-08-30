@@ -2543,6 +2543,40 @@ fn javascript_patch_binding_validation_rejects_references_outside_nested_block_s
 }
 
 #[test]
+fn javascript_patch_binding_validation_accepts_standard_runtime_globals() {
+    let source = r#"function compute() { return 0; }"#;
+    let replacement = r#"function compute() {
+    return [
+        AbortController,
+        AbortSignal,
+        AggregateError,
+        Atomics,
+        DOMException,
+        FinalizationRegistry,
+        Intl,
+        SharedArrayBuffer,
+        TextDecoder,
+        TextEncoder,
+        URL,
+        URLSearchParams,
+        WeakRef,
+        WebAssembly,
+    ].length;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn typescript_patch_binding_validation_resolves_local_enum_values() {
     let source = r#"function compute(): number { return 0; }"#;
     let replacement = r#"function compute(): number {
