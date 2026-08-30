@@ -301,6 +301,97 @@ export function compute(value: number): number {
 }
 
 #[test]
+fn typescript_patch_binding_validation_resolves_namespace_qualified_references() {
+    let source = r#"namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+export function compute(value: number): number {
+    return utilities.helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return utilities.helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let utilities = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "utilities")
+        .expect("namespace root should resolve");
+    assert_eq!(utilities.symbol.node_kind, "internal_module");
+    assert_eq!(utilities.symbol.semantic_path, "utilities");
+}
+
+#[test]
+fn typescript_patch_binding_validation_resolves_nested_namespace_qualified_references() {
+    let source = r#"namespace outer.inner {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+export function compute(value: number): number {
+    return outer.inner.helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return outer.inner.helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let outer = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "outer")
+        .expect("nested namespace root should resolve");
+    assert_eq!(outer.symbol.node_kind, "internal_module");
+    assert_eq!(outer.symbol.semantic_path, "outer");
+}
+
+#[test]
+fn typescript_patch_binding_validation_merges_reopened_namespaces() {
+    let source = r#"namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+namespace utilities {
+    export const marker = true;
+}
+
+export function compute(value: number): number {
+    return utilities.helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return utilities.helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let utilities = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "utilities")
+        .expect("merged namespace root should resolve");
+    assert_eq!(utilities.symbol.node_kind, "internal_module");
+    assert_eq!(utilities.symbol.semantic_path, "utilities");
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");

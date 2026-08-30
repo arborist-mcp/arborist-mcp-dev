@@ -277,18 +277,29 @@ fn visible_javascript_file_item<'tree>(
                 .map(|(parent_path, _)| parent_path);
             continue;
         };
-        if candidates.next().is_some() {
-            return None;
+        if candidates.all(|other| javascript_file_items_merge(candidate, other)) {
+            return Some(candidate);
         }
-        return Some(candidate);
+        return None;
     }
 
     let mut root_candidates = items.iter().filter(|item| item.parent_path.is_none());
     let candidate = root_candidates.next()?;
-    if root_candidates.next().is_some() {
-        return None;
+    if root_candidates.all(|other| javascript_file_items_merge(candidate, other)) {
+        Some(candidate)
+    } else {
+        None
     }
-    Some(candidate)
+}
+
+fn javascript_file_items_merge(
+    first: &JavaScriptFileItem<'_>,
+    second: &JavaScriptFileItem<'_>,
+) -> bool {
+    matches!(first.node_kind, "internal_module" | "module")
+        && matches!(second.node_kind, "internal_module" | "module")
+        && first.semantic_path == second.semantic_path
+        && first.parent_path == second.parent_path
 }
 
 fn collect_javascript_file_items<'tree>(
@@ -366,6 +377,27 @@ fn collect_javascript_namespace_scope_items<'tree>(
     let Some(namespace_name) = javascript_namespace_scope_name(namespace, source)? else {
         return Ok(());
     };
+    let Some(namespace_binding_name) = namespace_name
+        .split("::")
+        .next()
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(());
+    };
+    let namespace_node_kind = match namespace.kind() {
+        "internal_module" => "internal_module",
+        "module" => "module",
+        _ => return Ok(()),
+    };
+    insert_javascript_file_item(
+        namespace_binding_name.to_string(),
+        namespace_node_kind,
+        namespace,
+        "module_scope",
+        scope_path,
+        items,
+    );
+
     let Some(body) = namespace.child_by_field_name("body") else {
         return Ok(());
     };
