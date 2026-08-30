@@ -188,6 +188,12 @@ fn walk_javascript_node(
             }
             Ok(())
         }
+        "type_assertion" | "non_null_expression" => {
+            if let Some(expression) = javascript_value_wrapper_expression(node) {
+                walk_javascript_node(expression, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
         "jsx_element"
         | "jsx_opening_element"
         | "jsx_closing_element"
@@ -1342,6 +1348,16 @@ fn javascript_immediately_invoked_callable(
     }
 }
 
+fn javascript_value_wrapper_expression(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    match node.kind() {
+        // A type assertion has type arguments before its expression operand.
+        "type_assertion" => node.named_children(&mut cursor).last(),
+        "non_null_expression" => node.named_children(&mut cursor).next(),
+        _ => None,
+    }
+}
+
 fn javascript_unwrap_value_expression(mut node: Node<'_>) -> Node<'_> {
     loop {
         let next = match node.kind() {
@@ -1350,6 +1366,7 @@ fn javascript_unwrap_value_expression(mut node: Node<'_>) -> Node<'_> {
                 node.named_children(&mut cursor).next()
             }
             "as_expression" | "satisfies_expression" => node.child_by_field_name("left"),
+            "type_assertion" | "non_null_expression" => javascript_value_wrapper_expression(node),
             _ => None,
         };
         let Some(next) = next else {

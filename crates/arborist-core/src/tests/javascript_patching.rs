@@ -642,6 +642,56 @@ fn javascript_patch_binding_validation_resolves_lexical_bindings_captured_by_ini
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_type_assertion_iife_tdz_captures() {
+    let source = r#"function compute() {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute() {
+    const helper = (<() => number>function () {
+        return helper;
+    })();
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_non_null_iife_tdz_captures() {
+    let source = r#"function compute() {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute() {
+    const helper = (function () {
+        return helper;
+    })!();
+    return helper;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["helper"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_immediately_invoked_lexical_captures() {
     let source = r#"function compute(value) {
     return value;
