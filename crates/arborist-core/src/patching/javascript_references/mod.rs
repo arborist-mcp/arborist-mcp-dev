@@ -302,9 +302,11 @@ fn javascript_file_items_merge(
 
     let first_is_namespace = is_javascript_namespace_file_item(first);
     let second_is_namespace = is_javascript_namespace_file_item(second);
-    (first_is_namespace && second_is_namespace)
-        || (first_is_namespace && is_typescript_namespace_merge_value(second))
-        || (second_is_namespace && is_typescript_namespace_merge_value(first))
+    if first_is_namespace {
+        second_is_namespace || is_typescript_namespace_merge_value(second)
+    } else {
+        second_is_namespace && is_typescript_namespace_merge_value(first)
+    }
 }
 
 fn is_javascript_namespace_file_item(item: &JavaScriptFileItem<'_>) -> bool {
