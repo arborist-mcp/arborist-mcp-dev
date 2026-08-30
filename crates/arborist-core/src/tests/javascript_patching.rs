@@ -1582,6 +1582,33 @@ fn javascript_patch_binding_validation_rejects_type_assertion_iife_tdz_captures(
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_value_wrapper_iife_tdz_captures() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"function compute(): unknown {
+    const asValue = ((function () { return asValue; }) as () => unknown)();
+    const satisfiesValue = ((function () { return satisfiesValue; }) satisfies () => unknown)();
+    return [asValue, satisfiesValue];
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        ["asValue", "satisfiesValue"]
+    );
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_non_null_iife_tdz_captures() {
     let source = r#"function compute() {
     return 0;
