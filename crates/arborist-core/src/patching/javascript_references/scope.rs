@@ -34,6 +34,9 @@ struct Scope {
     // Callable bodies usually defer evaluation until after the initializer
     // completes. Directly invoked function expressions are the exception.
     defers_tdz_references: bool,
+    // The lexical body scope of an immediately invoked async callable tracks
+    // direct awaits so later declarators can be treated as continuations.
+    tracks_async_continuations: bool,
     bindings: Vec<JavaScriptBinding>,
     initializing_names: BTreeSet<String>,
 }
@@ -243,6 +246,7 @@ fn walk_javascript_field_definition(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: true,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -328,6 +332,7 @@ fn walk_javascript_block(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -386,6 +391,7 @@ fn walk_javascript_class_static_block(
     scopes.push(Scope {
         captures_var_bindings: true,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -421,6 +427,7 @@ fn walk_javascript_switch(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -589,6 +596,7 @@ fn walk_javascript_immediately_invoked_async_body(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: true,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -615,29 +623,10 @@ fn walk_javascript_immediately_invoked_async_body(
 }
 
 fn javascript_statement_suspends_async_continuation(node: Node<'_>) -> bool {
-    if node.kind() == "expression_statement" {
-        return node
+    node.kind() == "expression_statement"
+        && node
             .named_child(0)
-            .is_some_and(javascript_expression_suspends_async_continuation);
-    }
-
-    if !matches!(
-        node.kind(),
-        "lexical_declaration" | "using_declaration" | "variable_declaration"
-    ) {
-        return false;
-    }
-    let mut cursor = node.walk();
-    let mut declarators = node
-        .named_children(&mut cursor)
-        .filter(|child| child.kind() == "variable_declarator");
-    let Some(declarator) = declarators.next() else {
-        return false;
-    };
-    declarators.next().is_none()
-        && declarator
-            .child_by_field_name("value")
-            .is_some_and(|value| value.kind() == "await_expression")
+            .is_some_and(javascript_expression_suspends_async_continuation)
 }
 
 fn javascript_expression_suspends_async_continuation(node: Node<'_>) -> bool {
@@ -646,6 +635,15 @@ fn javascript_expression_suspends_async_continuation(node: Node<'_>) -> bool {
             && node
                 .child_by_field_name("right")
                 .is_some_and(|right| right.kind() == "await_expression"))
+}
+
+fn mark_javascript_direct_await_continuation(value: Node<'_>, scopes: &mut [Scope]) {
+    if value.kind() == "await_expression"
+        && let Some(scope) = scopes.last_mut()
+        && scope.tracks_async_continuations
+    {
+        scope.defers_tdz_references = true;
+    }
 }
 
 fn hoist_javascript_function_var_bindings(
@@ -714,6 +712,7 @@ fn walk_javascript_enum(
         scopes.push(Scope {
             captures_var_bindings: false,
             defers_tdz_references: false,
+            tracks_async_continuations: false,
             bindings: Vec::new(),
             initializing_names: BTreeSet::new(),
         });
@@ -790,6 +789,7 @@ fn walk_javascript_class(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -954,6 +954,7 @@ fn walk_javascript_declaration(
             }
             if let Some(value) = value {
                 walk_javascript_node(value, source, scopes, scan, deadline)?;
+                mark_javascript_direct_await_continuation(value, scopes);
             }
         }
         return Ok(());
@@ -990,6 +991,7 @@ fn walk_javascript_declaration(
         }
         if let Some(value) = value {
             walk_javascript_node(value, source, scopes, scan, deadline)?;
+            mark_javascript_direct_await_continuation(value, scopes);
         }
         let target_scope = &mut scopes[target_index];
         for name in names {
@@ -1253,6 +1255,7 @@ fn walk_javascript_for_in(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1321,6 +1324,7 @@ fn walk_javascript_for_statement(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1339,6 +1343,7 @@ fn walk_javascript_catch(
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1578,6 +1583,7 @@ fn collect_javascript_callable_bindings<'tree>(
     let mut scope = Scope {
         captures_var_bindings: true,
         defers_tdz_references,
+        tracks_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     };
