@@ -328,6 +328,9 @@ fn collect_javascript_scope_items<'tree>(
             "import_statement" => {
                 collect_javascript_import_names(child, source, scope_path, items)?
             }
+            "import_alias" => {
+                collect_javascript_import_alias_name(child, source, scope_path, items)?
+            }
             "export_statement" => {
                 collect_javascript_export_names(child, source, scope_path, items)?
             }
@@ -417,6 +420,32 @@ fn collect_javascript_top_level_declarator_names<'tree>(
             "variable_declarator",
             declarator,
             "module_scope",
+            parent_path,
+            items,
+        );
+    }
+    Ok(())
+}
+
+fn collect_javascript_import_alias_name<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+) -> Result<()> {
+    let Some(name_node) = node
+        .named_child(0)
+        .filter(|name| name.kind() == "identifier")
+    else {
+        return Ok(());
+    };
+    let name = node_text(name_node, source)?.trim().to_string();
+    if !name.is_empty() {
+        insert_javascript_file_item(
+            name,
+            "import_alias",
+            node,
+            "imported_module",
             parent_path,
             items,
         );
@@ -542,6 +571,9 @@ fn collect_javascript_export_names<'tree>(
             }
             "internal_module" | "module" => {
                 collect_javascript_namespace_scope_items(child, source, parent_path, items, None)?
+            }
+            "import_alias" => {
+                collect_javascript_import_alias_name(child, source, parent_path, items)?
             }
             _ => {}
         }

@@ -239,6 +239,68 @@ fn javascript_patch_binding_validation_resolves_exported_nested_namespace_siblin
 }
 
 #[test]
+fn typescript_patch_binding_validation_resolves_namespace_import_aliases() {
+    let source = r#"namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+import helper = utilities.helper;
+
+export function compute(value: number): number {
+    return helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .expect("namespace import alias should resolve");
+    assert_eq!(helper.symbol.node_kind, "import_alias");
+    assert_eq!(helper.symbol.origin_type, "imported_module");
+}
+
+#[test]
+fn typescript_patch_binding_validation_resolves_exported_import_aliases() {
+    let source = r#"namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+export import helper = utilities.helper;
+
+export function compute(value: number): number {
+    return helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .expect("exported import alias should resolve");
+    assert_eq!(helper.symbol.node_kind, "import_alias");
+    assert_eq!(helper.symbol.origin_type, "imported_module");
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");
