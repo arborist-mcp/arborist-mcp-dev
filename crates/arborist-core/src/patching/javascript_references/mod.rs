@@ -299,7 +299,11 @@ fn javascript_file_item_provides_runtime_binding(item: &JavaScriptFileItem<'_>) 
     !matches!(
         item.node_kind,
         "interface_declaration" | "type_alias_declaration"
-    )
+    ) && !(item.node_kind == "enum_declaration" && typescript_const_enum_declaration(item.node))
+}
+
+fn typescript_const_enum_declaration(node: Node<'_>) -> bool {
+    node.child(0).is_some_and(|child| child.kind() == "const")
 }
 
 fn javascript_file_items_merge(

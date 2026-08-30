@@ -579,6 +579,33 @@ export function compute(): unknown {
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_const_enum_values() {
+    let source = r#"const enum Direction {
+    Up,
+}
+
+export function compute(): unknown {
+    return Direction;
+}
+"#;
+    let replacement = r#"export function compute(): unknown {
+    return Direction;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert!(
+        result
+            .validation
+            .unresolved_identifiers
+            .iter()
+            .any(|name| name == "Direction"),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn typescript_patch_binding_validation_keeps_runtime_bindings_from_mixed_type_imports() {
     let source = r#"import { type as typeValue, type Shape, transform } from "./shapes";
 
