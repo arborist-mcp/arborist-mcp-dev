@@ -37,6 +37,9 @@ struct Scope {
     // The lexical body scope of an immediately invoked async callable tracks
     // direct awaits so later declarators can be treated as continuations.
     tracks_async_continuations: bool,
+    // A control-flow branch without its own statement block must retain any
+    // async continuation state locally: the branch may not execute at all.
+    isolates_async_continuations: bool,
     bindings: Vec<JavaScriptBinding>,
     initializing_names: BTreeSet<String>,
 }
@@ -140,6 +143,7 @@ fn walk_javascript_node(
             walk_javascript_class_static_block(node, source, scopes, scan, deadline)
         }
         "statement_block" => walk_javascript_block(node, source, scopes, scan, deadline),
+        "if_statement" => walk_javascript_if_statement(node, source, scopes, scan, deadline),
         "switch_statement" => walk_javascript_switch(node, source, scopes, scan, deadline),
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
@@ -249,6 +253,7 @@ fn walk_javascript_field_definition(
         captures_var_bindings: false,
         defers_tdz_references: true,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -335,6 +340,7 @@ fn walk_javascript_block(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -394,6 +400,7 @@ fn walk_javascript_class_static_block(
         captures_var_bindings: true,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -409,6 +416,52 @@ fn walk_javascript_class_static_block(
         }
     }
     walk_javascript_children(node, source, scopes, scan, deadline)?;
+    scopes.pop();
+    Ok(())
+}
+
+fn walk_javascript_if_statement(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(condition) = node.child_by_field_name("condition") {
+        walk_javascript_node(condition, source, scopes, scan, deadline)?;
+    }
+    if let Some(consequence) = node.child_by_field_name("consequence") {
+        walk_javascript_conditional_branch(consequence, source, scopes, scan, deadline)?;
+    }
+    if let Some(alternative) = node.child_by_field_name("alternative") {
+        walk_javascript_conditional_branch(alternative, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+
+fn walk_javascript_conditional_branch(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    // A braced branch already has an isolated lexical scope. Introduce the
+    // same continuation boundary for a bare branch so an await reached only
+    // on that branch cannot relax TDZ validation after its enclosing `if`.
+    if node.kind() == "statement_block" {
+        return walk_javascript_node(node, source, scopes, scan, deadline);
+    }
+
+    scopes.push(Scope {
+        captures_var_bindings: false,
+        defers_tdz_references: false,
+        tracks_async_continuations: false,
+        isolates_async_continuations: true,
+        bindings: Vec::new(),
+        initializing_names: BTreeSet::new(),
+    });
+    walk_javascript_node(node, source, scopes, scan, deadline)?;
     scopes.pop();
     Ok(())
 }
@@ -441,6 +494,7 @@ fn walk_javascript_switch(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -549,9 +603,9 @@ fn walk_javascript_function(
     if matches!(
         node.kind(),
         "function_declaration" | "generator_function_declaration"
-    ) && let Some(enclosing) = scopes.last_mut()
+    ) && let Some(index) = javascript_function_declaration_scope_index(scopes)
     {
-        bind_javascript_function_declaration_name(node, source, enclosing, scan)?;
+        bind_javascript_function_declaration_name(node, source, &mut scopes[index], scan)?;
     }
     let (function_scope, parameter_patterns) =
         collect_javascript_callable_bindings(node, source, scan, !immediately_invoked)?;
@@ -610,6 +664,7 @@ fn walk_javascript_immediately_invoked_async_body(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: true,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -742,6 +797,7 @@ fn walk_javascript_enum(
             captures_var_bindings: false,
             defers_tdz_references: false,
             tracks_async_continuations: false,
+            isolates_async_continuations: false,
             bindings: Vec::new(),
             initializing_names: BTreeSet::new(),
         });
@@ -819,6 +875,7 @@ fn walk_javascript_class(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1327,6 +1384,7 @@ fn walk_javascript_for_in(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1409,6 +1467,7 @@ fn walk_javascript_for_statement(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1519,6 +1578,7 @@ fn walk_javascript_catch(
         captures_var_bindings: false,
         defers_tdz_references: false,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     });
@@ -1738,6 +1798,14 @@ fn record_javascript_reference(
     Ok(())
 }
 
+fn javascript_function_declaration_scope_index(scopes: &[Scope]) -> Option<usize> {
+    scopes
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, scope)| (!scope.isolates_async_continuations).then_some(index))
+}
+
 fn javascript_var_target_scope_index(scopes: &[Scope]) -> Option<usize> {
     for (index, scope) in scopes.iter().enumerate().rev() {
         if scope.captures_var_bindings {
@@ -1759,6 +1827,7 @@ fn collect_javascript_callable_bindings<'tree>(
         captures_var_bindings: true,
         defers_tdz_references,
         tracks_async_continuations: false,
+        isolates_async_continuations: false,
         bindings: Vec::new(),
         initializing_names: BTreeSet::new(),
     };
