@@ -74,6 +74,24 @@ fn patches_exported_javascript_callable_variables_and_tsx_functions() {
 }
 
 #[test]
+fn patches_exported_javascript_generator_variables_by_semantic_path() {
+    let source = "export const sequence = function* (value) { yield value; };\n";
+    let replacement = "export const sequence = function* (value) { yield value + 1; };";
+    let result = patch_ast_node(
+        Path::new("sample.js"),
+        source,
+        "sequence",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert_eq!(result.resolved_symbol_id, "sequence");
+    assert_eq!(result.updated_source, format!("{replacement}\n"));
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");

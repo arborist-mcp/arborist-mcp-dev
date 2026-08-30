@@ -276,14 +276,22 @@ pub(crate) fn javascript_return_type(node: Node<'_>, source: &str) -> Option<Str
 
 fn is_javascript_callable_variable_declarator(node: Node<'_>) -> bool {
     node.kind() == "variable_declarator"
-        && node
-            .child_by_field_name("value")
-            .is_some_and(|value| matches!(value.kind(), "arrow_function" | "function_expression"))
+        && node.child_by_field_name("value").is_some_and(|value| {
+            matches!(
+                value.kind(),
+                "arrow_function" | "function_expression" | "generator_function"
+            )
+        })
 }
 
 fn javascript_callable_value(node: Node<'_>) -> Node<'_> {
     node.child_by_field_name("value")
-        .filter(|value| matches!(value.kind(), "arrow_function" | "function_expression"))
+        .filter(|value| {
+            matches!(
+                value.kind(),
+                "arrow_function" | "function_expression" | "generator_function"
+            )
+        })
         .unwrap_or(node)
 }
 

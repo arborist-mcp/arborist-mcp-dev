@@ -1483,9 +1483,11 @@ fn javascript_module_level_export_declared(
                     if !declarator
                         .child_by_field_name("value")
                         .is_some_and(|value| {
-                            matches!(value.kind(), "arrow_function" | "function_expression")
-                                || (kind == JavaScriptModuleExportKind::Constructible
-                                    && value.kind() == "class")
+                            matches!(
+                                value.kind(),
+                                "arrow_function" | "function_expression" | "generator_function"
+                            ) || (kind == JavaScriptModuleExportKind::Constructible
+                                && value.kind() == "class")
                         })
                     {
                         continue;
@@ -2267,6 +2269,10 @@ const escaped = require("./escaped\\name");
                 Some("generate"),
             ),
             ("export = function* generate() {}\n", Some("generate")),
+            (
+                "const generate = function* () {};\nmodule.exports = generate;\n",
+                Some("generate"),
+            ),
             ("export default function helper() {}\n", None),
             // `export default helper` names the default export, not the
             // module's callable export object.
