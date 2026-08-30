@@ -202,6 +202,43 @@ namespace unrelated {
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_exported_nested_namespace_siblings() {
+    let source = r#"namespace outer {
+    export namespace inner {
+        export function helper(value: number): number {
+            return value + 1;
+        }
+
+        export function target(value: number): number {
+            return helper(value);
+        }
+    }
+}
+"#;
+    let replacement = r#"export function target(value: number): number {
+    return helper(value) + 1;
+}"#;
+    let result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "outer::inner::target",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .expect("nested namespace helper should resolve");
+    assert_eq!(helper.symbol.semantic_path, "outer::inner::helper");
+    assert_eq!(helper.symbol.scope_path.as_deref(), Some("outer::inner"));
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");

@@ -540,6 +540,9 @@ fn collect_javascript_export_names<'tree>(
             "lexical_declaration" | "variable_declaration" => {
                 collect_javascript_top_level_declarator_names(child, source, parent_path, items)?
             }
+            "internal_module" | "module" => {
+                collect_javascript_namespace_scope_items(child, source, parent_path, items, None)?
+            }
             _ => {}
         }
     }
