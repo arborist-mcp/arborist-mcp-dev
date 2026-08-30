@@ -1395,7 +1395,7 @@ fn walk_javascript_for_statement(
     if let Some(initializer) = initializer {
         walk_javascript_node(initializer, source, scopes, scan, deadline)?;
     }
-    let suspends_before_loop = tracks_async_continuation
+    let mut suspends_before_loop = tracks_async_continuation
         && initializer.is_some_and(javascript_for_initializer_suspends_async_continuation);
     if suspends_before_loop {
         scopes
@@ -1403,8 +1403,19 @@ fn walk_javascript_for_statement(
             .expect("a JavaScript for-loop scope is active")
             .defers_tdz_references = true;
     }
-    if let Some(condition) = node.child_by_field_name("condition") {
+    let condition = node.child_by_field_name("condition");
+    if let Some(condition) = condition {
         walk_javascript_node(condition, source, scopes, scan, deadline)?;
+    }
+    if !suspends_before_loop
+        && tracks_async_continuation
+        && condition.is_some_and(javascript_expression_suspends_async_continuation)
+    {
+        suspends_before_loop = true;
+        scopes
+            .last_mut()
+            .expect("a JavaScript for-loop scope is active")
+            .defers_tdz_references = true;
     }
     if let Some(increment) = node.child_by_field_name("increment") {
         walk_javascript_node(increment, source, scopes, scan, deadline)?;
