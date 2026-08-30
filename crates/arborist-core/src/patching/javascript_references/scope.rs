@@ -194,6 +194,7 @@ fn walk_javascript_node(
         | "jsx_self_closing_element" => {
             walk_javascript_jsx_element(node, source, scopes, scan, deadline)
         }
+        "jsx_namespace_name" => Ok(()),
         "jsx_attribute" => {
             if let Some(value) = node.child_by_field_name("value") {
                 walk_javascript_node(value, source, scopes, scan, deadline)?;

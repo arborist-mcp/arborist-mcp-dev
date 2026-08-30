@@ -1984,6 +1984,19 @@ fn typescript_patch_binding_validation_rejects_unresolved_parameter_decorators()
 }
 
 #[test]
+fn tsx_patch_binding_validation_ignores_jsx_namespace_names() {
+    let source = r#"function App() { return <main />; }"#;
+    let replacement = r#"function App() { return <svg:rect />; }"#;
+    let result = patch_ast_node(Path::new("app.tsx"), source, "App", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
+#[test]
 fn typescript_patch_binding_validation_rejects_enum_tdz_shadowing() {
     let source = r#"function compute(Mode: number): number { return Mode; }"#;
     let replacement = r#"function compute(Mode: number): number {
