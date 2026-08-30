@@ -227,7 +227,10 @@ pub(crate) fn javascript_semantic_path(node: Node<'_>, source: &str, name: &str)
     Ok(ancestors.join("::"))
 }
 
-fn javascript_namespace_scope_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+pub(crate) fn javascript_namespace_scope_name(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
     if !matches!(node.kind(), "internal_module" | "module") {
         return Ok(None);
     }

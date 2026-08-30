@@ -11,8 +11,8 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{ParsedDocument, node_text, normalize_path};
 use crate::model::{SymbolSummary, SymbolSummaryInit, ValidationBinding};
 use crate::semantic::javascript::{
-    javascript_parameters, javascript_return_type, javascript_semantic_path, javascript_signature,
-    javascript_symbol_name,
+    javascript_namespace_scope_name, javascript_parameters, javascript_return_type,
+    javascript_semantic_path, javascript_signature, javascript_symbol_name,
 };
 
 use scope::{JavaScriptBinding, scan_javascript_symbol_scope};
@@ -154,7 +154,7 @@ pub(crate) fn collect_javascript_reference_validation_with_deadline(
         if JAVASCRIPT_PREDECLARED_NAMES.contains(&name.as_str()) {
             continue;
         }
-        match file_items.get(name) {
+        match visible_javascript_file_item(&file_items, name, scope_path.as_deref()) {
             Some(item) => {
                 let summary = javascript_item_symbol_summary(&normalized_path, source, item);
                 validation
@@ -220,11 +220,14 @@ fn javascript_item_symbol_summary(
     );
     SymbolSummary::new(SymbolSummaryInit {
         symbol_id: format!(
-            "{}::javascript::<module>::{}::{}",
-            normalized_path, item.node_kind, item.name
+            "{}::javascript::{}::{}::{}",
+            normalized_path,
+            item.parent_path.as_deref().unwrap_or("<module>"),
+            item.node_kind,
+            item.name
         ),
-        semantic_path: item.name.clone(),
-        scope_path: None,
+        semantic_path: item.semantic_path.clone(),
+        scope_path: item.parent_path.clone(),
         file_path: normalized_path.to_string(),
         node_kind: item.node_kind.to_string(),
         origin_type: item.origin_type.to_string(),
@@ -253,16 +256,59 @@ struct JavaScriptFileItem<'tree> {
     node_kind: &'static str,
     node: Node<'tree>,
     origin_type: &'static str,
+    parent_path: Option<String>,
+    semantic_path: String,
+}
+
+fn visible_javascript_file_item<'tree>(
+    file_items: &'tree BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+    name: &str,
+    scope_path: Option<&str>,
+) -> Option<&'tree JavaScriptFileItem<'tree>> {
+    let items = file_items.get(name)?;
+    let mut current_scope_path = scope_path;
+    while let Some(scope_path) = current_scope_path {
+        let mut candidates = items
+            .iter()
+            .filter(|item| item.parent_path.as_deref() == Some(scope_path));
+        let Some(candidate) = candidates.next() else {
+            current_scope_path = scope_path
+                .rsplit_once("::")
+                .map(|(parent_path, _)| parent_path);
+            continue;
+        };
+        if candidates.next().is_some() {
+            return None;
+        }
+        return Some(candidate);
+    }
+
+    let mut root_candidates = items.iter().filter(|item| item.parent_path.is_none());
+    let candidate = root_candidates.next()?;
+    if root_candidates.next().is_some() {
+        return None;
+    }
+    Some(candidate)
 }
 
 fn collect_javascript_file_items<'tree>(
     root: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
+    collect_javascript_scope_items(root, source, None, items, deadline)
+}
+
+fn collect_javascript_scope_items<'tree>(
+    scope: Node<'tree>,
+    source: &str,
+    scope_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let mut cursor = scope.walk();
+    for child in scope.named_children(&mut cursor) {
         if let Some(deadline) = deadline {
             deadline.check("scanning JavaScript file items")?;
         }
@@ -274,24 +320,65 @@ fn collect_javascript_file_items<'tree>(
             | "enum_declaration"
             | "interface_declaration"
             | "type_alias_declaration" => {
-                insert_javascript_declaration_item(child, source, child.kind(), items)?
+                insert_javascript_declaration_item(child, source, child.kind(), scope_path, items)?
             }
             "lexical_declaration" | "variable_declaration" => {
-                collect_javascript_top_level_declarator_names(child, source, items)?
+                collect_javascript_top_level_declarator_names(child, source, scope_path, items)?
             }
-            "import_statement" => collect_javascript_import_names(child, source, items)?,
-            "export_statement" => collect_javascript_export_names(child, source, items)?,
+            "import_statement" => {
+                collect_javascript_import_names(child, source, scope_path, items)?
+            }
+            "export_statement" => {
+                collect_javascript_export_names(child, source, scope_path, items)?
+            }
+            "internal_module" | "module" => {
+                collect_javascript_namespace_scope_items(
+                    child, source, scope_path, items, deadline,
+                )?;
+            }
+            "expression_statement" => {
+                let Some(namespace) = child
+                    .named_child(0)
+                    .filter(|node| matches!(node.kind(), "internal_module" | "module"))
+                else {
+                    continue;
+                };
+                collect_javascript_namespace_scope_items(
+                    namespace, source, scope_path, items, deadline,
+                )?;
+            }
             _ => {}
         }
     }
     Ok(())
 }
 
+fn collect_javascript_namespace_scope_items<'tree>(
+    namespace: Node<'tree>,
+    source: &str,
+    scope_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let Some(namespace_name) = javascript_namespace_scope_name(namespace, source)? else {
+        return Ok(());
+    };
+    let Some(body) = namespace.child_by_field_name("body") else {
+        return Ok(());
+    };
+    let namespace_scope_path = match scope_path {
+        Some(parent_path) => format!("{parent_path}::{namespace_name}"),
+        None => namespace_name,
+    };
+    collect_javascript_scope_items(body, source, Some(&namespace_scope_path), items, deadline)
+}
+
 fn insert_javascript_declaration_item<'tree>(
     node: Node<'tree>,
     source: &str,
     node_kind: &'static str,
-    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
 ) -> Result<()> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(());
@@ -300,22 +387,15 @@ fn insert_javascript_declaration_item<'tree>(
     if name.is_empty() {
         return Ok(());
     }
-    items.insert(
-        name.clone(),
-        JavaScriptFileItem {
-            name,
-            node_kind,
-            node,
-            origin_type: "module_scope",
-        },
-    );
+    insert_javascript_file_item(name, node_kind, node, "module_scope", parent_path, items);
     Ok(())
 }
 
 fn collect_javascript_top_level_declarator_names<'tree>(
     node: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
 ) -> Result<()> {
     let mut cursor = node.walk();
     for declarator in node
@@ -332,14 +412,13 @@ fn collect_javascript_top_level_declarator_names<'tree>(
         if name.is_empty() {
             continue;
         }
-        items.insert(
-            name.clone(),
-            JavaScriptFileItem {
-                name,
-                node_kind: "variable_declarator",
-                node: declarator,
-                origin_type: "module_scope",
-            },
+        insert_javascript_file_item(
+            name,
+            "variable_declarator",
+            declarator,
+            "module_scope",
+            parent_path,
+            items,
         );
     }
     Ok(())
@@ -348,7 +427,8 @@ fn collect_javascript_top_level_declarator_names<'tree>(
 fn collect_javascript_import_names<'tree>(
     node: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
 ) -> Result<()> {
     let mut pending = vec![node];
     while let Some(current) = pending.pop() {
@@ -357,14 +437,13 @@ fn collect_javascript_import_names<'tree>(
                 if let Some(name_node) = current.child_by_field_name("name") {
                     let name = node_text(name_node, source)?.trim().to_string();
                     if !name.is_empty() {
-                        items.insert(
-                            name.clone(),
-                            JavaScriptFileItem {
-                                name,
-                                node_kind: "namespace_import",
-                                node: current,
-                                origin_type: "imported_module",
-                            },
+                        insert_javascript_file_item(
+                            name,
+                            "namespace_import",
+                            current,
+                            "imported_module",
+                            parent_path,
+                            items,
                         );
                     }
                 }
@@ -376,14 +455,13 @@ fn collect_javascript_import_names<'tree>(
                 if let Some(name_node) = name_node {
                     let name = node_text(name_node, source)?.trim().to_string();
                     if !name.is_empty() {
-                        items.insert(
-                            name.clone(),
-                            JavaScriptFileItem {
-                                name,
-                                node_kind: "import_specifier",
-                                node: current,
-                                origin_type: "imported_module",
-                            },
+                        insert_javascript_file_item(
+                            name,
+                            "import_specifier",
+                            current,
+                            "imported_module",
+                            parent_path,
+                            items,
                         );
                     }
                 }
@@ -393,14 +471,13 @@ fn collect_javascript_import_names<'tree>(
                 // import binding (`import def from "./module"`).
                 let name = node_text(current, source)?.trim().to_string();
                 if !name.is_empty() {
-                    items.insert(
-                        name.clone(),
-                        JavaScriptFileItem {
-                            name,
-                            node_kind: "default_import",
-                            node: current,
-                            origin_type: "imported_module",
-                        },
+                    insert_javascript_file_item(
+                        name,
+                        "default_import",
+                        current,
+                        "imported_module",
+                        parent_path,
+                        items,
                     );
                 }
             }
@@ -416,10 +493,37 @@ fn collect_javascript_import_names<'tree>(
     Ok(())
 }
 
+fn insert_javascript_file_item<'tree>(
+    name: String,
+    node_kind: &'static str,
+    node: Node<'tree>,
+    origin_type: &'static str,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+) {
+    let parent_path = parent_path.map(str::to_string);
+    let semantic_path = parent_path
+        .as_deref()
+        .map(|parent_path| format!("{parent_path}::{name}"))
+        .unwrap_or_else(|| name.clone());
+    items
+        .entry(name.clone())
+        .or_default()
+        .push(JavaScriptFileItem {
+            name,
+            node_kind,
+            node,
+            origin_type,
+            parent_path,
+            semantic_path,
+        });
+}
+
 fn collect_javascript_export_names<'tree>(
     node: Node<'tree>,
     source: &str,
-    items: &mut BTreeMap<String, JavaScriptFileItem<'tree>>,
+    parent_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -431,10 +535,10 @@ fn collect_javascript_export_names<'tree>(
             | "enum_declaration"
             | "interface_declaration"
             | "type_alias_declaration" => {
-                insert_javascript_declaration_item(child, source, child.kind(), items)?
+                insert_javascript_declaration_item(child, source, child.kind(), parent_path, items)?
             }
             "lexical_declaration" | "variable_declaration" => {
-                collect_javascript_top_level_declarator_names(child, source, items)?
+                collect_javascript_top_level_declarator_names(child, source, parent_path, items)?
             }
             _ => {}
         }

@@ -124,6 +124,84 @@ namespace second {
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_typescript_namespace_siblings() {
+    let source = r#"namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+
+    export function target(value: number): number {
+        return helper(value);
+    }
+}
+"#;
+    let replacement = r#"export function target(value: number): number {
+    return helper(value) + 1;
+}"#;
+    let result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "utilities::target",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .expect("namespace helper should resolve");
+    assert_eq!(helper.symbol.semantic_path, "utilities::helper");
+    assert_eq!(helper.symbol.scope_path.as_deref(), Some("utilities"));
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_parent_typescript_namespace_bindings() {
+    let source = r#"namespace outer {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+
+    export namespace inner {
+        export function target(value: number): number {
+            return helper(value);
+        }
+    }
+}
+
+namespace unrelated {
+    export function helper(value: number): number {
+        return value + 2;
+    }
+}
+"#;
+    let replacement = r#"export function target(value: number): number {
+    return helper(value) + 1;
+}"#;
+    let result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "outer::inner::target",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let helper = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "helper")
+        .expect("outer namespace helper should resolve");
+    assert_eq!(helper.symbol.semantic_path, "outer::helper");
+    assert_eq!(helper.symbol.scope_path.as_deref(), Some("outer"));
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");
