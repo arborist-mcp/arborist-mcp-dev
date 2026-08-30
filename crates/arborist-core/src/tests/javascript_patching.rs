@@ -958,6 +958,57 @@ fn javascript_patch_binding_validation_rejects_unresolved_computed_loop_assignme
     assert!(!result.applied, "{result:#?}");
     assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
 }
+
+#[test]
+fn javascript_patch_binding_validation_rejects_unresolved_destructuring_assignment_targets() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    ({ missing } = value);
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_resolves_destructuring_assignment_targets() {
+    let source = r#"function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"function compute(value) {
+    let target;
+    ({ target } = value);
+    return target;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    assert!(
+        result.validation.unresolved_identifiers.is_empty(),
+        "{result:#?}"
+    );
+}
+
 #[test]
 fn javascript_patch_binding_validation_rejects_references_outside_switch_scope() {
     let source = r#"function compute(value) { return value; }"#;

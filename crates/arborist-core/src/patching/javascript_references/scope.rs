@@ -159,6 +159,9 @@ fn walk_javascript_node(
         | "abstract_method_signature" => Ok(()),
         "call_expression" => walk_javascript_call_expression(node, source, scopes, scan, deadline),
         "new_expression" => walk_javascript_new_expression(node, source, scopes, scan, deadline),
+        "assignment_expression" => {
+            walk_javascript_assignment_expression(node, source, scopes, scan, deadline)
+        }
         "member_expression" | "subscript_expression" | "optional_chain" => {
             if let Some(object) = node.child_by_field_name("object") {
                 walk_javascript_node(object, source, scopes, scan, deadline)?;
@@ -1034,7 +1037,23 @@ fn walk_javascript_variable_declarator(
     Ok(())
 }
 
-fn walk_javascript_loop_assignment_target(
+fn walk_javascript_assignment_expression(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(left) = node.child_by_field_name("left") {
+        walk_javascript_assignment_target(left, source, scopes, scan, deadline)?;
+    }
+    if let Some(right) = node.child_by_field_name("right") {
+        walk_javascript_node(right, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+
+fn walk_javascript_assignment_target(
     node: Node<'_>,
     source: &str,
     scopes: &mut Vec<Scope>,
@@ -1045,10 +1064,26 @@ fn walk_javascript_loop_assignment_target(
         "identifier" | "shorthand_property_identifier_pattern" => {
             record_javascript_reference(node, source, scopes, scan)
         }
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                walk_javascript_assignment_target(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
         "array_pattern" | "rest_pattern" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                walk_javascript_loop_assignment_target(child, source, scopes, scan, deadline)?;
+                walk_javascript_assignment_target(child, source, scopes, scan, deadline)?;
+            }
+            Ok(())
+        }
+        "object_assignment_pattern" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                walk_javascript_assignment_target(left, source, scopes, scan, deadline)?;
+            }
+            if let Some(right) = node.child_by_field_name("right") {
+                walk_javascript_node(right, source, scopes, scan, deadline)?;
             }
             Ok(())
         }
@@ -1062,12 +1097,10 @@ fn walk_javascript_loop_assignment_target(
                         )?;
                     }
                     if let Some(value) = child.child_by_field_name("value") {
-                        walk_javascript_loop_assignment_target(
-                            value, source, scopes, scan, deadline,
-                        )?;
+                        walk_javascript_assignment_target(value, source, scopes, scan, deadline)?;
                     }
                 } else {
-                    walk_javascript_loop_assignment_target(child, source, scopes, scan, deadline)?;
+                    walk_javascript_assignment_target(child, source, scopes, scan, deadline)?;
                 }
             }
             Ok(())
@@ -1118,7 +1151,7 @@ fn walk_javascript_for_in(
     } else if let Some(left) = left {
         // Assignment targets do not declare bindings. Scan them as values so
         // unresolved identifiers and computed member components are validated.
-        walk_javascript_loop_assignment_target(left, source, scopes, scan, deadline)?;
+        walk_javascript_assignment_target(left, source, scopes, scan, deadline)?;
     }
     if let Some(right) = node.child_by_field_name("right") {
         walk_javascript_node(right, source, scopes, scan, deadline)?;
