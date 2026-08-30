@@ -5,70 +5,101 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{node_text, normalize_absolute_path, parse_document};
+use super::{node_text, normalize_absolute_path, parse_document, parse_document_with_timeout};
+use crate::deadline::DeadlineCheck;
 
 pub(crate) fn csharp_local_file_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
+    csharp_local_file_dependency_paths_with_deadline(path, root, source, None)
+}
+
+pub(crate) fn csharp_local_file_dependency_paths_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    check_local_file_dependency_deadline(deadline)?;
     let normalized_path = normalize_absolute_path(path)?;
     let mut dependencies = BTreeSet::new();
 
     for import in csharp_file_type_alias_imports(root, source)? {
+        check_local_file_dependency_deadline(deadline)?;
         dependencies.extend(csharp_type_source_paths(
             path,
             &import.semantic_type_path,
             &normalized_path,
-        ));
+            deadline,
+        )?);
     }
     for import in csharp_file_static_type_imports(root, source)? {
+        check_local_file_dependency_deadline(deadline)?;
         dependencies.extend(csharp_type_source_paths(
             path,
             &import.semantic_type_path,
             &normalized_path,
-        ));
+            deadline,
+        )?);
     }
     for base_type in csharp_file_base_types(root, source)? {
+        check_local_file_dependency_deadline(deadline)?;
         dependencies.extend(csharp_type_source_paths(
             path,
             &base_type.semantic_base_type_path,
             &normalized_path,
-        ));
+            deadline,
+        )?);
     }
     for interface_parent in csharp_file_interface_parents(root, source)? {
+        check_local_file_dependency_deadline(deadline)?;
         dependencies.extend(csharp_type_source_paths(
             path,
             &interface_parent.semantic_type_path,
             &normalized_path,
-        ));
+            deadline,
+        )?);
     }
     for import in csharp_file_namespace_imports(root, source)? {
+        check_local_file_dependency_deadline(deadline)?;
         dependencies.extend(csharp_namespace_source_paths(
             path,
             &import.semantic_namespace_path,
             &normalized_path,
-        ));
+            deadline,
+        )?);
     }
 
     Ok(dependencies)
+}
+
+fn check_local_file_dependency_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
+    Ok(())
 }
 
 fn csharp_type_source_paths(
     path: &Path,
     semantic_type_path: &str,
     normalized_path: &Path,
-) -> BTreeSet<PathBuf> {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    check_local_file_dependency_deadline(deadline)?;
     let mut candidates = BTreeSet::new();
     let segments = semantic_type_path.split("::").collect::<Vec<_>>();
     if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
-        return candidates;
+        return Ok(candidates);
     }
 
     let Some(parent) = path.parent() else {
-        return candidates;
+        return Ok(candidates);
     };
     for entry in fs::read_dir(parent).ok().into_iter().flatten().flatten() {
+        check_local_file_dependency_deadline(deadline)?;
         let candidate = entry.path();
         if !candidate
             .extension()
@@ -77,7 +108,7 @@ fn csharp_type_source_paths(
         {
             continue;
         }
-        if csharp_candidate_declares_type(&candidate, semantic_type_path)
+        if csharp_candidate_declares_type(&candidate, semantic_type_path, deadline)?
             && let Ok(candidate) = normalize_absolute_path(&candidate)
             && candidate != normalized_path
         {
@@ -87,13 +118,15 @@ fn csharp_type_source_paths(
 
     let mut source_root = parent.to_path_buf();
     loop {
+        check_local_file_dependency_deadline(deadline)?;
         for prefix_len in (1..=segments.len()).rev() {
+            check_local_file_dependency_deadline(deadline)?;
             let mut candidate = source_root.clone();
             for segment in &segments[..prefix_len] {
                 candidate.push(segment);
             }
             candidate.set_extension("cs");
-            if csharp_candidate_declares_type(&candidate, semantic_type_path)
+            if csharp_candidate_declares_type(&candidate, semantic_type_path, deadline)?
                 && let Ok(candidate) = normalize_absolute_path(&candidate)
                 && candidate != normalized_path
             {
@@ -105,17 +138,19 @@ fn csharp_type_source_paths(
         }
     }
 
-    candidates
+    Ok(candidates)
 }
 
 fn csharp_namespace_source_paths(
     path: &Path,
     semantic_namespace_path: &str,
     normalized_path: &Path,
-) -> BTreeSet<PathBuf> {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    check_local_file_dependency_deadline(deadline)?;
     let mut candidates = BTreeSet::new();
     let Some(parent) = path.parent() else {
-        return candidates;
+        return Ok(candidates);
     };
 
     // C# does not require a namespace to match a directory layout. Scan the
@@ -127,14 +162,16 @@ fn csharp_namespace_source_paths(
         semantic_namespace_path,
         normalized_path,
         &mut candidates,
-    );
+        deadline,
+    )?;
 
     let segments = semantic_namespace_path.split("::").collect::<Vec<_>>();
     if segments.is_empty() || segments.iter().any(|segment| segment.is_empty()) {
-        return candidates;
+        return Ok(candidates);
     }
     let mut source_root = parent.to_path_buf();
     loop {
+        check_local_file_dependency_deadline(deadline)?;
         let mut namespace_directory = source_root.clone();
         for segment in &segments {
             namespace_directory.push(segment);
@@ -144,13 +181,14 @@ fn csharp_namespace_source_paths(
             semantic_namespace_path,
             normalized_path,
             &mut candidates,
-        );
+            deadline,
+        )?;
         if !source_root.pop() {
             break;
         }
     }
 
-    candidates
+    Ok(candidates)
 }
 
 fn collect_csharp_namespace_directory(
@@ -158,9 +196,12 @@ fn collect_csharp_namespace_directory(
     semantic_namespace_path: &str,
     normalized_path: &Path,
     candidates: &mut BTreeSet<PathBuf>,
-) {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    check_local_file_dependency_deadline(deadline)?;
     let entries = fs::read_dir(directory).ok().into_iter().flatten();
     for entry in entries.flatten() {
+        check_local_file_dependency_deadline(deadline)?;
         let candidate = entry.path();
         if !candidate
             .extension()
@@ -169,35 +210,22 @@ fn collect_csharp_namespace_directory(
         {
             continue;
         }
-        if csharp_candidate_declares_namespace(&candidate, semantic_namespace_path)
+        if csharp_candidate_declares_namespace(&candidate, semantic_namespace_path, deadline)?
             && let Ok(candidate) = normalize_absolute_path(&candidate)
             && candidate != normalized_path
         {
             candidates.insert(candidate);
         }
     }
+    Ok(())
 }
 
-fn csharp_candidate_declares_type(candidate: &Path, semantic_type_path: &str) -> bool {
-    let Ok(source) = fs::read_to_string(candidate) else {
-        return false;
-    };
-    let Ok(document) = parse_document(candidate, &source) else {
-        return false;
-    };
-    if document.tree.root_node().has_error() {
-        return false;
-    }
-    crate::semantic::csharp::build_csharp_skeleton(
-        candidate,
-        &source,
-        &document.tree,
-        usize::MAX,
-        &[],
-        None,
-    )
-    .ok()
-    .is_some_and(|skeleton| {
+fn csharp_candidate_declares_type(
+    candidate: &Path,
+    semantic_type_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<bool> {
+    csharp_candidate_declares(candidate, deadline, |skeleton| {
         skeleton.available_paths.iter().any(|available_path| {
             available_path == semantic_type_path
                 || available_path.starts_with(&format!("{semantic_type_path}::"))
@@ -205,31 +233,57 @@ fn csharp_candidate_declares_type(candidate: &Path, semantic_type_path: &str) ->
     })
 }
 
-fn csharp_candidate_declares_namespace(candidate: &Path, semantic_namespace_path: &str) -> bool {
-    let Ok(source) = fs::read_to_string(candidate) else {
-        return false;
-    };
-    let Ok(document) = parse_document(candidate, &source) else {
-        return false;
-    };
-    if document.tree.root_node().has_error() {
-        return false;
-    }
-    crate::semantic::csharp::build_csharp_skeleton(
-        candidate,
-        &source,
-        &document.tree,
-        usize::MAX,
-        &[],
-        None,
-    )
-    .ok()
-    .is_some_and(|skeleton| {
+fn csharp_candidate_declares_namespace(
+    candidate: &Path,
+    semantic_namespace_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<bool> {
+    csharp_candidate_declares(candidate, deadline, |skeleton| {
         skeleton.available_paths.iter().any(|available_path| {
             available_path == semantic_namespace_path
                 || available_path.starts_with(&format!("{semantic_namespace_path}::"))
         })
     })
+}
+
+fn csharp_candidate_declares(
+    candidate: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+    predicate: impl FnOnce(&crate::model::SemanticSkeleton) -> bool,
+) -> Result<bool> {
+    check_local_file_dependency_deadline(deadline)?;
+    let Ok(source) = fs::read_to_string(candidate) else {
+        return Ok(false);
+    };
+    check_local_file_dependency_deadline(deadline)?;
+    let document = if let Some(deadline) = deadline {
+        match deadline.remaining_timeout_micros("parsing C# local file dependency candidates")? {
+            Some(timeout_micros) => {
+                parse_document_with_timeout(candidate, &source, timeout_micros)?
+            }
+            None => match parse_document(candidate, &source) {
+                Ok(document) => document,
+                Err(_) => return Ok(false),
+            },
+        }
+    } else {
+        match parse_document(candidate, &source) {
+            Ok(document) => document,
+            Err(_) => return Ok(false),
+        }
+    };
+    if document.tree.root_node().has_error() {
+        return Ok(false);
+    }
+    let skeleton = crate::semantic::csharp::build_csharp_skeleton(
+        candidate,
+        &source,
+        &document.tree,
+        usize::MAX,
+        &[],
+        deadline,
+    )?;
+    Ok(predicate(&skeleton))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -937,6 +991,7 @@ fn is_safe_csharp_identifier(identifier: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -947,7 +1002,9 @@ mod tests {
         csharp_file_static_type_imports, csharp_file_type_alias_imports,
         csharp_global_namespace_imports, csharp_global_static_type_imports,
         csharp_global_type_alias_imports, csharp_local_file_dependency_paths,
+        csharp_local_file_dependency_paths_with_deadline,
     };
+    use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
 
     #[test]
@@ -1447,6 +1504,55 @@ class Caller {}
             }]
         );
     }
+    struct RejectAfterChecks {
+        checks: Cell<usize>,
+        reject_after: usize,
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.reject_after {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_file_dependency_extraction_honors_deadline_during_directory_scan() {
+        let root = temporary_dir();
+        let source_path = root.join("src/Caller.cs");
+        let candidate_path = root.join("src/Helper.cs");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(&candidate_path, "namespace Demo; public class Helper {}\n").unwrap();
+        let source = "using Alias = Demo.Helper; class Caller { Alias value; }\n";
+        fs::write(&source_path, source).unwrap();
+        let document = parse_document(&source_path, source).expect("C# source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 3,
+        };
+
+        let error = csharp_local_file_dependency_paths_with_deadline(
+            &source_path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency extraction should stop while enumerating source candidates");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies")
+        );
+        assert!(deadline.checks.get() >= 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn resolves_csharp_local_dependencies_from_explicit_type_paths() {
         let root = temporary_dir();
