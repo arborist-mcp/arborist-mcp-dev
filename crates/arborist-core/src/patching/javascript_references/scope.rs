@@ -625,9 +625,9 @@ fn walk_javascript_enum(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // TypeScript enums produce runtime values. They are block-scoped in the
-    // source language and become available while their member initializers are
-    // evaluated, after remaining in the temporal dead zone before declaration.
+    // Runtime TypeScript enums are block-scoped values. Const enums are erased
+    // by TypeScript and must not satisfy a runtime reference. Both declarations
+    // leave their temporal-dead-zone state before member initializers run.
     let created_scope = scopes.is_empty();
     if created_scope {
         scopes.push(Scope {
@@ -643,7 +643,9 @@ fn walk_javascript_enum(
             .expect("an enum scope is available while its declaration is walked");
         let name_text = node_text(name, source)?.trim().to_string();
         scope.initializing_names.remove(&name_text);
-        bind_javascript_name(name, source, node.kind(), scope, scan)?;
+        if !typescript_const_enum_declaration(node) {
+            bind_javascript_name(name, source, node.kind(), scope, scan)?;
+        }
     }
     if let Some(body) = node.child_by_field_name("body") {
         walk_javascript_node(body, source, scopes, scan, deadline)?;
@@ -652,6 +654,10 @@ fn walk_javascript_enum(
         scopes.pop();
     }
     Ok(())
+}
+
+fn typescript_const_enum_declaration(node: Node<'_>) -> bool {
+    node.child(0).is_some_and(|child| child.kind() == "const")
 }
 
 fn walk_javascript_enum_body(
