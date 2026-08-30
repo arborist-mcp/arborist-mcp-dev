@@ -141,7 +141,6 @@ fn walk_javascript_node(
         }
         "statement_block" => walk_javascript_block(node, source, scopes, scan, deadline),
         "switch_statement" => walk_javascript_switch(node, source, scopes, scan, deadline),
-        "if_statement" => walk_javascript_if_statement(node, source, scopes, scan, deadline),
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
         "while_statement" => walk_javascript_while_statement(node, source, scopes, scan, deadline),
@@ -1310,35 +1309,6 @@ fn walk_javascript_assignment_target(
         }
         _ => walk_javascript_node(node, source, scopes, scan, deadline),
     }
-}
-fn walk_javascript_if_statement(
-    node: Node<'_>,
-    source: &str,
-    scopes: &mut Vec<Scope>,
-    scan: &mut JavaScriptScopeScan,
-    deadline: Option<&dyn DeadlineCheck>,
-) -> Result<()> {
-    let condition = node.child_by_field_name("condition");
-    if let Some(condition) = condition {
-        walk_javascript_node(condition, source, scopes, scan, deadline)?;
-    }
-    if javascript_async_continuation_scope_active(scopes)
-        && condition.is_some_and(javascript_expression_suspends_async_continuation)
-    {
-        // A direct await in an if condition completes before either branch is
-        // selected, so both branches and later references share its continuation.
-        scopes
-            .last_mut()
-            .expect("a JavaScript if-statement enclosing scope is active")
-            .defers_tdz_references = true;
-    }
-    if let Some(consequence) = node.child_by_field_name("consequence") {
-        walk_javascript_node(consequence, source, scopes, scan, deadline)?;
-    }
-    if let Some(alternative) = node.child_by_field_name("alternative") {
-        walk_javascript_node(alternative, source, scopes, scan, deadline)?;
-    }
-    Ok(())
 }
 fn walk_javascript_for_in(
     node: Node<'_>,
