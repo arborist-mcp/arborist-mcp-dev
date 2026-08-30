@@ -1,6 +1,6 @@
 mod scope;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use anyhow::Result;
@@ -343,33 +343,36 @@ fn exclude_typescript_type_only_import_aliases(
         known_paths.insert(item.semantic_path.clone());
     }
     let mut type_only_paths = javascript_type_only_semantic_paths(items, deadline)?;
+    let mut aliases_by_target = BTreeMap::<String, Vec<String>>::new();
+    for item in items.values().flatten() {
+        check_javascript_type_only_bindings_deadline(deadline)?;
+        if item.node_kind != "import_alias" {
+            continue;
+        }
+        let target_paths = typescript_import_alias_target_paths(item, source)?;
+        let Some(target_path) = target_paths
+            .iter()
+            .find(|target_path| known_paths.contains(*target_path))
+        else {
+            continue;
+        };
+        aliases_by_target
+            .entry(target_path.clone())
+            .or_default()
+            .push(item.semantic_path.clone());
+    }
 
-    loop {
-        let mut aliases = Vec::new();
-        for item in items.values().flatten() {
+    let mut pending_type_only_paths = type_only_paths.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(target_path) = pending_type_only_paths.pop_front() {
+        check_javascript_type_only_bindings_deadline(deadline)?;
+        let Some(alias_paths) = aliases_by_target.get(&target_path) else {
+            continue;
+        };
+        for alias_path in alias_paths {
             check_javascript_type_only_bindings_deadline(deadline)?;
-            if item.node_kind == "import_alias" {
-                aliases.push((
-                    item.semantic_path.clone(),
-                    typescript_import_alias_target_paths(item, source)?,
-                ));
+            if type_only_paths.insert(alias_path.clone()) {
+                pending_type_only_paths.push_back(alias_path.clone());
             }
-        }
-        let mut changed = false;
-        for (alias_path, target_paths) in aliases {
-            check_javascript_type_only_bindings_deadline(deadline)?;
-            let Some(target_path) = target_paths
-                .iter()
-                .find(|target_path| known_paths.contains(*target_path))
-            else {
-                continue;
-            };
-            if type_only_paths.contains(target_path) {
-                changed |= type_only_paths.insert(alias_path);
-            }
-        }
-        if !changed {
-            break;
         }
     }
 
