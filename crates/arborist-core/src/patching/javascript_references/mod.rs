@@ -511,10 +511,50 @@ fn collect_javascript_scope_items<'tree>(
                     namespace, source, scope_path, items, deadline,
                 )?;
             }
-            _ => {}
+            _ => collect_javascript_hoisted_var_items(child, source, scope_path, items, deadline)?,
         }
     }
     Ok(())
+}
+
+fn collect_javascript_hoisted_var_items<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    scope_path: Option<&str>,
+    items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning JavaScript hoisted module var bindings")?;
+    }
+    match node.kind() {
+        // A `var` declared in a nested callable or class-static block belongs
+        // to that nested scope, not to the surrounding module or namespace.
+        "function_declaration"
+        | "generator_function_declaration"
+        | "function_expression"
+        | "generator_function"
+        | "arrow_function"
+        | "method_definition"
+        | "class_declaration"
+        | "abstract_class_declaration"
+        | "class"
+        | "class_static_block"
+        // Namespace bodies create a distinct runtime namespace scope and are
+        // collected through `collect_javascript_namespace_scope_items`.
+        | "internal_module"
+        | "module" => Ok(()),
+        "variable_declaration" => {
+            collect_javascript_top_level_declarator_names(node, source, scope_path, items)
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_javascript_hoisted_var_items(child, source, scope_path, items, deadline)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn collect_javascript_namespace_scope_items<'tree>(
