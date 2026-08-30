@@ -388,5 +388,4 @@ class GatewayEditRequestValidationMixin:
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 41)
         self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("edits[0].start.character", response["error"]["message"])
-
+        self.assertIn("edits[0].start.character", response["error"]["message"])\n

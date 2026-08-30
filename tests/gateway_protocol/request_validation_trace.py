@@ -156,5 +156,4 @@ class GatewayTraceRequestValidationMixin:
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 99)
         self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("max_nodes", response["error"]["message"])
-
+        self.assertIn("max_nodes", response["error"]["message"])\n

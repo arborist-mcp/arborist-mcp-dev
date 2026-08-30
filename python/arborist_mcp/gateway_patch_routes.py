@@ -5,5 +5,4 @@ from .gateway_patch_validation_routes import GatewayPatchValidationRoutes
 
 
 class GatewayPatchRoutes(GatewayPatchApplyRoutes, GatewayPatchValidationRoutes):
-    """Patch apply/preview and validation route handlers for the MCP gateway."""
-
+    """Patch apply/preview and validation route handlers for the MCP gateway."""\n

@@ -7,5 +7,4 @@ def top_level(value: int) -> int:
     def nested(inner: int) -> int:
         return inner + 1
 
-    return nested(value)
-
+    return nested(value)\n

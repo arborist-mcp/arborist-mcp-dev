@@ -716,5 +716,4 @@ class GatewayRuntimeCatalogTestsMixin:
 
         self.assert_jsonrpc_error(
             response, request_id=59, code=-32602, contains="unknown resource"
-        )
-
+        )\n
