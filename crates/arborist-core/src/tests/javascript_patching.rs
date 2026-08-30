@@ -1175,6 +1175,33 @@ function compute(list) {
 }
 
 #[test]
+fn javascript_patch_binding_validation_rejects_nested_module_function_var_bindings() {
+    let source = r#"function setup() {
+    var hidden = (value) => value + 1;
+    return hidden;
+}
+
+export function compute(value) {
+    return value;
+}
+"#;
+    let replacement = r#"export function compute(value) {
+    return hidden(value);
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["hidden"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_ignores_member_names_keys_labels_and_types() {
     let source = r#"interface Config {
     label: string;
