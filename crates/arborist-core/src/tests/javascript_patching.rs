@@ -550,6 +550,34 @@ export function computeEnum(value: number): number {
 }
 
 #[test]
+fn typescript_patch_binding_validation_resolves_declare_global_values() {
+    let source = r#"export {};
+
+declare global {
+    var injected: { increment(value: number): number };
+}
+
+export function target(value: number): number {
+    return injected.increment(value);
+}
+"#;
+    let replacement = r#"export function target(value: number): number {
+    return injected.increment(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "target", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let injected = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "injected")
+        .expect("declare global var should resolve as a runtime value");
+    assert_eq!(injected.symbol.origin_type, "module_scope");
+}
+
+#[test]
 fn typescript_patch_binding_validation_resolves_ambient_value_declarations() {
     let source = r#"export declare const offset: number;
 export declare function helper(value: number): number;
