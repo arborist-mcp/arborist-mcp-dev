@@ -2183,6 +2183,19 @@ impl LanguageAdapter for PythonAdapter {
             .map(|paths| paths.into_iter().collect())
     }
 
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        crate::language::python_local_file_dependency_paths_with_deadline(
+            path, root, source, deadline,
+        )
+        .map(|paths| paths.into_iter().collect())
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,

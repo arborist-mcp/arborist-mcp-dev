@@ -5,17 +5,34 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
+use crate::deadline::DeadlineCheck;
 
 pub(crate) fn python_local_file_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
+    python_local_file_dependency_paths_with_deadline(path, root, source, None)
+}
+
+pub(crate) fn python_local_file_dependency_paths_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
     let normalized_path = normalize_absolute_path(path)?;
     let mut dependencies = BTreeSet::new();
-    collect_python_import_dependencies(path, root, source, &mut dependencies)?;
+    collect_python_import_dependencies(path, root, source, &mut dependencies, deadline)?;
     dependencies.remove(&normalized_path);
     Ok(dependencies)
+}
+
+fn check_local_file_dependency_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
+    Ok(())
 }
 
 fn collect_python_import_dependencies(
@@ -23,11 +40,14 @@ fn collect_python_import_dependencies(
     node: Node<'_>,
     source: &str,
     dependencies: &mut BTreeSet<PathBuf>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_local_file_dependency_deadline(deadline)?;
     match node.kind() {
         "import_statement" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
+                check_local_file_dependency_deadline(deadline)?;
                 let module_node = match child.kind() {
                     "aliased_import" => child.named_child(0),
                     "dotted_name" | "identifier" => Some(child),
@@ -53,6 +73,7 @@ fn collect_python_import_dependencies(
                 dependencies.insert(candidate);
             }
             for child in named_children.into_iter().skip(1) {
+                check_local_file_dependency_deadline(deadline)?;
                 if child.kind() == "wildcard_import" {
                     if let Some(candidate) = resolve_local_python_module_path(path, module_name) {
                         dependencies.insert(candidate);
@@ -84,7 +105,7 @@ fn collect_python_import_dependencies(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_python_import_dependencies(path, child, source, dependencies)?;
+        collect_python_import_dependencies(path, child, source, dependencies, deadline)?;
     }
     Ok(())
 }
@@ -167,13 +188,59 @@ fn resolve_python_module_candidate(mut base: PathBuf, module_parts: &[&str]) -> 
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{python_local_file_dependency_paths, resolve_local_python_module_path};
+    use anyhow::bail;
+
+    use super::{
+        python_local_file_dependency_paths, python_local_file_dependency_paths_with_deadline,
+        resolve_local_python_module_path,
+    };
+    use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        checks: Cell<usize>,
+        reject_after: usize,
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.reject_after {
+                bail!("deadline expired")
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_file_dependency_extraction_honors_deadline_during_tree_walk() {
+        let source = "def outer():\n    if True:\n        import helper\n";
+        let path = Path::new("sample.py");
+        let document = parse_document(path, source).expect("Python source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 2,
+        };
+
+        let error = python_local_file_dependency_paths_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency tree walk should honor the deadline");
+
+        assert_eq!(error.to_string(), "deadline expired");
+        assert!(deadline.checks.get() > deadline.reject_after);
+    }
 
     #[test]
     fn resolves_python_import_and_from_import_dependencies() {

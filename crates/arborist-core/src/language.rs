@@ -62,7 +62,10 @@ pub(crate) use parser::{validate_source_length, validate_source_size};
 pub(crate) use paths::{ensure_path_inside_workspace, path_identity, path_is_inside_workspace};
 pub use paths::{normalize_absolute_path, normalize_path};
 pub use positions::{offset_for_position, point_for_offset, position_from};
-pub(crate) use python::{python_local_file_dependency_paths, resolve_local_python_module_path};
+pub(crate) use python::{
+    python_local_file_dependency_paths, python_local_file_dependency_paths_with_deadline,
+    resolve_local_python_module_path,
+};
 pub use registry::{
     LanguageCapabilities, LanguageDescriptor, LanguageRegistry, builtin_language_registry,
 };
