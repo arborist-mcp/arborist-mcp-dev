@@ -2003,6 +2003,97 @@ fn javascript_patch_binding_validation_rejects_async_iife_references_in_do_while
     assert_eq!(result.validation.unresolved_identifiers, ["value"]);
 }
 #[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_after_unbraced_while_for_await()
+ {
+    let source = r#"async function compute(shouldIterate: boolean): Promise<unknown> {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(shouldIterate: boolean): Promise<unknown> {
+    const value = (async () => {
+        while (shouldIterate)
+            for await (const entry of [0]) {
+                void entry;
+            }
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_after_unbraced_for_for_await()
+{
+    let source = r#"async function compute(count: number): Promise<unknown> {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(count: number): Promise<unknown> {
+    const value = (async () => {
+        for (let index = 0; index < count; index++)
+            for await (const entry of [0]) {
+                void entry;
+            }
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_after_unbraced_for_of_for_await()
+ {
+    let source = r#"async function compute(entries: unknown[]): Promise<unknown> {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(entries: unknown[]): Promise<unknown> {
+    const value = (async () => {
+        for (const outer of entries)
+            for await (const entry of [0]) {
+                void outer;
+                void entry;
+            }
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_allows_async_iife_references_after_await_while_condition() {
     let source = r#"function compute(): unknown {
     return 0;

@@ -431,24 +431,25 @@ fn walk_javascript_if_statement(
         walk_javascript_node(condition, source, scopes, scan, deadline)?;
     }
     if let Some(consequence) = node.child_by_field_name("consequence") {
-        walk_javascript_conditional_branch(consequence, source, scopes, scan, deadline)?;
+        walk_javascript_maybe_skipped_body(consequence, source, scopes, scan, deadline)?;
     }
     if let Some(alternative) = node.child_by_field_name("alternative") {
-        walk_javascript_conditional_branch(alternative, source, scopes, scan, deadline)?;
+        walk_javascript_maybe_skipped_body(alternative, source, scopes, scan, deadline)?;
     }
     Ok(())
 }
 
-fn walk_javascript_conditional_branch(
+fn walk_javascript_maybe_skipped_body(
     node: Node<'_>,
     source: &str,
     scopes: &mut Vec<Scope>,
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    // A braced branch already has an isolated lexical scope. Introduce the
-    // same continuation boundary for a bare branch so an await reached only
-    // on that branch cannot relax TDZ validation after its enclosing `if`.
+    // A braced body already has an isolated lexical scope. Add the same
+    // continuation boundary for a bare body that may not execute, so an await
+    // reached only there cannot relax TDZ validation after its enclosing
+    // control-flow statement.
     if node.kind() == "statement_block" {
         return walk_javascript_node(node, source, scopes, scan, deadline);
     }
@@ -1443,7 +1444,7 @@ fn walk_javascript_for_in(
         )?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        walk_javascript_node(body, source, scopes, scan, deadline)?;
+        walk_javascript_maybe_skipped_body(body, source, scopes, scan, deadline)?;
     }
     scopes.pop();
     if suspends_before_iteration {
@@ -1501,7 +1502,7 @@ fn walk_javascript_for_statement(
         walk_javascript_node(increment, source, scopes, scan, deadline)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        walk_javascript_node(body, source, scopes, scan, deadline)?;
+        walk_javascript_maybe_skipped_body(body, source, scopes, scan, deadline)?;
     }
     scopes.pop();
     if suspends_before_loop {
@@ -1536,7 +1537,7 @@ fn walk_javascript_while_statement(
             .defers_tdz_references = true;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        walk_javascript_node(body, source, scopes, scan, deadline)?;
+        walk_javascript_maybe_skipped_body(body, source, scopes, scan, deadline)?;
     }
     Ok(())
 }
