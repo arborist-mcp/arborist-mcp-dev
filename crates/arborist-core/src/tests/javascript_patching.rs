@@ -1837,6 +1837,28 @@ fn typescript_patch_binding_validation_resolves_local_enum_values() {
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_unresolved_enum_member_initializers() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(): number {
+    enum Mode {
+        Active = missing,
+    }
+    return Mode.Active;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
+}
+
+#[test]
 fn typescript_patch_binding_validation_rejects_enum_tdz_shadowing() {
     let source = r#"function compute(Mode: number): number { return Mode; }"#;
     let replacement = r#"function compute(Mode: number): number {

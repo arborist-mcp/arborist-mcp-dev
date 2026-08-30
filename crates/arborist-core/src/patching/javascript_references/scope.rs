@@ -141,6 +141,7 @@ fn walk_javascript_node(
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
         "catch_clause" => walk_javascript_catch(node, source, scopes, scan, deadline),
         "enum_declaration" => walk_javascript_enum(node, source, scopes, scan, deadline),
+        "enum_body" => walk_javascript_enum_body(node, source, scopes, scan, deadline),
         "interface_declaration" | "type_alias_declaration" => Ok(()),
         "import_statement"
         | "import_clause"
@@ -602,6 +603,30 @@ fn walk_javascript_enum(
     }
     if created_scope {
         scopes.pop();
+    }
+    Ok(())
+}
+
+fn walk_javascript_enum_body(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    // Enum members are runtime assignments. Member names are property names,
+    // but computed names and value initializers are evaluated expressions.
+    let mut cursor = node.walk();
+    for member in node.named_children(&mut cursor) {
+        if member.kind() != "enum_assignment" {
+            continue;
+        }
+        if let Some(name) = member.child_by_field_name("name") {
+            walk_javascript_computed_property_name(name, source, scopes, scan, deadline)?;
+        }
+        if let Some(value) = member.child_by_field_name("value") {
+            walk_javascript_node(value, source, scopes, scan, deadline)?;
+        }
     }
     Ok(())
 }
@@ -1581,7 +1606,6 @@ fn is_ignored_javascript_type_kind(kind: &str) -> bool {
             | "class_heritage"
             | "conditional_type"
             | "constructor_type"
-            | "enum_body"
             | "extends_clause"
             | "function_type"
             | "generic_type"
