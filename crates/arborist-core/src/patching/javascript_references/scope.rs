@@ -143,6 +143,8 @@ fn walk_javascript_node(
         "switch_statement" => walk_javascript_switch(node, source, scopes, scan, deadline),
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
+        "while_statement" => walk_javascript_while_statement(node, source, scopes, scan, deadline),
+        "do_statement" => walk_javascript_do_statement(node, source, scopes, scan, deadline),
         "catch_clause" => walk_javascript_catch(node, source, scopes, scan, deadline),
         "enum_declaration" => walk_javascript_enum(node, source, scopes, scan, deadline),
         "enum_body" => walk_javascript_enum_body(node, source, scopes, scan, deadline),
@@ -1433,6 +1435,60 @@ fn walk_javascript_for_statement(
     Ok(())
 }
 
+fn walk_javascript_while_statement(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let condition = node.child_by_field_name("condition");
+    if let Some(condition) = condition {
+        walk_javascript_node(condition, source, scopes, scan, deadline)?;
+    }
+    if javascript_async_continuation_scope_active(scopes)
+        && condition.is_some_and(javascript_expression_suspends_async_continuation)
+    {
+        // A while condition is evaluated before the first body entry and before
+        // the statement can complete, so a direct await here always establishes
+        // an async continuation for subsequent work in this lexical scope.
+        scopes
+            .last_mut()
+            .expect("a JavaScript while-loop enclosing scope is active")
+            .defers_tdz_references = true;
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        walk_javascript_node(body, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+fn walk_javascript_do_statement(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(body) = node.child_by_field_name("body") {
+        walk_javascript_node(body, source, scopes, scan, deadline)?;
+    }
+    let condition = node.child_by_field_name("condition");
+    if let Some(condition) = condition {
+        walk_javascript_node(condition, source, scopes, scan, deadline)?;
+    }
+    if javascript_async_continuation_scope_active(scopes)
+        && condition.is_some_and(javascript_expression_suspends_async_continuation)
+    {
+        // Unlike a while condition, a do-while condition runs after its first
+        // body execution. It therefore defers only references after the whole
+        // statement; body references remain subject to the immediate TDZ.
+        scopes
+            .last_mut()
+            .expect("a JavaScript do-while enclosing scope is active")
+            .defers_tdz_references = true;
+    }
+    Ok(())
+}
 fn walk_javascript_catch(
     node: Node<'_>,
     source: &str,
