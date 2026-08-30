@@ -1910,6 +1910,80 @@ fn typescript_patch_binding_validation_rejects_unresolved_enum_member_initialize
 }
 
 #[test]
+fn typescript_patch_binding_validation_rejects_unresolved_class_decorators() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(): number {
+    @missing
+    class Thing {}
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["missing"]);
+}
+
+#[test]
+fn typescript_patch_binding_validation_rejects_unresolved_member_decorators() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(): number {
+    class Thing {
+        @missingMethod
+        method() {}
+        @missingField
+        field = 1;
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        ["missingField", "missingMethod"]
+    );
+}
+
+#[test]
+fn typescript_patch_binding_validation_rejects_unresolved_parameter_decorators() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(): number {
+    class Thing {
+        method(@missingParameter value: number) {}
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        ["missingParameter"]
+    );
+}
+
+#[test]
 fn typescript_patch_binding_validation_rejects_enum_tdz_shadowing() {
     let source = r#"function compute(Mode: number): number { return Mode; }"#;
     let replacement = r#"function compute(Mode: number): number {

@@ -219,6 +219,7 @@ fn walk_javascript_field_definition(
     instance_initializer_executes_now: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    walk_javascript_decorators(node, source, scopes, scan, deadline)?;
     if let Some(name) = node
         .child_by_field_name("property")
         .or_else(|| node.child_by_field_name("name"))
@@ -252,6 +253,40 @@ fn is_javascript_static_field_definition(node: Node<'_>) -> bool {
     let mut cursor = node.walk();
     node.children(&mut cursor)
         .any(|child| child.kind() == "static")
+}
+
+fn walk_javascript_decorators(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for decorator in node.children_by_field_name("decorator", &mut cursor) {
+        walk_javascript_node(decorator, source, scopes, scan, deadline)?;
+    }
+    Ok(())
+}
+
+fn walk_javascript_parameter_decorators(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let Some(parameters) = node
+        .child_by_field_name("parameters")
+        .or_else(|| node.child_by_field_name("parameter"))
+    else {
+        return Ok(());
+    };
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        walk_javascript_decorators(parameter, source, scopes, scan, deadline)?;
+    }
+    Ok(())
 }
 
 fn walk_javascript_computed_property_name(
@@ -478,6 +513,8 @@ fn walk_javascript_function(
     immediately_invoked: bool,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    walk_javascript_decorators(node, source, scopes, scan, deadline)?;
+    walk_javascript_parameter_decorators(node, source, scopes, scan, deadline)?;
     if node.kind() == "method_definition"
         && let Some(name) = node.child_by_field_name("name")
     {
@@ -647,6 +684,10 @@ fn walk_javascript_class(
         node.kind(),
         "class_declaration" | "abstract_class_declaration"
     );
+
+    // Decorator expressions are evaluated in the surrounding scope while the
+    // class is being defined, before its internal class-name scope is entered.
+    walk_javascript_decorators(node, source, scopes, scan, deadline)?;
 
     // Named classes have an internal binding that is in the temporal dead
     // zone while their heritage is evaluated, then remains visible to class
