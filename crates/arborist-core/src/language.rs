@@ -42,7 +42,9 @@ pub(crate) use java::{
 pub(crate) use javascript::{
     JavaScriptModuleExportKind, JavaScriptModuleValuedExport, direct_require_specifier,
     javascript_cjs_object_default_member_local_name, javascript_export_local_names,
-    javascript_local_module_dependency_paths, javascript_module_callable_export_local_name,
+    javascript_local_module_dependency_paths,
+    javascript_local_module_dependency_paths_with_deadline,
+    javascript_module_callable_export_local_name,
     javascript_module_constructible_export_local_name, javascript_module_default_export_local_name,
     javascript_module_reexport_module_paths_with_overrides_and_check,
     javascript_module_spread_specifiers, javascript_module_valued_export_members,

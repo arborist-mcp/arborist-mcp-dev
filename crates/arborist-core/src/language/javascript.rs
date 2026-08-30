@@ -5,6 +5,7 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
+use crate::deadline::DeadlineCheck;
 
 const JAVASCRIPT_FAMILY_EXTENSIONS: &[&str] =
     &["js", "jsx", "mjs", "cjs", "ts", "mts", "cts", "tsx"];
@@ -32,12 +33,31 @@ pub(crate) fn javascript_local_module_dependency_paths(
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
-    javascript_static_module_specifiers(root, source).map(|specifiers| {
-        specifiers
-            .into_iter()
-            .filter_map(|specifier| resolve_local_javascript_module_path(path, &specifier))
-            .collect()
-    })
+    javascript_local_module_dependency_paths_with_deadline(path, root, source, None)
+}
+
+pub(crate) fn javascript_local_module_dependency_paths_with_deadline(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    check_local_file_dependency_deadline(deadline)?;
+    let mut dependencies = BTreeSet::new();
+    for specifier in javascript_static_module_specifiers_with_deadline(root, source, deadline)? {
+        check_local_file_dependency_deadline(deadline)?;
+        if let Some(module_path) = resolve_local_javascript_module_path(path, &specifier) {
+            dependencies.insert(module_path);
+        }
+    }
+    Ok(dependencies)
+}
+
+fn check_local_file_dependency_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
+    Ok(())
 }
 
 pub(crate) fn javascript_named_import_module_paths_with_overrides_and_check(
@@ -1731,9 +1751,18 @@ fn named_identifier_binding(node: Node<'_>, source: &str) -> Result<Option<(Stri
     Ok(Some((imported_name, local_name)))
 }
 
+#[cfg(test)]
 fn javascript_static_module_specifiers(root: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+    javascript_static_module_specifiers_with_deadline(root, source, None)
+}
+
+fn javascript_static_module_specifiers_with_deadline(
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<String>> {
     let mut specifiers = BTreeSet::new();
-    collect_javascript_static_module_specifiers(root, source, &mut specifiers)?;
+    collect_javascript_static_module_specifiers(root, source, &mut specifiers, deadline)?;
     Ok(specifiers)
 }
 
@@ -1741,7 +1770,9 @@ fn collect_javascript_static_module_specifiers(
     node: Node<'_>,
     source: &str,
     specifiers: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_local_file_dependency_deadline(deadline)?;
     match node.kind() {
         "import_statement" | "export_statement" => {
             if let Some(source_node) = node
@@ -1772,7 +1803,7 @@ fn collect_javascript_static_module_specifiers(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_javascript_static_module_specifiers(child, source, specifiers)?;
+        collect_javascript_static_module_specifiers(child, source, specifiers, deadline)?;
     }
     Ok(())
 }
@@ -1995,6 +2026,7 @@ mod tests {
 
     use super::{
         javascript_cjs_object_default_member_local_name, javascript_export_local_names,
+        javascript_local_module_dependency_paths_with_deadline,
         javascript_module_callable_export_local_name, javascript_module_default_export_local_name,
         javascript_module_reexport_module_paths_with_overrides_and_check,
         javascript_module_spread_specifiers, javascript_named_export_names,
@@ -2003,7 +2035,51 @@ mod tests {
         javascript_star_reexport_module_paths_with_overrides_and_check,
         javascript_static_module_specifiers,
     };
+    use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        checks: Cell<usize>,
+        reject_after: usize,
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.reject_after {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_module_dependency_extraction_honors_deadline_during_tree_walk() {
+        let source = "const nested = () => require(\"./helper\");\n";
+        let path = Path::new("sample.ts");
+        let document = parse_document(path, source).expect("TypeScript source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 2,
+        };
+
+        let error = javascript_local_module_dependency_paths_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency extraction should stop while walking the syntax tree");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies")
+        );
+        assert!(deadline.checks.get() >= 3);
+    }
 
     #[test]
     fn collects_static_import_reexport_and_direct_require_specifiers() {
