@@ -6,6 +6,7 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
+use crate::deadline::DeadlineCheck;
 
 pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
 pub const C_LANGUAGE_EXTENSIONS: &[&str] = &["c", "h"];
@@ -95,7 +96,7 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
 
 pub fn c_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
     include_targets_for_nodes(
-        c_include_target_nodes(root, source, None)?,
+        c_include_target_nodes(root, source, None, None)?,
         source,
         normalize_include_target,
     )
@@ -110,20 +111,12 @@ pub(crate) fn c_include_targets_with_offsets(
     source: &str,
 ) -> Result<Vec<(usize, String)>> {
     let mut targets = Vec::new();
-    for include in c_include_target_nodes(root, source, None)? {
+    for include in c_include_target_nodes(root, source, None, None)? {
         if let Some(target) = include_target_for_node(include, source, normalize_include_target)? {
             targets.push((include.start_byte(), target));
         }
     }
     Ok(targets)
-}
-
-fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
-    include_targets_for_nodes(
-        c_include_target_nodes(root, source, None)?,
-        source,
-        normalize_local_include_target,
-    )
 }
 
 fn include_targets_for_nodes(
@@ -144,9 +137,10 @@ fn c_include_target_nodes<'tree>(
     root: Node<'tree>,
     source: &str,
     byte_offset: Option<usize>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<Node<'tree>>> {
     let mut includes = Vec::new();
-    collect_c_include_target_nodes(root, source, byte_offset, &mut includes)?;
+    collect_c_include_target_nodes(root, source, byte_offset, &mut includes, deadline)?;
     Ok(includes)
 }
 
@@ -155,7 +149,11 @@ fn collect_c_include_target_nodes<'tree>(
     source: &str,
     byte_offset: Option<usize>,
     includes: &mut Vec<Node<'tree>>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
     match node.kind() {
         "preproc_include" => {
             if byte_offset.is_none_or(|offset| node.start_byte() < offset) {
@@ -176,10 +174,16 @@ fn collect_c_include_target_nodes<'tree>(
                     if child == condition || alternative == Some(child) {
                         continue;
                     }
-                    collect_c_include_target_nodes(child, source, byte_offset, includes)?;
+                    collect_c_include_target_nodes(child, source, byte_offset, includes, deadline)?;
                 }
             } else if let Some(alternative) = alternative {
-                collect_c_include_target_nodes(alternative, source, byte_offset, includes)?;
+                collect_c_include_target_nodes(
+                    alternative,
+                    source,
+                    byte_offset,
+                    includes,
+                    deadline,
+                )?;
             }
         }
         "preproc_ifdef" | "preproc_elifdef" => {
@@ -188,7 +192,7 @@ fn collect_c_include_target_nodes<'tree>(
         _ => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                collect_c_include_target_nodes(child, source, byte_offset, includes)?;
+                collect_c_include_target_nodes(child, source, byte_offset, includes, deadline)?;
             }
         }
     }
@@ -226,12 +230,34 @@ pub(crate) fn c_local_include_dependency_paths(
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
-    let local_include_targets = c_local_include_targets(root, source)?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    c_local_include_dependency_paths_with_deadline(current_path, root, source, None)
+}
+
+pub(crate) fn c_local_include_dependency_paths_with_deadline(
+    current_path: &Path,
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<PathBuf>> {
+    let include_nodes = c_include_target_nodes(root, source, None, deadline)?;
+    let local_include_targets = include_targets_for_nodes(
+        include_nodes.clone(),
+        source,
+        normalize_local_include_target,
+    )?
+    .into_iter()
+    .collect::<BTreeSet<_>>();
     let mut include_paths = BTreeSet::new();
 
-    for include_target in c_include_targets(root, source)? {
+    for include in include_nodes {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting local file dependencies")?;
+        }
+        let Some(include_target) =
+            include_target_for_node(include, source, normalize_include_target)?
+        else {
+            continue;
+        };
         let include_path = resolve_local_c_include(current_path, &include_target).or_else(|| {
             local_include_targets
                 .contains(&include_target)
@@ -290,4 +316,57 @@ fn normalize_local_include_target(raw: &str) -> Option<String> {
     raw.strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::path::Path;
+
+    use super::c_local_include_dependency_paths_with_deadline;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectAfterChecks {
+        checks: Cell<usize>,
+        reject_after: usize,
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.reject_after {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_include_dependency_extraction_honors_deadline_during_tree_walk() {
+        let source = "#include \"first.h\"\n#include \"second.h\"\n";
+        let path = Path::new("source.c");
+        let document = parse_document(path, source).expect("C source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 2,
+        };
+
+        let error = c_local_include_dependency_paths_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency extraction should stop when its deadline expires");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies")
+        );
+        assert!(deadline.checks.get() >= 3);
+    }
 }
