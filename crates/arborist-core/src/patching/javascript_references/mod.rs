@@ -480,7 +480,7 @@ fn collect_javascript_scope_items<'tree>(
             | "function_signature" => {
                 insert_javascript_declaration_item(child, source, child.kind(), scope_path, items)?
             }
-            "lexical_declaration" | "variable_declaration" => {
+            "lexical_declaration" | "using_declaration" | "variable_declaration" => {
                 collect_javascript_top_level_declarator_names(child, source, scope_path, items)?
             }
             "import_statement" => {
@@ -835,7 +835,7 @@ fn collect_javascript_export_names<'tree>(
             | "function_signature" => {
                 insert_javascript_declaration_item(child, source, child.kind(), parent_path, items)?
             }
-            "lexical_declaration" | "variable_declaration" => {
+            "lexical_declaration" | "using_declaration" | "variable_declaration" => {
                 collect_javascript_top_level_declarator_names(child, source, parent_path, items)?
             }
             "internal_module" | "module" => collect_javascript_namespace_scope_items(

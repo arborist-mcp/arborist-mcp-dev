@@ -898,6 +898,40 @@ export function compute(value) {
 }
 
 #[test]
+fn javascript_patch_binding_validation_resolves_module_using_bindings() {
+    let source = r#"using resource = { value: 1 };
+
+export function compute() {
+    return 0;
+}
+"#;
+    let replacement = r#"export function compute() {
+    return resource.value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.js"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let resource = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "resource")
+        .expect("module using binding should resolve");
+    assert_eq!(resource.status, "resolved");
+    assert_eq!(
+        resource.candidates.first().unwrap().origin_type,
+        "module_scope"
+    );
+}
+
+#[test]
 fn validates_javascript_patch_bindings_for_params_locals_destructuring_and_imports() {
     let source = r#"import { helper as h } from "./util";
 import other from "./other";
