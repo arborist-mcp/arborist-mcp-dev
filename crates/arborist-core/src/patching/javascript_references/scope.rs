@@ -615,10 +615,29 @@ fn walk_javascript_immediately_invoked_async_body(
 }
 
 fn javascript_statement_suspends_async_continuation(node: Node<'_>) -> bool {
-    node.kind() == "expression_statement"
-        && node
+    if node.kind() == "expression_statement" {
+        return node
             .named_child(0)
-            .is_some_and(|expression| expression.kind() == "await_expression")
+            .is_some_and(|expression| expression.kind() == "await_expression");
+    }
+
+    if !matches!(
+        node.kind(),
+        "lexical_declaration" | "using_declaration" | "variable_declaration"
+    ) {
+        return false;
+    }
+    let mut cursor = node.walk();
+    let mut declarators = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator");
+    let Some(declarator) = declarators.next() else {
+        return false;
+    };
+    declarators.next().is_none()
+        && declarator
+            .child_by_field_name("value")
+            .is_some_and(|value| value.kind() == "await_expression")
 }
 
 fn hoist_javascript_function_var_bindings(

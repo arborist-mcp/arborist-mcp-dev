@@ -1728,6 +1728,57 @@ fn javascript_patch_binding_validation_allows_async_iife_references_after_await(
 }
 
 #[test]
+fn javascript_patch_binding_validation_allows_async_iife_references_after_await_initializer() {
+    let source = r#"function compute(): unknown {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(): Promise<unknown> {
+    const value = (async () => {
+        const ready = await Promise.resolve();
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+}
+
+#[test]
+fn javascript_patch_binding_validation_rejects_async_iife_references_after_conditional_await() {
+    let source = r#"async function compute(shouldAwait: boolean): Promise<unknown> {
+    return 0;
+}
+"#;
+    let replacement = r#"async function compute(shouldAwait: boolean): Promise<unknown> {
+    const value = (async () => {
+        const ready = shouldAwait ? await Promise.resolve() : 0;
+        return value;
+    })();
+    return value;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["value"]);
+}
+
+#[test]
 fn javascript_patch_binding_validation_rejects_async_iife_references_before_await() {
     let source = r#"function compute(): unknown {
     return 0;
