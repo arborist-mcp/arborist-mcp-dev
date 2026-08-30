@@ -493,6 +493,36 @@ export function computeEnum(value: number): number {
 }
 
 #[test]
+fn typescript_patch_binding_validation_resolves_ambient_value_declarations() {
+    let source = r#"export declare const offset: number;
+export declare function helper(value: number): number;
+export declare namespace utilities {
+    function scale(value: number): number;
+}
+
+export function compute(value: number): number {
+    return utilities.scale(helper(value)) + offset;
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return utilities.scale(helper(value)) + offset + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let resolved_names = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .map(|binding| binding.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(resolved_names.contains(&"offset"), "{result:#?}");
+    assert!(resolved_names.contains(&"helper"), "{result:#?}");
+    assert!(resolved_names.contains(&"utilities"), "{result:#?}");
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");

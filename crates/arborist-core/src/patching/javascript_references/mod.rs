@@ -216,7 +216,7 @@ fn javascript_item_symbol_summary(
 ) -> SymbolSummary {
     let is_function = matches!(
         item.node_kind,
-        "function_declaration" | "generator_function_declaration"
+        "function_declaration" | "generator_function_declaration" | "function_signature"
     );
     SymbolSummary::new(SymbolSummaryInit {
         symbol_id: format!(
@@ -316,6 +316,7 @@ fn is_typescript_namespace_merge_value(item: &JavaScriptFileItem<'_>) -> bool {
         item.node_kind,
         "function_declaration"
             | "generator_function_declaration"
+            | "function_signature"
             | "class_declaration"
             | "abstract_class_declaration"
             | "enum_declaration"
@@ -350,7 +351,8 @@ fn collect_javascript_scope_items<'tree>(
             | "abstract_class_declaration"
             | "enum_declaration"
             | "interface_declaration"
-            | "type_alias_declaration" => {
+            | "type_alias_declaration"
+            | "function_signature" => {
                 insert_javascript_declaration_item(child, source, child.kind(), scope_path, items)?
             }
             "lexical_declaration" | "variable_declaration" => {
@@ -362,8 +364,11 @@ fn collect_javascript_scope_items<'tree>(
             "import_alias" => {
                 collect_javascript_import_alias_name(child, source, scope_path, items)?
             }
+            "ambient_declaration" => {
+                collect_javascript_scope_items(child, source, scope_path, items, deadline)?
+            }
             "export_statement" => {
-                collect_javascript_export_names(child, source, scope_path, items)?
+                collect_javascript_export_names(child, source, scope_path, items, deadline)?
             }
             "internal_module" | "module" => {
                 collect_javascript_namespace_scope_items(
@@ -605,6 +610,7 @@ fn collect_javascript_export_names<'tree>(
     source: &str,
     parent_path: Option<&str>,
     items: &mut BTreeMap<String, Vec<JavaScriptFileItem<'tree>>>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -615,17 +621,25 @@ fn collect_javascript_export_names<'tree>(
             | "abstract_class_declaration"
             | "enum_declaration"
             | "interface_declaration"
-            | "type_alias_declaration" => {
+            | "type_alias_declaration"
+            | "function_signature" => {
                 insert_javascript_declaration_item(child, source, child.kind(), parent_path, items)?
             }
             "lexical_declaration" | "variable_declaration" => {
                 collect_javascript_top_level_declarator_names(child, source, parent_path, items)?
             }
-            "internal_module" | "module" => {
-                collect_javascript_namespace_scope_items(child, source, parent_path, items, None)?
-            }
+            "internal_module" | "module" => collect_javascript_namespace_scope_items(
+                child,
+                source,
+                parent_path,
+                items,
+                deadline,
+            )?,
             "import_alias" => {
                 collect_javascript_import_alias_name(child, source, parent_path, items)?
+            }
+            "ambient_declaration" => {
+                collect_javascript_scope_items(child, source, parent_path, items, deadline)?
             }
             _ => {}
         }
