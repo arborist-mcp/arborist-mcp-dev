@@ -1266,10 +1266,12 @@ fn walk_javascript_for_in(
     scan: &mut JavaScriptScopeScan,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    // A `for await` loop suspends after evaluating its iterable and before
+    // initializing an iteration binding, entering its body, or advancing to a
+    // later sibling in the same lexical scope. Keep conditional branches
+    // conservative by only marking the current scope, not its parent.
     let awaits_iteration = javascript_for_in_awaits_iteration(node)
-        && scopes
-            .last()
-            .is_some_and(|scope| scope.tracks_async_continuations);
+        && scopes.iter().any(|scope| scope.tracks_async_continuations);
     scopes.push(Scope {
         captures_var_bindings: false,
         defers_tdz_references: false,
