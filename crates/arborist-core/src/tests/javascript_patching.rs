@@ -392,6 +392,107 @@ export function compute(value: number): number {
 }
 
 #[test]
+fn typescript_patch_binding_validation_merges_function_namespaces() {
+    let source = r#"function utilities(value: number): number {
+    return value;
+}
+
+namespace utilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+export function compute(value: number): number {
+    return utilities.helper(value);
+}
+"#;
+    let replacement = r#"export function compute(value: number): number {
+    return utilities.helper(value) + 1;
+}"#;
+    let result =
+        patch_ast_node(Path::new("sample.ts"), source, "compute", replacement, None).unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let utilities = result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "utilities")
+        .expect("function namespace root should resolve");
+    assert_eq!(utilities.symbol.semantic_path, "utilities");
+}
+
+#[test]
+fn typescript_patch_binding_validation_merges_class_and_enum_namespaces() {
+    let source = r#"class classUtilities {}
+
+namespace classUtilities {
+    export function helper(value: number): number {
+        return value + 1;
+    }
+}
+
+enum enumUtilities {
+    marker,
+}
+
+namespace enumUtilities {
+    export function helper(value: number): number {
+        return value + 2;
+    }
+}
+
+export function computeClass(value: number): number {
+    return classUtilities.helper(value);
+}
+
+export function computeEnum(value: number): number {
+    return enumUtilities.helper(value);
+}
+"#;
+    let class_replacement = r#"export function computeClass(value: number): number {
+    return classUtilities.helper(value) + 1;
+}"#;
+    let class_result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "computeClass",
+        class_replacement,
+        None,
+    )
+    .unwrap();
+    assert!(class_result.applied, "{class_result:#?}");
+    let class_utilities = class_result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "classUtilities")
+        .expect("class namespace root should resolve");
+    assert_eq!(class_utilities.symbol.node_kind, "class_declaration");
+
+    let enum_replacement = r#"export function computeEnum(value: number): number {
+    return enumUtilities.helper(value) + 1;
+}"#;
+    let enum_result = patch_ast_node(
+        Path::new("sample.ts"),
+        source,
+        "computeEnum",
+        enum_replacement,
+        None,
+    )
+    .unwrap();
+    assert!(enum_result.applied, "{enum_result:#?}");
+    let enum_utilities = enum_result
+        .validation
+        .resolved_identifiers
+        .iter()
+        .find(|binding| binding.name == "enumUtilities")
+        .expect("enum namespace root should resolve");
+    assert_eq!(enum_utilities.symbol.node_kind, "enum_declaration");
+}
+
+#[test]
 fn previews_typescript_patch_success_and_rejection_without_writing_the_source_file() {
     let dir = temporary_dir();
     let path = dir.join("sample.ts");

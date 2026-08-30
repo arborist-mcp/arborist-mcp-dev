@@ -296,10 +296,30 @@ fn javascript_file_items_merge(
     first: &JavaScriptFileItem<'_>,
     second: &JavaScriptFileItem<'_>,
 ) -> bool {
-    matches!(first.node_kind, "internal_module" | "module")
-        && matches!(second.node_kind, "internal_module" | "module")
-        && first.semantic_path == second.semantic_path
-        && first.parent_path == second.parent_path
+    if first.semantic_path != second.semantic_path || first.parent_path != second.parent_path {
+        return false;
+    }
+
+    let first_is_namespace = is_javascript_namespace_file_item(first);
+    let second_is_namespace = is_javascript_namespace_file_item(second);
+    (first_is_namespace && second_is_namespace)
+        || (first_is_namespace && is_typescript_namespace_merge_value(second))
+        || (second_is_namespace && is_typescript_namespace_merge_value(first))
+}
+
+fn is_javascript_namespace_file_item(item: &JavaScriptFileItem<'_>) -> bool {
+    matches!(item.node_kind, "internal_module" | "module")
+}
+
+fn is_typescript_namespace_merge_value(item: &JavaScriptFileItem<'_>) -> bool {
+    matches!(
+        item.node_kind,
+        "function_declaration"
+            | "generator_function_declaration"
+            | "class_declaration"
+            | "abstract_class_declaration"
+            | "enum_declaration"
+    )
 }
 
 fn collect_javascript_file_items<'tree>(
