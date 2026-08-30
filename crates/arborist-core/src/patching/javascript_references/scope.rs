@@ -77,9 +77,12 @@ pub(super) fn scan_javascript_symbol_scope(
         "class_declaration" | "abstract_class_declaration" => {
             walk_javascript_class(symbol_node, source, &mut scopes, &mut scan, false, deadline)?;
         }
-        // Interfaces, enums, and type aliases carry no value references to
-        // validate; their member and type spellings are not value bindings.
-        "interface_declaration" | "enum_declaration" | "type_alias_declaration" => {}
+        "enum_declaration" => {
+            walk_javascript_enum(symbol_node, source, &mut scopes, &mut scan, deadline)?;
+        }
+        // Interfaces and type aliases carry no value references to validate;
+        // their member and type spellings are not value bindings.
+        "interface_declaration" | "type_alias_declaration" => {}
         _ => {
             walk_javascript_children(symbol_node, source, &mut scopes, &mut scan, deadline)?;
         }
@@ -131,7 +134,8 @@ fn walk_javascript_node(
         "for_in_statement" => walk_javascript_for_in(node, source, scopes, scan, deadline),
         "for_statement" => walk_javascript_for_statement(node, source, scopes, scan, deadline),
         "catch_clause" => walk_javascript_catch(node, source, scopes, scan, deadline),
-        "interface_declaration" | "enum_declaration" | "type_alias_declaration" => Ok(()),
+        "enum_declaration" => walk_javascript_enum(node, source, scopes, scan, deadline),
+        "interface_declaration" | "type_alias_declaration" => Ok(()),
         "import_statement"
         | "import_clause"
         | "named_imports"
@@ -390,7 +394,7 @@ fn mark_javascript_lexical_binding_initializing(
                 }
             }
         }
-        "class_declaration" | "abstract_class_declaration" => {
+        "class_declaration" | "abstract_class_declaration" | "enum_declaration" => {
             if let Some(name) = node.child_by_field_name("name") {
                 mark_javascript_pattern_initializing(name, source, scope)?;
             }
@@ -523,6 +527,42 @@ fn hoist_javascript_function_var_bindings(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         hoist_javascript_function_var_bindings(child, source, function_scope, scan, deadline)?;
+    }
+    Ok(())
+}
+
+fn walk_javascript_enum(
+    node: Node<'_>,
+    source: &str,
+    scopes: &mut Vec<Scope>,
+    scan: &mut JavaScriptScopeScan,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    // TypeScript enums produce runtime values. They are block-scoped in the
+    // source language and become available while their member initializers are
+    // evaluated, after remaining in the temporal dead zone before declaration.
+    let created_scope = scopes.is_empty();
+    if created_scope {
+        scopes.push(Scope {
+            is_function_scope: false,
+            defers_tdz_references: false,
+            bindings: Vec::new(),
+            initializing_names: BTreeSet::new(),
+        });
+    }
+    if let Some(name) = node.child_by_field_name("name") {
+        let scope = scopes
+            .last_mut()
+            .expect("an enum scope is available while its declaration is walked");
+        let name_text = node_text(name, source)?.trim().to_string();
+        scope.initializing_names.remove(&name_text);
+        bind_javascript_name(name, source, node.kind(), scope, scan)?;
+    }
+    if let Some(body) = node.child_by_field_name("body") {
+        walk_javascript_node(body, source, scopes, scan, deadline)?;
+    }
+    if created_scope {
+        scopes.pop();
     }
     Ok(())
 }

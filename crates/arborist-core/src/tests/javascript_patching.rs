@@ -1650,6 +1650,58 @@ fn javascript_patch_binding_validation_rejects_references_outside_nested_block_s
 }
 
 #[test]
+fn typescript_patch_binding_validation_resolves_local_enum_values() {
+    let source = r#"function compute(): number { return 0; }"#;
+    let replacement = r#"function compute(): number {
+    enum Mode {
+        Active = 0,
+        Next = Mode.Active + 1,
+    }
+    return Mode.Next;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied, "{result:#?}");
+    let decision = result
+        .validation
+        .binding_decisions
+        .iter()
+        .find(|decision| decision.name == "Mode")
+        .expect("Mode should resolve to the local enum declaration");
+    assert_eq!(decision.candidates[0].node_kind, "enum_declaration");
+}
+
+#[test]
+fn typescript_patch_binding_validation_rejects_enum_tdz_shadowing() {
+    let source = r#"function compute(Mode: number): number { return Mode; }"#;
+    let replacement = r#"function compute(Mode: number): number {
+    {
+        console.log(Mode);
+        enum Mode { Active }
+    }
+    return 0;
+}"#;
+    let result = patch_ast_node(
+        Path::new("compute.ts"),
+        source,
+        "compute",
+        replacement,
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied, "{result:#?}");
+    assert_eq!(result.validation.unresolved_identifiers, ["Mode"]);
+}
+
+#[test]
 fn tsx_patch_binding_validation_ignores_jsx_tag_and_attribute_names() {
     let source = r#"function format(value: number): string {
     return String(value);
