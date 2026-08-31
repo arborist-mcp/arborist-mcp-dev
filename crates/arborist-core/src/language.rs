@@ -38,6 +38,7 @@ pub(crate) use java::{
     JavaDirectSuperclassReference, java_direct_interface_references_for_declaration,
     java_direct_superclass_reference, java_local_explicit_static_member_imports,
     java_local_explicit_type_imports, java_local_file_dependency_paths,
+    java_local_file_dependency_paths_with_deadline,
 };
 pub(crate) use javascript::{
     JavaScriptModuleExportKind, JavaScriptModuleValuedExport, direct_require_specifier,
