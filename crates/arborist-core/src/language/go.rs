@@ -387,7 +387,7 @@ fn find_go_module(
             if let Some(deadline) = deadline {
                 deadline.check("reading Go module file")?;
             }
-            let Some(module_path) = go_module_path(&source) else {
+            let Some(module_path) = go_module_path(&source, deadline)? else {
                 return Ok(None);
             };
             let Ok(module_root) = normalize_absolute_path(&directory) else {
@@ -401,9 +401,12 @@ fn find_go_module(
     }
 }
 
-fn go_module_path(source: &str) -> Option<String> {
+fn go_module_path(source: &str, deadline: Option<&dyn DeadlineCheck>) -> Result<Option<String>> {
     let mut module_path = None;
     for line in source.lines() {
+        if let Some(deadline) = deadline {
+            deadline.check("parsing Go module file")?;
+        }
         let line = line.trim();
         if line.is_empty() || line.starts_with("//") {
             continue;
@@ -421,11 +424,11 @@ fn go_module_path(source: &str) -> Option<String> {
             .map_or(rest, |(candidate, _)| candidate)
             .trim();
         if !is_valid_go_module_path(candidate) || module_path.is_some() {
-            return None;
+            return Ok(None);
         }
         module_path = Some(candidate.to_string());
     }
-    module_path
+    Ok(module_path)
 }
 
 fn is_valid_go_module_path(module_path: &str) -> bool {
@@ -922,6 +925,28 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached reading Go module file"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn module_root_discovery_checks_deadline_while_parsing_module_file() {
+        let root = temporary_dir();
+        let command = root.join("main.go");
+        fs::write(
+            root.join("go.mod"),
+            "// module configuration\nmodule example.com/project\n",
+        )
+        .unwrap();
+
+        let deadline = RejectAfterChecks::new(2);
+        let error = find_go_module(&command, Some(&deadline))
+            .expect_err("deadline should interrupt module-file parsing");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached parsing Go module file"),
             "{error:#}"
         );
     }
