@@ -289,10 +289,16 @@ fn go_production_source_files_in_directory_with_limit_and_deadline(
     max_entries: usize,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<PathBuf>> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning Go local import package files")?;
+    }
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(_) => return Ok(BTreeSet::new()),
     };
+    if let Some(deadline) = deadline {
+        deadline.check("scanning Go local import package files")?;
+    }
     let mut paths = BTreeSet::new();
     let mut entry_count = 0;
     for entry in entries {
@@ -321,6 +327,9 @@ fn go_production_source_files_in_directory_with_limit_and_deadline(
         if let Ok(path) = normalize_absolute_path(&path) {
             paths.insert(path);
         }
+    }
+    if let Some(deadline) = deadline {
+        deadline.check("scanning Go local import package files")?;
     }
     if paths.len() > max_entries {
         return Ok(BTreeSet::new());
@@ -754,6 +763,73 @@ mod tests {
         fn remaining_timeout_micros(&self, phase: &str) -> Result<Option<u64>> {
             anyhow::bail!("deadline budget requested during {phase}");
         }
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_before_reading_empty_directory() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(&package_dir).unwrap();
+
+        let deadline = RejectAfterChecks::new(0);
+        let error = go_production_source_files_in_directory_with_limit_and_deadline(
+            &package_dir,
+            1,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop before opening the package directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_opening_empty_directory() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(&package_dir).unwrap();
+
+        let deadline = RejectAfterChecks::new(1);
+        let error = go_production_source_files_in_directory_with_limit_and_deadline(
+            &package_dir,
+            1,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after opening the package directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_processing_entries() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("service");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::write(package_dir.join("service.go"), "package service\n").unwrap();
+
+        let deadline = RejectAfterChecks::new(3);
+        let error = go_production_source_files_in_directory_with_limit_and_deadline(
+            &package_dir,
+            1,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after processing package entries");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
     }
 
     #[test]
