@@ -384,6 +384,9 @@ fn find_go_module(
             let Ok(source) = read_source(&module_file) else {
                 return Ok(None);
             };
+            if let Some(deadline) = deadline {
+                deadline.check("reading Go module file")?;
+            }
             let Some(module_path) = go_module_path(&source) else {
                 return Ok(None);
             };
@@ -692,7 +695,7 @@ mod tests {
     use anyhow::Result;
 
     use super::{
-        go_import_specs_with_limit, go_local_import_binding_statuses,
+        find_go_module, go_import_specs_with_limit, go_local_import_binding_statuses,
         go_local_package_dependency_paths, go_local_package_dependency_paths_with_deadline,
         go_local_package_imports, go_local_package_imports_with_deadline,
         go_production_source_files_in_directory_with_limit_and_deadline,
@@ -901,6 +904,24 @@ mod tests {
             error
                 .to_string()
                 .contains("deadline check reached locating Go module root"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn module_root_discovery_checks_deadline_after_reading_module_file() {
+        let root = temporary_dir();
+        let command = root.join("main.go");
+        fs::write(root.join("go.mod"), "module example.com/project\n").unwrap();
+
+        let deadline = RejectAfterChecks::new(1);
+        let error = find_go_module(&command, Some(&deadline))
+            .expect_err("deadline should interrupt module-file processing after the read");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached reading Go module file"),
             "{error:#}"
         );
     }
