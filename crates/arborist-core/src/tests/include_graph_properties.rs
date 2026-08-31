@@ -159,6 +159,30 @@ fn expanded_refresh_paths_union_self_with_transitive_dependents() {
 }
 
 #[test]
+fn expanded_refresh_paths_honor_workspace_file_size_limit_during_reverse_scan() {
+    let dir = temporary_dir();
+    write_c_source(&dir.join("base.h"), &[]);
+    fs::write(
+        dir.join("oversized.c"),
+        "#include \"base.h\"\n".to_string() + &"x".repeat(256),
+    )
+    .unwrap();
+
+    let limits = WorkspaceScanLimits::with_max_file_bytes(128);
+    let deadline = WorkspaceScanDeadline::new(limits).unwrap();
+    let error = expanded_refresh_file_paths(&dir, &dir.join("base.h"), limits, &deadline)
+        .expect_err("reverse dependency scans must enforce workspace file-size limits");
+
+    println!("reverse scan error: {error:#}");
+    assert!(
+        error
+            .to_string()
+            .contains("workspace scan source file too large")
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn expanded_refresh_paths_gate_expansion_by_language_adapter() {
     let dir = temporary_dir();
     // An unsupported extension fails language detection outright...

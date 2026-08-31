@@ -9,6 +9,7 @@ use crate::language::{
 };
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files_with_deadline,
+    validate_source_file_size,
 };
 
 pub(super) fn reverse_local_file_dependency_index(
@@ -30,6 +31,7 @@ pub(super) fn reverse_local_file_dependency_index(
             continue;
         }
 
+        validate_source_file_size(&path, limits)?;
         let source = read_source(&path)?;
         let document = parse_document_with_timeout(
             &path,
