@@ -207,8 +207,11 @@ pub(crate) trait LanguageAdapter: Sync {
         path: &Path,
         root: Node<'_>,
         source: &str,
-        _deadline: Option<&dyn DeadlineCheck>,
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Vec<PathBuf>> {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting local file dependencies")?;
+        }
         self.collect_local_file_dependencies(path, root, source)
     }
 
@@ -2626,4 +2629,45 @@ fn kotlin_grammar() -> Language {
 
 fn csharp_grammar() -> Language {
     tree_sitter_c_sharp::LANGUAGE.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::bail;
+
+    use super::{JAVA_DESCRIPTOR, LanguageAdapter, SyntaxOnlyAdapter};
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectLocalDependencyExtraction;
+
+    impl DeadlineCheck for RejectLocalDependencyExtraction {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            assert_eq!(phase, "extracting local file dependencies");
+            bail!("deadline expired")
+        }
+    }
+
+    #[test]
+    fn default_local_dependency_deadline_handler_checks_before_dispatching() {
+        let adapter = SyntaxOnlyAdapter {
+            descriptor: &JAVA_DESCRIPTOR,
+        };
+        let path = Path::new("sample.java");
+        let source = "class Sample {}\n";
+        let document = parse_document(path, source).expect("Java source should parse");
+
+        let error = adapter
+            .collect_local_file_dependencies_with_deadline(
+                path,
+                document.tree.root_node(),
+                source,
+                Some(&RejectLocalDependencyExtraction),
+            )
+            .expect_err("the deadline should reject before unsupported dependency dispatch");
+
+        assert_eq!(error.to_string(), "deadline expired");
+    }
 }
