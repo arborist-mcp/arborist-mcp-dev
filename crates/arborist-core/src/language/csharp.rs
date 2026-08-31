@@ -115,6 +115,7 @@ fn csharp_type_source_paths(
             candidates.insert(candidate);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
 
     let mut source_root = parent.to_path_buf();
     loop {
@@ -217,6 +218,7 @@ fn collect_csharp_namespace_directory(
             candidates.insert(candidate);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
     Ok(())
 }
 
@@ -998,11 +1000,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
-        csharp_file_static_type_imports, csharp_file_type_alias_imports,
-        csharp_global_namespace_imports, csharp_global_static_type_imports,
-        csharp_global_type_alias_imports, csharp_local_file_dependency_paths,
-        csharp_local_file_dependency_paths_with_deadline,
+        collect_csharp_namespace_directory, csharp_file_base_types, csharp_file_interface_parents,
+        csharp_file_namespace_imports, csharp_file_static_type_imports,
+        csharp_file_type_alias_imports, csharp_global_namespace_imports,
+        csharp_global_static_type_imports, csharp_global_type_alias_imports,
+        csharp_local_file_dependency_paths, csharp_local_file_dependency_paths_with_deadline,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
@@ -1519,6 +1521,63 @@ class Caller {}
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn namespace_directory_scan_checks_deadline_after_failed_directory_read() {
+        let root = temporary_dir();
+        let missing_directory = root.join("missing");
+        let mut candidates = std::collections::BTreeSet::new();
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = collect_csharp_namespace_directory(
+            &missing_directory,
+            "Demo",
+            &root.join("Caller.cs"),
+            &mut candidates,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after a failed C# directory read");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn namespace_directory_scan_checks_deadline_after_opening_empty_directory() {
+        let root = temporary_dir();
+        let empty_directory = root.join("empty");
+        fs::create_dir_all(&empty_directory).unwrap();
+        let mut candidates = std::collections::BTreeSet::new();
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = collect_csharp_namespace_directory(
+            &empty_directory,
+            "Demo",
+            &root.join("Caller.cs"),
+            &mut candidates,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after opening an empty C# directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

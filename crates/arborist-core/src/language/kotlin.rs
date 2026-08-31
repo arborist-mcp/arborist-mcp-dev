@@ -202,6 +202,7 @@ fn kotlin_package_directory_contains_source_file(
             return Ok(true);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
     Ok(false)
 }
 
@@ -227,6 +228,7 @@ fn kotlin_source_files_in_package_directory(
             source_paths.push(candidate);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
     Ok(source_paths)
 }
 
@@ -308,6 +310,7 @@ mod tests {
 
     use super::{
         kotlin_local_file_dependency_paths, kotlin_local_file_dependency_paths_with_deadline,
+        kotlin_package_directory_contains_source_file,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
@@ -329,6 +332,57 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_failed_directory_read() {
+        let root = temporary_dir();
+        let missing_directory = root.join("missing");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = kotlin_package_directory_contains_source_file(
+            &missing_directory,
+            "com.example",
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after a failed Kotlin directory read");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_opening_empty_directory() {
+        let root = temporary_dir();
+        let empty_directory = root.join("empty");
+        fs::create_dir_all(&empty_directory).unwrap();
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = kotlin_package_directory_contains_source_file(
+            &empty_directory,
+            "com.example",
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after opening an empty Kotlin directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

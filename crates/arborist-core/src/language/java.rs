@@ -939,6 +939,7 @@ fn java_package_directory_contains_source_file_with_deadline(
             return Ok(true);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
     Ok(false)
 }
 
@@ -962,6 +963,7 @@ fn java_source_files_in_package_directory_with_deadline(
             source_paths.push(candidate);
         }
     }
+    check_local_file_dependency_deadline(deadline)?;
     Ok(source_paths)
 }
 
@@ -1159,6 +1161,7 @@ mod tests {
     use super::{
         java_local_explicit_static_member_imports, java_local_explicit_type_imports,
         java_local_file_dependency_paths, java_local_file_dependency_paths_with_deadline,
+        java_package_directory_contains_source_file_with_deadline,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
@@ -1180,6 +1183,57 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_failed_directory_read() {
+        let root = temporary_dir();
+        let missing_directory = root.join("missing");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = java_package_directory_contains_source_file_with_deadline(
+            &missing_directory,
+            "com.example",
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after a failed Java directory read");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_opening_empty_directory() {
+        let root = temporary_dir();
+        let empty_directory = root.join("empty");
+        fs::create_dir_all(&empty_directory).unwrap();
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 1,
+        };
+
+        let error = java_package_directory_contains_source_file_with_deadline(
+            &empty_directory,
+            "com.example",
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after opening an empty Java directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies"),
+            "{error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
