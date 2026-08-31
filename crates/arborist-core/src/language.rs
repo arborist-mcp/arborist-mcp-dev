@@ -53,7 +53,9 @@ pub(crate) use javascript::{
     javascript_star_reexport_module_paths_with_overrides_and_check,
     resolve_local_javascript_module_path_with_overrides,
 };
-pub(crate) use kotlin::kotlin_local_file_dependency_paths;
+pub(crate) use kotlin::{
+    kotlin_local_file_dependency_paths, kotlin_local_file_dependency_paths_with_deadline,
+};
 pub use parser::{
     ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,
     parser_for_language, supported_languages,
