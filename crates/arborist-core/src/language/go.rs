@@ -294,7 +294,12 @@ fn go_production_source_files_in_directory_with_limit_and_deadline(
     }
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(_) => return Ok(BTreeSet::new()),
+        Err(_) => {
+            if let Some(deadline) = deadline {
+                deadline.check("scanning Go local import package files")?;
+            }
+            return Ok(BTreeSet::new());
+        }
     };
     if let Some(deadline) = deadline {
         deadline.check("scanning Go local import package files")?;
@@ -778,6 +783,27 @@ mod tests {
             Some(&deadline),
         )
         .expect_err("deadline should stop before opening the package directory");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline check reached scanning Go local import package files"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn package_directory_scan_checks_deadline_after_failed_directory_read() {
+        let root = temporary_dir();
+        let package_dir = root.join("internal").join("missing");
+
+        let deadline = RejectAfterChecks::new(1);
+        let error = go_production_source_files_in_directory_with_limit_and_deadline(
+            &package_dir,
+            1,
+            Some(&deadline),
+        )
+        .expect_err("deadline should stop after a failed package-directory read");
 
         assert!(
             error
