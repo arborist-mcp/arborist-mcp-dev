@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::query::{DEFAULT_TREE_QUERY_MAX_CAPTURES, execute_tree_query_with_timeout};
 
 #[test]
 fn executes_tree_query() {
@@ -106,7 +107,14 @@ class Sample {
             "add",
         ),
     ] {
-        let captures = execute_tree_query(Path::new(path), source, query).unwrap();
+        let captures = execute_tree_query_with_timeout(
+            Path::new(path),
+            source,
+            query,
+            DEFAULT_TREE_QUERY_MAX_CAPTURES,
+            Some(5_000),
+        )
+        .unwrap();
         assert!(captures.iter().any(|capture| capture.text == expected));
         assert!(
             captures
