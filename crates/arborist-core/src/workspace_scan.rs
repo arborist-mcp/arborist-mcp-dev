@@ -6,7 +6,8 @@ pub use limits::{
     MAX_WORKSPACE_SCAN_TIMEOUT_MS, WorkspaceScanLimits,
 };
 pub(crate) use limits::{
-    WorkspaceScanDeadline, validate_source_file_size, validate_workspace_scan_limits,
+    WorkspaceScanDeadline, validate_source_file_size, validate_source_text_size,
+    validate_workspace_scan_limits,
 };
 #[cfg(test)]
 pub(crate) use walker::{SKIPPED_WORKSPACE_DIR_NAMES, should_skip_dir_name};

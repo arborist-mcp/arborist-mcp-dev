@@ -25,7 +25,7 @@ use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files,
     collect_source_files_with_deadline, collect_source_files_with_limits,
-    validate_source_file_size,
+    validate_source_file_size, validate_source_text_size,
 };
 
 pub(crate) fn load_live_workspace_symbols(
@@ -318,14 +318,16 @@ fn read_workspace_source_with_deadline(
     limits: WorkspaceScanLimits,
     deadline: &dyn DeadlineCheck,
 ) -> Result<String> {
-    validate_source_file_size(path, limits)?;
+    let source = if let Some(source_override) = source_override {
+        validate_source_text_size(path, source_override, limits)?;
+        source_override.to_owned()
+    } else {
+        validate_source_file_size(path, limits)?;
+        deadline.check("indexing workspace files")?;
+        read_source(path)?
+    };
     deadline.check("indexing workspace files")?;
-    let source = source_override
-        .map(str::to_owned)
-        .map(Ok)
-        .unwrap_or_else(|| read_source(path));
-    deadline.check("indexing workspace files")?;
-    source
+    Ok(source)
 }
 
 #[cfg(test)]
@@ -358,6 +360,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn live_workspace_source_override_does_not_require_disk_path() {
+        let limits = WorkspaceScanLimits {
+            max_file_bytes: Some(64),
+            ..WorkspaceScanLimits::default()
+        };
+        let deadline = WorkspaceScanDeadline::new(limits).unwrap();
+
+        let source = read_workspace_source_with_deadline(
+            Path::new("missing-overlay.py"),
+            Some("def helper():\n    return 1\n"),
+            limits,
+            &deadline,
+        )
+        .expect("source overlays should be usable for paths not present on disk");
+
+        assert_eq!(source, "def helper():\n    return 1\n");
+    }
+
+    #[test]
+    fn live_workspace_source_override_honors_text_size_limit() {
+        let limits = WorkspaceScanLimits {
+            max_file_bytes: Some(8),
+            ..WorkspaceScanLimits::default()
+        };
+        let deadline = WorkspaceScanDeadline::new(limits).unwrap();
+
+        let error = read_workspace_source_with_deadline(
+            Path::new("missing-overlay.py"),
+            Some("def helper():\n    return 1\n"),
+            limits,
+            &deadline,
+        )
+        .expect_err("oversized source overlays should be rejected by workspace limits");
+
+        assert!(error.to_string().contains("source text too large"));
+        assert!(error.to_string().contains("max_file_bytes=8"));
+    }
     #[test]
     fn live_workspace_source_read_checks_deadline_after_filesystem_work() {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))

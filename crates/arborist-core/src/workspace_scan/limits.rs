@@ -160,6 +160,25 @@ pub(crate) fn validate_source_file_size(path: &Path, limits: WorkspaceScanLimits
     validate_source_file_metadata(path, &metadata, max_file_bytes)
 }
 
+pub(crate) fn validate_source_text_size(
+    path: &Path,
+    source: &str,
+    limits: WorkspaceScanLimits,
+) -> Result<()> {
+    let Some(max_file_bytes) = limits.max_file_bytes else {
+        return Ok(());
+    };
+
+    if source.len() as u64 > max_file_bytes {
+        bail!(
+            "workspace scan source text too large at {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            source.len(),
+            max_file_bytes,
+        );
+    }
+    Ok(())
+}
 pub(super) fn validate_source_file_metadata(
     path: &Path,
     metadata: &fs::Metadata,
