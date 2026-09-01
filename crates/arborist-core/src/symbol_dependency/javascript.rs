@@ -908,6 +908,9 @@ fn resolve_javascript_namespace_object_binding_inner(
         return Ok(None);
     }
     let path = Path::new(module_path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading JavaScript/TypeScript CommonJS callable export module")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalize_path(path)))
         .cloned()
