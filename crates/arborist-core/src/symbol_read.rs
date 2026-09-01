@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use crate::language::{point_for_offset, position_from, read_source};
+use crate::language::{point_for_offset, position_from, read_source, validate_source_length};
 use crate::model::{SymbolMeta, SymbolReadResult};
 use crate::symbol_summary::symbol_summary_from_meta;
 
@@ -56,7 +56,9 @@ fn symbol_source_text(
         return Ok(source.clone());
     }
 
-    read_source(Path::new(&symbol.file_path))
+    let source = read_source(Path::new(&symbol.file_path))?;
+    validate_source_length(Path::new(&symbol.file_path), source.len())?;
+    Ok(source)
 }
 
 fn symbol_source_text_with_cache<'a>(

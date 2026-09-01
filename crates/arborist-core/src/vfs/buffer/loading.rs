@@ -13,14 +13,6 @@ use crate::language::{
 use crate::workspace_scan::should_skip_index_path;
 
 impl VirtualFileSystem {
-    pub(in crate::vfs) fn ensure_loaded(
-        &mut self,
-        path: &Path,
-        source_override: Option<&str>,
-    ) -> Result<()> {
-        self.ensure_loaded_inner(path, source_override, None)
-    }
-
     pub(in crate::vfs) fn ensure_loaded_with_deadline(
         &mut self,
         path: &Path,

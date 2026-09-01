@@ -135,9 +135,9 @@ impl VirtualFileSystem {
         deadline.check("virtual path validation")?;
         let (path, normalized) = normalized_virtual_path(path)?;
         deadline.check("virtual source load")?;
-        self.ensure_loaded(&path, None)?;
+        self.ensure_loaded_with_deadline(&path, None, deadline)?;
         deadline.check("virtual source refresh")?;
-        let source_changed = self.refresh_if_clean(&normalized)?;
+        let source_changed = self.refresh_if_clean_with_deadline(&normalized, deadline)?;
         deadline.check("commit persistence")?;
         self.commit_loaded_file(&normalized, source_changed)
     }
@@ -234,7 +234,7 @@ impl VirtualFileSystem {
         deadline: &dyn DeadlineCheck,
     ) -> Result<VirtualFileSnapshot> {
         deadline.check("virtual source load")?;
-        self.ensure_loaded(path, None)?;
+        self.ensure_loaded_with_deadline(path, None, deadline)?;
         deadline.check("disk source read")?;
 
         let current = self

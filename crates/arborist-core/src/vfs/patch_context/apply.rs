@@ -165,9 +165,9 @@ impl VirtualFileSystem {
         deadline.check("virtual path validation")?;
         let (path, normalized) = normalized_virtual_path(path)?;
         deadline.check("virtual source load")?;
-        self.ensure_loaded(&path, None)?;
+        self.ensure_loaded_with_deadline(&path, None, deadline)?;
         deadline.check("virtual source refresh")?;
-        self.refresh_if_clean(&normalized)?;
+        self.refresh_if_clean_with_deadline(&normalized, deadline)?;
 
         let previous = self
             .entries
