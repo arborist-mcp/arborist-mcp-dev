@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::language::{self, ensure_path_inside_workspace, read_source};
+use crate::language::{self, ensure_path_inside_workspace, read_source, validate_source_length};
 use crate::model::*;
 use crate::symbol_trace::TraceQueryDeadline;
 use crate::{patching, symbols};
@@ -50,6 +50,7 @@ pub fn validate_patch_with_trace_context_from_path_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
+    validate_source_length(&path, source.len())?;
     validate_patch_with_trace_context_with_deadline(
         &workspace_root,
         &path,
@@ -210,6 +211,7 @@ pub fn validate_patch_with_trace_context_from_index_path_with_timeout(
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
+    validate_source_length(&path, source.len())?;
     validate_patch_with_trace_context_from_index_with_deadline(
         db_path,
         &path,
@@ -258,6 +260,7 @@ pub fn validate_patch_with_trace_context_at_position_from_path_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
+    validate_source_length(&path, source.len())?;
     validate_patch_with_trace_context_at_position_with_deadline(
         &workspace_root,
         &path,
@@ -360,6 +363,7 @@ pub fn validate_patch_with_trace_context_at_position_from_index_path_with_timeou
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
+    validate_source_length(&path, source.len())?;
     validate_patch_with_trace_context_at_position_from_index_with_deadline(
         db_path,
         &path,
