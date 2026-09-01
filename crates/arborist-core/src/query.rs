@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
-use crate::language::{normalize_absolute_path, read_source};
+use crate::language::{normalize_absolute_path, read_source, validate_source_length};
 use crate::model::QueryCaptureResult;
 
 mod execution;
@@ -37,6 +37,7 @@ pub fn execute_tree_query_from_path_with_timeout(
     let path = normalize_absolute_path(path)?;
     let source = read_source(&path)?;
     if let Some(timeout_ms) = timeout_ms {
+        validate_source_length(&path, source.len())?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         if std::time::Instant::now() >= deadline {
             bail!(
