@@ -9,7 +9,7 @@ use crate::language::{
     csharp_generic_type_arguments_per_segment, csharp_generic_type_semantic_path,
     csharp_global_namespace_imports, csharp_global_static_type_imports,
     csharp_global_type_alias_imports, detect_language, node_text, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    parse_document_with_timeout, read_source, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::semantic::csharp::is_csharp_symbol_node;
@@ -248,6 +248,7 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| read_source(path))?;
+        validate_source_length(path, source.len())?;
         if let Some(deadline) = deadline {
             deadline.check("parsing C# global import context")?;
         }
@@ -426,6 +427,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing C# import context")?;
     }

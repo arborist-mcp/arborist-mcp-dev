@@ -7,7 +7,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{
     c_companion_source_path_with_deadline, c_include_targets, c_include_targets_with_offsets,
     detect_language, is_c_header_path, normalize_path, parse_document, parse_document_with_timeout,
-    read_source, resolve_local_c_include,
+    read_source, resolve_local_c_include, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
@@ -274,7 +274,11 @@ fn source_for_path(
         .and_then(|overrides| overrides.get(&normalize_path(path)))
         .cloned()
         .map(Ok)
-        .unwrap_or_else(|| read_source(path))
+        .unwrap_or_else(|| {
+            let source = read_source(path)?;
+            validate_source_length(path, source.len())?;
+            Ok(source)
+        })
 }
 
 fn resolve_local_c_include_with_overrides(

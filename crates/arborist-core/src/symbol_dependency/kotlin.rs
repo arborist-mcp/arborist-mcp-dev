@@ -6,7 +6,7 @@ use tree_sitter::Node;
 
 use crate::language::{
     detect_language, node_text, normalize_path, parse_document, parse_document_with_timeout,
-    read_source,
+    read_source, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::semantic::kotlin::is_kotlin_semantic_symbol_node;
@@ -152,6 +152,7 @@ fn kotlin_import_context_for_file_with_overrides_and_deadline(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing Kotlin import context")?;
     }

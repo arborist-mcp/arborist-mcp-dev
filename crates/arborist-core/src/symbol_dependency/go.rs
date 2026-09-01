@@ -7,7 +7,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, detect_language, go_local_package_imports_with_deadline,
     go_source_package_name, normalize_path, parse_document, parse_document_with_timeout,
-    read_source,
+    read_source, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -41,6 +41,7 @@ fn go_import_context_for_file_with_overrides_and_deadline(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing Go import context")?;
     }
@@ -173,6 +174,7 @@ fn go_package_name_for_paths(
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| read_source(path))?;
+        validate_source_length(path, source.len())?;
         if let Some(deadline) = deadline {
             deadline.check("parsing imported Go package names")?;
         }

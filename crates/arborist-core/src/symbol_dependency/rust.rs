@@ -6,7 +6,7 @@ use tree_sitter::Node;
 
 use crate::language::{
     detect_language, node_text, normalize_path, parse_document, parse_document_with_timeout,
-    read_source, rust_direct_module_candidate_paths,
+    read_source, rust_direct_module_candidate_paths, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::RustImportRoot;
@@ -53,6 +53,7 @@ pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_wi
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| read_source(path))?;
+        validate_source_length(path, source.len())?;
         if let Some(deadline) = deadline {
             deadline.check("parsing Rust module context")?;
         }

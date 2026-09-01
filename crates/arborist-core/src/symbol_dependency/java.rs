@@ -6,6 +6,7 @@ use anyhow::Result;
 use crate::language::{
     detect_language, java_local_explicit_static_member_imports, java_local_explicit_type_imports,
     node_text, normalize_path, parse_document, parse_document_with_timeout, read_source,
+    validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::semantic::java::is_java_symbol_node;
@@ -133,6 +134,7 @@ fn java_import_context_for_file_with_overrides_and_deadline(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing Java import context")?;
     }

@@ -12,6 +12,7 @@ use crate::language::{
     javascript_named_reexport_module_paths_with_overrides_and_check,
     javascript_star_reexport_module_paths_with_overrides_and_check, normalize_path, parse_document,
     parse_document_with_timeout, read_source, resolve_local_javascript_module_path_with_overrides,
+    validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -82,6 +83,7 @@ fn javascript_import_context_for_file_with_overrides_and_deadline(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing JavaScript/TypeScript import context")?;
     }
@@ -641,6 +643,7 @@ fn read_javascript_module_document(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -916,6 +919,7 @@ fn resolve_javascript_namespace_object_binding_inner(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
