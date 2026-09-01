@@ -6,7 +6,7 @@ use anyhow::Result;
 use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, c_include_targets, normalize_path, parse_document_with_timeout, read_source,
-    resolve_local_c_include,
+    resolve_local_c_include, validate_source_length,
 };
 use crate::model::{DisambiguationContext, SymbolSummary};
 
@@ -121,6 +121,7 @@ fn collect_visible_include_families_from_document(
             deadline.check("parsing C/C++ ambiguity include families")?;
         }
         let include_source = read_source(&include_path)?;
+        validate_source_length(&include_path, include_source.len())?;
         let include_document = parse_document_with_timeout(
             &include_path,
             &include_source,

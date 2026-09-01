@@ -8,6 +8,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, c_companion_source_path_with_deadline, c_include_targets, first_identifier,
     node_text, normalize_path, parse_document_with_timeout, read_source, resolve_local_c_include,
+    validate_source_length,
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
@@ -122,6 +123,7 @@ pub(super) fn collect_c_accessible_names_with_deadline(
             continue;
         };
         let include_source = read_source(&include_path)?;
+        validate_source_length(&include_path, include_source.len())?;
         check_deadline(deadline, "parsing C/C++ includes")?;
         let include_document = parse_document_with_timeout(
             &include_path,
@@ -231,6 +233,7 @@ fn collect_c_accessible_symbols_from_document(
         };
 
         let include_source = read_source(&include_path)?;
+        validate_source_length(&include_path, include_source.len())?;
         check_deadline(deadline, "parsing C/C++ includes")?;
         let include_document = parse_document_with_timeout(
             &include_path,
@@ -264,6 +267,7 @@ fn collect_c_accessible_symbols_from_document(
             let normalized_companion = normalize_path(&companion_source_path);
             if state.visited_companion_sources.insert(normalized_companion) {
                 let companion_source = read_source(&companion_source_path)?;
+                validate_source_length(&companion_source_path, companion_source.len())?;
                 check_deadline(deadline, "parsing C/C++ companion sources")?;
                 let companion_document = parse_document_with_timeout(
                     &companion_source_path,

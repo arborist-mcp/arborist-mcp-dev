@@ -16,7 +16,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{
     C_FAMILY_HEADER_EXTENSIONS, c_include_targets, detect_language, extension_case_candidates,
     first_identifier, is_c_header_path, last_type_identifier, node_text, normalize_path,
-    parse_document_with_timeout, read_source, resolve_local_c_include,
+    parse_document_with_timeout, read_source, resolve_local_c_include, validate_source_length,
 };
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
@@ -376,7 +376,11 @@ fn collect_declaring_include_headers(
         {
             headers.insert(normalize_path(&include_path));
         }
+        if let Some(deadline) = deadline {
+            deadline.check("reading C/C++ symbol identity sources")?;
+        }
         let include_source = read_source(&include_path)?;
+        validate_source_length(&include_path, include_source.len())?;
         collect_declaring_include_headers(
             &include_path,
             &include_source,
@@ -398,7 +402,11 @@ fn c_file_declares_symbol(
     if let Some(deadline) = deadline {
         deadline.check("resolving C/C++ symbol identity")?;
     }
+    if let Some(deadline) = deadline {
+        deadline.check("reading C/C++ symbol identity sources")?;
+    }
     let source = read_source(path)?;
+    validate_source_length(path, source.len())?;
     let document = parse_document_with_timeout(
         path,
         &source,
