@@ -2304,9 +2304,9 @@ impl LanguageAdapter for CAdapter {
         path: &Path,
         node: Node<'_>,
         source: &str,
-        _deadline: Option<&dyn DeadlineCheck>,
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
-        crate::semantic::c_symbol_id_for_node(path, node, source)
+        crate::semantic::c_symbol_id_for_node_with_deadline(path, node, source, deadline)
     }
 
     fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {

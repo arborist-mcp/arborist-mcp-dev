@@ -29,7 +29,7 @@ pub(crate) use c::c_using_declaration_name;
 pub(crate) use c::cpp_callable_symbol_id;
 pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
-pub(crate) use c::{c_parameters, c_return_type};
+pub(crate) use c::{c_parameters, c_return_type, c_symbol_id_for_node_with_deadline};
 pub(crate) use c::{c_symbol_nodes, c_symbol_nodes_with_deadline};
 pub(crate) use python::{
     python_display_byte_range, python_display_header, python_docstring, python_parameters,

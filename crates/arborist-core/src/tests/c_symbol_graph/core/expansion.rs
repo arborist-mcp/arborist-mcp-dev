@@ -100,3 +100,50 @@ fn anchors_c_source_symbol_ids_to_uppercase_sibling_header() {
         format!("{}::helper", header.to_string_lossy().replace('\\', "/"))
     );
 }
+#[test]
+fn symbol_family_anchor_honors_expired_deadlines_while_scanning_sibling_headers() {
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+    use crate::semantic::get_semantic_skeleton_with_deadline;
+
+    struct RejectPhase(&'static str);
+
+    impl DeadlineCheck for RejectPhase {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            if phase == self.0 {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    let dir = temporary_dir();
+    let header = dir.join("helper.h");
+    let source_path = dir.join("helper.c");
+    fs::write(&header, "int helper(int value);\n").unwrap();
+    fs::write(
+        &source_path,
+        "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+    )
+    .unwrap();
+
+    let source = fs::read_to_string(&source_path).unwrap();
+    let document = parse_document(&source_path, &source).unwrap();
+    let deadline = RejectPhase("resolving C/C++ symbol identity");
+    let error = get_semantic_skeleton_with_deadline(
+        &source_path,
+        document.language_id,
+        &source,
+        &document.tree,
+        64,
+        &[],
+        Some(&deadline),
+    )
+    .expect_err("sibling-header symbol anchoring must honor the deadline");
+
+    assert!(
+        error
+            .to_string()
+            .contains("deadline check reached resolving C/C++ symbol identity")
+    );
+}

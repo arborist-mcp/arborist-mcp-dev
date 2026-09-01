@@ -12,9 +12,9 @@ use crate::language::{
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
     c_is_callable_declaration, c_is_scoped_enumerator, c_named_node_name, c_parameters,
-    c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes_with_deadline,
-    c_template_instantiation_name, c_using_declaration_name, has_c_internal_linkage,
-    semantic_parent_path,
+    c_return_type, c_semantic_path, c_symbol_id_for_node_with_deadline,
+    c_symbol_nodes_with_deadline, c_template_instantiation_name, c_using_declaration_name,
+    has_c_internal_linkage, semantic_parent_path,
 };
 
 #[derive(Debug, Clone)]
@@ -285,7 +285,8 @@ fn collect_c_symbol_candidates_from_root(
         if normalized_path != collection.context_file && has_c_internal_linkage(child, source) {
             continue;
         }
-        let Some(symbol_id) = c_symbol_id_for_node(path, child, source)? else {
+        let Some(symbol_id) = c_symbol_id_for_node_with_deadline(path, child, source, deadline)?
+        else {
             continue;
         };
         let scope_path = semantic_parent_path(&semantic_path);

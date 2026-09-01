@@ -24,6 +24,15 @@ use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 // are included in skeleton_body below.
 
 pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
+    c_symbol_id_for_node_with_deadline(path, node, source, None)
+}
+
+pub(crate) fn c_symbol_id_for_node_with_deadline(
+    path: &Path,
+    node: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<String>> {
     let Some(semantic_path) = c_semantic_path(path, node, source)? else {
         return Ok(None);
     };
@@ -52,7 +61,7 @@ pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result
         return Ok(Some(format!("{}::{base_name}", normalize_path(path))));
     }
 
-    let anchor = c_symbol_family_anchor_for_name(path, source, &base_name)?;
+    let anchor = c_symbol_family_anchor_for_name(path, source, &base_name, deadline)?;
     Ok(Some(format!("{anchor}::{base_name}")))
 }
 
@@ -88,8 +97,9 @@ pub(crate) fn build_c_skeleton(
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    let symbol_id = c_symbol_id_for_node(path, child, source)?
-                        .unwrap_or_else(|| symbol.clone());
+                    let symbol_id =
+                        c_symbol_id_for_node_with_deadline(path, child, source, deadline)?
+                            .unwrap_or_else(|| symbol.clone());
                     let scope_path = semantic_parent_path(&symbol);
                     let parameters = c_parameters(child, source)?;
                     let return_type = c_return_type(child, source)?;
@@ -111,8 +121,9 @@ pub(crate) fn build_c_skeleton(
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    let symbol_id = c_symbol_id_for_node(path, child, source)?
-                        .unwrap_or_else(|| symbol.clone());
+                    let symbol_id =
+                        c_symbol_id_for_node_with_deadline(path, child, source, deadline)?
+                            .unwrap_or_else(|| symbol.clone());
                     let scope_path = semantic_parent_path(&symbol);
                     let parameters = c_parameters(child, source)?;
                     let return_type = c_return_type(child, source)?;
@@ -132,8 +143,9 @@ pub(crate) fn build_c_skeleton(
             }
             "function_definition" => {
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    let symbol_id = c_symbol_id_for_node(path, child, source)?
-                        .unwrap_or_else(|| symbol.clone());
+                    let symbol_id =
+                        c_symbol_id_for_node_with_deadline(path, child, source, deadline)?
+                            .unwrap_or_else(|| symbol.clone());
                     let scope_path = semantic_parent_path(&symbol);
                     let signature = c_function_header(child, source)?;
                     let parameters = c_parameters(child, source)?;
@@ -202,7 +214,7 @@ pub(crate) fn find_c_semantic_node<'tree>(
         let symbol = c_semantic_path(path, child, source)?;
         let base_name = c_symbol_base_name(child, source)?;
         let symbol_id = if target_requires_symbol_id {
-            c_symbol_id_for_node(path, child, source)?
+            c_symbol_id_for_node_with_deadline(path, child, source, deadline)?
         } else {
             None
         };
@@ -281,12 +293,20 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
     }
 }
 
-fn c_symbol_family_anchor_for_name(path: &Path, source: &str, symbol_name: &str) -> Result<String> {
+fn c_symbol_family_anchor_for_name(
+    path: &Path,
+    source: &str,
+    symbol_name: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<String> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C/C++ symbol identity")?;
+    }
     let mut best_header = None;
     let mut best_rank = 0usize;
 
     for header_path in sibling_header_candidates(path) {
-        if !header_path.exists() || !c_file_declares_symbol(&header_path, symbol_name)? {
+        if !header_path.exists() || !c_file_declares_symbol(&header_path, symbol_name, deadline)? {
             continue;
         }
         let rank = c_family_header_rank(path, &header_path, false);
@@ -298,7 +318,14 @@ fn c_symbol_family_anchor_for_name(path: &Path, source: &str, symbol_name: &str)
 
     let mut visited = BTreeSet::new();
     let mut headers = BTreeSet::new();
-    collect_declaring_include_headers(path, source, symbol_name, &mut headers, &mut visited)?;
+    collect_declaring_include_headers(
+        path,
+        source,
+        symbol_name,
+        &mut headers,
+        &mut visited,
+        deadline,
+    )?;
     for header_path in headers {
         let rank = c_family_header_rank(path, Path::new(&header_path), true);
         if rank > best_rank {
@@ -318,19 +345,28 @@ fn collect_declaring_include_headers(
     symbol_name: &str,
     headers: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C/C++ symbol identity")?;
+    }
     let normalized = normalize_path(path);
     if !visited.insert(normalized) {
         return Ok(());
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C/C++ symbol identity")?;
+    }
     let document = parse_document(path, source)?;
     for include_target in c_include_targets(document.tree.root_node(), source)? {
         let Some(include_path) = resolve_local_c_include(path, &include_target) else {
             continue;
         };
 
-        if is_c_header_path(&include_path) && c_file_declares_symbol(&include_path, symbol_name)? {
+        if is_c_header_path(&include_path)
+            && c_file_declares_symbol(&include_path, symbol_name, deadline)?
+        {
             headers.insert(normalize_path(&include_path));
         }
 
@@ -341,13 +377,21 @@ fn collect_declaring_include_headers(
             symbol_name,
             headers,
             visited,
+            deadline,
         )?;
     }
 
     Ok(())
 }
 
-fn c_file_declares_symbol(path: &Path, symbol_name: &str) -> Result<bool> {
+fn c_file_declares_symbol(
+    path: &Path,
+    symbol_name: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<bool> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C/C++ symbol identity")?;
+    }
     let source = read_source(path)?;
     let document = parse_document(path, &source)?;
     let root = document.tree.root_node();

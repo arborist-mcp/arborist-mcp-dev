@@ -13,7 +13,9 @@ mod symbols;
 
 pub(crate) use identity::cpp_callable_symbol_id;
 pub use skeleton::c_symbol_id_for_node;
-pub(crate) use skeleton::{build_c_skeleton, find_c_semantic_node};
+pub(crate) use skeleton::{
+    build_c_skeleton, c_symbol_id_for_node_with_deadline, find_c_semantic_node,
+};
 
 use symbols::is_cpp_type_scope;
 pub(crate) use symbols::{c_symbol_nodes, c_symbol_nodes_with_deadline};
