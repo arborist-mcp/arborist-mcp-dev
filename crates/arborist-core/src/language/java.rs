@@ -49,7 +49,7 @@ pub(crate) fn java_local_file_dependency_paths(
         path, root, source,
     )?);
     dependencies.extend(java_local_wildcard_import_dependency_paths(
-        path, root, source,
+        path, root, source, None,
     )?);
     Ok(dependencies)
 }
@@ -455,11 +455,13 @@ fn java_local_wildcard_import_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<PathBuf>> {
     let normalized_path = normalize_absolute_path(path)?;
     let mut dependencies = BTreeSet::new();
     let mut cursor = root.walk();
     for node in root.named_children(&mut cursor) {
+        check_local_file_dependency_deadline(deadline)?;
         if node.kind() != "import_declaration" {
             continue;
         }
@@ -467,7 +469,8 @@ fn java_local_wildcard_import_dependency_paths(
             continue;
         };
         if is_static {
-            if let Some(source_path) = resolve_unique_java_source_path(path, &import_path)
+            if let Some(source_path) =
+                resolve_unique_java_source_path_with_deadline(path, &import_path, deadline)?
                 && source_path != normalized_path
             {
                 dependencies.insert(source_path);
@@ -475,7 +478,7 @@ fn java_local_wildcard_import_dependency_paths(
             continue;
         }
         dependencies.extend(
-            resolve_unique_java_package_source_paths(path, &import_path)
+            resolve_unique_java_package_source_paths_with_deadline(path, &import_path, deadline)?
                 .into_iter()
                 .filter(|source_path| source_path != &normalized_path),
         );
@@ -582,60 +585,6 @@ fn resolve_unique_java_qualified_superclass_source_path(
     (candidates.len() == 1)
         .then(|| candidates.into_iter().next())
         .flatten()
-}
-
-fn resolve_unique_java_package_source_paths(path: &Path, package_name: &str) -> BTreeSet<PathBuf> {
-    let segments = package_name.split('.').collect::<Vec<_>>();
-    let mut package_directories = BTreeSet::new();
-    let mut source_root = match path.parent() {
-        Some(parent) => parent.to_path_buf(),
-        None => return BTreeSet::new(),
-    };
-
-    loop {
-        let mut candidate = source_root.clone();
-        for segment in &segments {
-            candidate.push(segment);
-        }
-        if candidate.is_dir()
-            && java_source_files_in_package_directory(&candidate, package_name)
-                .next()
-                .is_some()
-            && let Ok(candidate) = normalize_absolute_path(&candidate)
-        {
-            package_directories.insert(candidate);
-        }
-        if !source_root.pop() {
-            break;
-        }
-    }
-
-    if package_directories.len() != 1 {
-        return BTreeSet::new();
-    }
-    let directory = package_directories.into_iter().next().unwrap();
-    java_source_files_in_package_directory(&directory, package_name)
-        .filter_map(|candidate| normalize_absolute_path(&candidate).ok())
-        .collect()
-}
-
-fn java_source_files_in_package_directory<'a>(
-    directory: &'a Path,
-    package_name: &'a str,
-) -> impl Iterator<Item = PathBuf> + 'a {
-    fs::read_dir(directory)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|candidate| {
-            candidate.is_file()
-                && candidate
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("java"))
-        })
-        .filter(move |candidate| candidate_declares_package(candidate, package_name))
 }
 
 fn resolve_unique_java_default_package_source_path(
