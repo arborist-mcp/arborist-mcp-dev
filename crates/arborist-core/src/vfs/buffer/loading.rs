@@ -21,6 +21,15 @@ impl VirtualFileSystem {
         self.ensure_loaded_inner(path, source_override, None)
     }
 
+    pub(in crate::vfs) fn ensure_loaded_with_deadline(
+        &mut self,
+        path: &Path,
+        source_override: Option<&str>,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<()> {
+        self.ensure_loaded_inner(path, source_override, Some(deadline))
+    }
+
     pub(in crate::vfs::buffer) fn ensure_loaded_inner(
         &mut self,
         path: &Path,

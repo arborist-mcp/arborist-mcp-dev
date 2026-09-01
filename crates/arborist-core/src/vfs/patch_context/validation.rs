@@ -49,8 +49,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -99,8 +99,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual position patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual position patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -157,8 +157,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual graph patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual graph patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -222,8 +222,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual position graph patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual position graph patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -287,8 +287,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual neighborhood patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual neighborhood patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -352,8 +352,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual position neighborhood patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual position neighborhood patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -417,8 +417,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual discovery patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual discovery patch validation")?;
         let patch = self.patch_node_with_deadline(
@@ -482,8 +482,8 @@ impl VirtualFileSystem {
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
         deadline.check("virtual position discovery patch setup")?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        self.ensure_loaded_with_deadline(&path, None, &deadline)?;
+        self.refresh_if_clean_with_deadline(&normalized, &deadline)?;
 
         deadline.check("virtual position discovery patch validation")?;
         let patch = self.patch_node_with_deadline(
