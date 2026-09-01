@@ -75,7 +75,7 @@ use crate::language::{
     resolve_local_javascript_module_path_with_overrides,
 };
 use crate::model::LanguageId;
-use crate::patching::resolve_local_python_imported_symbol;
+use crate::patching::resolve_local_python_imported_symbol_with_deadline;
 use crate::symbol_index_model::JavaScriptReferenceDetails;
 use crate::symbol_index_model::{
     GoReferenceDetails, IndexedSymbol, ReferenceLanguageDetails, RustImportRoot,
@@ -2031,7 +2031,8 @@ fn resolve_reference_path_with_deadline<'a>(
         candidate_slice
     };
     let hinted_candidates = if let Some(module_hint) = module_hint {
-        let imported_summary = resolve_local_python_imported_symbol(
+        let imported_summary = resolve_local_python_imported_symbol_with_deadline(
+            deadline,
             Path::new(&source_symbol.file_path),
             module_hint,
             lookup_name,

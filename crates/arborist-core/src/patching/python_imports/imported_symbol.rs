@@ -4,28 +4,44 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
+use crate::deadline::DeadlineCheck;
+
 use super::super::python_bindings::python_symbol_summary;
 use super::PythonImportBinding;
 use super::bindings::{python_import_from_binding, python_imported_symbol_name};
 use super::module_path::resolve_local_python_module_path;
-use crate::language::{node_text, normalize_path, parse_document, read_source};
+use crate::language::{node_text, normalize_path, parse_document_with_timeout, read_source};
 use crate::model::{LanguageId, SymbolSummary};
 
-pub(crate) fn resolve_local_python_imported_symbol(
+pub(crate) fn resolve_local_python_imported_symbol_with_deadline<D>(
+    deadline: Option<&D>,
     current_path: &Path,
     module_name: &str,
     symbol_name: &str,
-) -> Result<Option<SymbolSummary>> {
+) -> Result<Option<SymbolSummary>>
+where
+    D: DeadlineCheck + ?Sized,
+{
     let mut visited = BTreeSet::new();
-    resolve_local_python_imported_symbol_inner(current_path, module_name, symbol_name, &mut visited)
+    resolve_local_python_imported_symbol_inner(
+        current_path,
+        module_name,
+        symbol_name,
+        &mut visited,
+        deadline,
+    )
 }
 
-fn resolve_local_python_imported_symbol_inner(
+fn resolve_local_python_imported_symbol_inner<D>(
     current_path: &Path,
     module_name: &str,
     symbol_name: &str,
     visited: &mut BTreeSet<String>,
-) -> Result<Option<SymbolSummary>> {
+    deadline: Option<&D>,
+) -> Result<Option<SymbolSummary>>
+where
+    D: DeadlineCheck + ?Sized,
+{
     let Some(module_path) = resolve_local_python_module_path(current_path, module_name) else {
         return Ok(None);
     };
@@ -35,8 +51,21 @@ fn resolve_local_python_imported_symbol_inner(
         return Ok(None);
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("reading imported Python module")?;
+    }
     let module_source = read_source(&module_path)?;
-    let document = parse_document(&module_path, &module_source)?;
+    let document = parse_document_with_timeout(
+        &module_path,
+        &module_source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "parsing imported Python module")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     if document.language_id != LanguageId::Python {
         return Ok(None);
     }
@@ -82,6 +111,7 @@ fn resolve_local_python_imported_symbol_inner(
             &reexport_module,
             &reexported_symbol,
             visited,
+            deadline,
         )? {
             return Ok(Some(summary));
         }

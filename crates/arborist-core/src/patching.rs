@@ -25,7 +25,7 @@ pub(crate) use c_validation::{
 };
 pub(crate) use commit_gate::evaluate_patch_commit_gate;
 pub(crate) use python_imports::{
-    resolve_local_python_imported_symbol, resolve_local_python_module_path,
+    resolve_local_python_imported_symbol_with_deadline, resolve_local_python_module_path,
 };
 pub(crate) use python_references::{
     collect_python_references, collect_python_references_with_deadline,

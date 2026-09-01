@@ -12,7 +12,7 @@ use super::super::python_visibility::{
 };
 use super::super::{
     is_python_class_header_expression, is_python_default_parameter_value,
-    resolve_local_python_imported_symbol,
+    resolve_local_python_imported_symbol_with_deadline,
 };
 use super::{PythonReferenceTarget, python_nearest_scope_node};
 use crate::deadline::DeadlineCheck;
@@ -42,7 +42,12 @@ pub(super) fn python_binding_candidates_for_reference_with_deadline(
 ) -> Result<Vec<PythonAccessibleSymbol>> {
     check_deadline(deadline, "resolving Python binding candidates")?;
     if let Some((module_name, symbol_name)) = &reference_target.imported_symbol
-        && let Some(summary) = resolve_local_python_imported_symbol(path, module_name, symbol_name)?
+        && let Some(summary) = resolve_local_python_imported_symbol_with_deadline(
+            deadline,
+            path,
+            module_name,
+            symbol_name,
+        )?
     {
         check_deadline(deadline, "resolving imported Python symbols")?;
         return Ok(vec![PythonAccessibleSymbol {

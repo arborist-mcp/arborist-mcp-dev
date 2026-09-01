@@ -6,5 +6,5 @@ pub(crate) use bindings::{
     PythonImportBinding, collect_visible_python_import_bindings,
     collect_visible_python_import_bindings_with_deadline,
 };
-pub(crate) use imported_symbol::resolve_local_python_imported_symbol;
+pub(crate) use imported_symbol::resolve_local_python_imported_symbol_with_deadline;
 pub(crate) use module_path::resolve_local_python_module_path;
