@@ -16718,11 +16718,17 @@ fn resolve_java_class_receiver_interface_default_method(
     }
     let path = Path::new(&receiver_class.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -18257,11 +18263,17 @@ fn java_direct_interface_parent_references(
     }
     let path = Path::new(&source_interface.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -18305,11 +18317,17 @@ fn java_resolved_direct_interface_paths(
     };
     let path = Path::new(&source_symbol.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -18775,11 +18793,17 @@ fn java_simple_superclass_path(
     };
     let path = Path::new(&source_symbol.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -18842,11 +18866,17 @@ fn java_simple_superclass_path_for_class(
     }
     let path = Path::new(&source_class.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -20259,11 +20289,17 @@ fn resolve_kotlin_superclass_path(
 ) -> Result<Option<String>> {
     let path = Path::new(&source_symbol.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -23251,11 +23287,17 @@ fn kotlin_direct_interface_parent_spellings(
     }
     let path = Path::new(&source_interface.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
@@ -23482,11 +23524,17 @@ fn kotlin_class_delegation_spellings(
     }
     let path = Path::new(&class_symbol.file_path);
     let normalized_path = normalize_path(path);
+    if let Some(deadline) = deadline {
+        deadline.check("reading referenced type context")?;
+    }
     let source = file_overrides
         .and_then(|overrides| overrides.get(&normalized_path))
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    if let Some(deadline) = deadline {
+        deadline.check("parsing referenced type context")?;
+    }
     let document = if let Some(deadline) = deadline {
         parse_document_with_timeout(
             path,
