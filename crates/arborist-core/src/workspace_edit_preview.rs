@@ -3,9 +3,10 @@ use std::collections::BTreeSet;
 use anyhow::{Context, Result, bail};
 
 use crate::deadline::CooperativeDeadline;
+use crate::deadline::DeadlineCheck;
 use crate::language::{
-    normalize_absolute_path, normalize_path, offset_for_position, parse_document, read_source,
-    validate_source_length, validate_source_size,
+    normalize_absolute_path, normalize_path, offset_for_position, parse_document_with_timeout,
+    read_source, validate_source_length, validate_source_size,
 };
 use crate::model::{
     MAX_WORKSPACE_EDIT_PREVIEW_FILES, PatchValidationReport, WorkspaceEditPreviewFile,
@@ -74,7 +75,12 @@ pub fn preview_workspace_position_edits_with_timeout(
         }
 
         deadline.check("updated source parse")?;
-        let document = parse_document(&path, &updated_source)?;
+        let document = parse_document_with_timeout(
+            &path,
+            &updated_source,
+            DeadlineCheck::remaining_timeout_micros(&deadline, "updated source parse")?
+                .unwrap_or(0),
+        )?;
         deadline.check("workspace edit diff")?;
         let unified_diff = unified_diff(&path, &original_source, &updated_source);
         deadline.check("workspace edit syntax validation")?;
