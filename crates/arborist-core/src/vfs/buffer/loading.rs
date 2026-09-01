@@ -8,7 +8,7 @@ use super::super::state::{VirtualFileEntry, normalized_virtual_path, read_virtua
 use super::check_optional_deadline;
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    normalize_absolute_path, normalize_path, parse_document, path_is_inside_workspace,
+    normalize_absolute_path, normalize_path, parse_document_with_timeout, path_is_inside_workspace,
 };
 use crate::workspace_scan::should_skip_index_path;
 
@@ -34,7 +34,20 @@ impl VirtualFileSystem {
                     check_optional_deadline(deadline, "virtual disk source read")?;
                     let disk_source = read_virtual_disk_source(&path)?;
                     check_optional_deadline(deadline, "virtual source parse")?;
-                    let document = parse_document(&path, source_override)?;
+                    let document = parse_document_with_timeout(
+                        &path,
+                        source_override,
+                        deadline
+                            .map(|deadline| {
+                                DeadlineCheck::remaining_timeout_micros(
+                                    deadline,
+                                    "virtual source parse",
+                                )
+                            })
+                            .transpose()?
+                            .flatten()
+                            .unwrap_or(0),
+                    )?;
                     check_optional_deadline(deadline, "virtual source replacement")?;
                     entry.path = path;
                     entry.language_id = document.language_id;
@@ -50,7 +63,20 @@ impl VirtualFileSystem {
                 let disk_source = read_virtual_disk_source(&path)?;
                 let initial_source = source_override.unwrap_or(&disk_source).to_string();
                 check_optional_deadline(deadline, "virtual source parse")?;
-                let document = parse_document(&path, &initial_source)?;
+                let document = parse_document_with_timeout(
+                    &path,
+                    &initial_source,
+                    deadline
+                        .map(|deadline| {
+                            DeadlineCheck::remaining_timeout_micros(
+                                deadline,
+                                "virtual source parse",
+                            )
+                        })
+                        .transpose()?
+                        .flatten()
+                        .unwrap_or(0),
+                )?;
                 let dirty = initial_source != disk_source;
                 check_optional_deadline(deadline, "virtual source insertion")?;
                 self.entries.insert(
@@ -103,7 +129,17 @@ impl VirtualFileSystem {
         }
 
         check_optional_deadline(deadline, "virtual source parse")?;
-        let document = parse_document(&entry.path, &disk_source)?;
+        let document = parse_document_with_timeout(
+            &entry.path,
+            &disk_source,
+            deadline
+                .map(|deadline| {
+                    DeadlineCheck::remaining_timeout_micros(deadline, "virtual source parse")
+                })
+                .transpose()?
+                .flatten()
+                .unwrap_or(0),
+        )?;
         check_optional_deadline(deadline, "virtual source replacement")?;
         entry.language_id = document.language_id;
         entry.disk_source = disk_source.clone();

@@ -9,7 +9,8 @@ use super::super::{
 use super::check_optional_deadline;
 use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 use crate::language::{
-    normalize_absolute_path, parse_document, path_is_inside_workspace, write_source_atomic,
+    normalize_absolute_path, parse_document_with_timeout, path_is_inside_workspace,
+    write_source_atomic,
 };
 use crate::model::VirtualFileSnapshot;
 use crate::symbols::refresh_symbol_index_for_file;
@@ -250,7 +251,11 @@ impl VirtualFileSystem {
         }
 
         deadline.check("disk source parse")?;
-        let document = parse_document(&current.path, &disk_source)?;
+        let document = parse_document_with_timeout(
+            &current.path,
+            &disk_source,
+            DeadlineCheck::remaining_timeout_micros(deadline, "disk source parse")?.unwrap_or(0),
+        )?;
         let mut updated = current;
         updated.language_id = document.language_id;
         updated.disk_source = disk_source.clone();
