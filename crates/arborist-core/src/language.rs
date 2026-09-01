@@ -14,8 +14,8 @@ mod rust;
 mod tree;
 
 pub use c::{
-    C_FAMILY_HEADER_EXTENSIONS, C_LANGUAGE_EXTENSIONS, CPP_LANGUAGE_EXTENSIONS,
-    c_companion_source_path, c_include_targets, is_c_header_path, resolve_local_c_include,
+    C_FAMILY_HEADER_EXTENSIONS, C_LANGUAGE_EXTENSIONS, CPP_LANGUAGE_EXTENSIONS, c_include_targets,
+    is_c_header_path, resolve_local_c_include,
 };
 pub(crate) use c::{
     c_companion_source_path_with_deadline, c_include_targets_with_offsets,

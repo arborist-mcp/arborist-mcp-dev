@@ -6,8 +6,8 @@ use tree_sitter::Node;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    ParsedDocument, c_companion_source_path, c_include_targets, first_identifier, node_text,
-    normalize_path, parse_document_with_timeout, read_source, resolve_local_c_include,
+    ParsedDocument, c_companion_source_path_with_deadline, c_include_targets, first_identifier,
+    node_text, normalize_path, parse_document_with_timeout, read_source, resolve_local_c_include,
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
@@ -258,7 +258,8 @@ fn collect_c_accessible_symbols_from_document(
         )?;
 
         if collection.allow_companion_sources
-            && let Some(companion_source_path) = c_companion_source_path(&include_path)
+            && let Some(companion_source_path) =
+                c_companion_source_path_with_deadline(&include_path, deadline)?
         {
             let normalized_companion = normalize_path(&companion_source_path);
             if state.visited_companion_sources.insert(normalized_companion) {

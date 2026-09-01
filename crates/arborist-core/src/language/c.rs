@@ -62,12 +62,6 @@ pub(crate) fn extension_case_candidates(path: &Path, extensions: &[&str]) -> Vec
         .collect()
 }
 
-pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
-    c_companion_source_path_with_deadline(include_path, None)
-        .ok()
-        .flatten()
-}
-
 pub(crate) fn c_companion_source_path_with_deadline(
     include_path: &Path,
     deadline: Option<&dyn DeadlineCheck>,

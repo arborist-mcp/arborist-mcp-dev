@@ -4,8 +4,9 @@ use tree_sitter::Point;
 
 use super::{
     LanguageCapabilities, LanguageRegistry, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
-    c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
-    offset_for_position, parse_document, point_for_offset, read_source, supported_languages,
+    c_companion_source_path_with_deadline, detect_language, is_c_header_path,
+    normalize_absolute_path, offset_for_position, parse_document, point_for_offset, read_source,
+    supported_languages,
 };
 #[cfg(windows)]
 use super::{ensure_path_inside_workspace, path_is_inside_workspace};
@@ -565,7 +566,9 @@ fn companion_c_source_prefers_header_case_style() {
     .unwrap();
 
     assert_eq!(
-        c_companion_source_path(&uppercase_header).unwrap(),
+        c_companion_source_path_with_deadline(&uppercase_header, None)
+            .unwrap()
+            .unwrap(),
         uppercase_source
     );
 
@@ -579,7 +582,9 @@ fn companion_c_source_prefers_header_case_style() {
     .unwrap();
 
     assert_eq!(
-        c_companion_source_path(&mixed_header).unwrap(),
+        c_companion_source_path_with_deadline(&mixed_header, None)
+            .unwrap()
+            .unwrap(),
         lowercase_source
     );
 
@@ -596,7 +601,10 @@ fn companion_c_source_prefers_header_case_style() {
     )
     .unwrap();
 
-    assert_eq!(c_companion_source_path(&template_header), None);
+    assert_eq!(
+        c_companion_source_path_with_deadline(&template_header, None).unwrap(),
+        None
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
