@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::c::c_symbol_family_anchor;
+use super::super::c::c_symbol_family_anchor_with_deadline;
 use crate::language::{detect_language, is_c_header_path};
 use crate::model::LanguageId;
 use crate::semantic::{PythonSymbolIdentity, cpp_callable_symbol_id, python_symbol_ids};
@@ -90,7 +90,12 @@ pub(crate) fn assign_symbol_ids_with_deadline(
                 Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
                 None => match java_like_ids_by_index.get(&index) {
                     Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
-                    None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+                    None => symbol_ids.push(symbol_id_for_index(
+                        index,
+                        raw_symbols,
+                        language,
+                        deadline,
+                    )?),
                 },
             },
         }
@@ -202,6 +207,7 @@ fn symbol_id_for_index(
     index: usize,
     raw_symbols: &[IndexedSymbol],
     language: Option<LanguageId>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
@@ -226,7 +232,7 @@ fn symbol_id_for_index(
     let anchor = if is_c_header_path(path) {
         symbol.file_path.clone()
     } else {
-        c_symbol_family_anchor(symbol, raw_symbols)?
+        c_symbol_family_anchor_with_deadline(symbol, raw_symbols, deadline)?
     };
 
     Ok(format!("{anchor}::{}", symbol.base_name))

@@ -11,22 +11,12 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Default)]
 pub(crate) struct CIncludeContext {
     pub(crate) include_paths: BTreeSet<String>,
     pub(crate) companion_source_paths: BTreeSet<String>,
-}
-
-pub(crate) fn c_include_context_for_file(file_path: &str) -> Result<CIncludeContext> {
-    c_include_context_for_file_with_overrides(file_path, None)
-}
-
-pub(crate) fn c_include_context_for_file_with_overrides(
-    file_path: &str,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<CIncludeContext> {
-    c_include_context_for_file_with_overrides_and_deadline(file_path, file_overrides, None)
 }
 
 pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
@@ -162,11 +152,19 @@ fn c_include_targets_before_cached(
         .collect())
 }
 
-pub(super) fn c_symbol_family_anchor(
+pub(super) fn c_symbol_family_anchor_with_deadline(
     symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<String> {
-    let include_context = c_include_context_for_file(&symbol.file_path)?;
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C/C++ symbol identities")?;
+    }
+    let include_context = c_include_context_for_file_with_overrides_and_deadline(
+        &symbol.file_path,
+        None,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
+    )?;
     let source_path = Path::new(&symbol.file_path);
 
     let best_header = raw_symbols
@@ -295,7 +293,7 @@ mod tests {
 
     use super::{
         CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
-        c_include_context_for_file_with_overrides,
+        c_include_context_for_file_with_overrides_and_deadline,
     };
     use crate::language::{normalize_path, write_source_atomic};
 
@@ -319,9 +317,10 @@ mod tests {
             "#include \"extra.h\"\nint main(void) { return EXTRA; }\n".to_owned(),
         );
 
-        let context = c_include_context_for_file_with_overrides(
+        let context = c_include_context_for_file_with_overrides_and_deadline(
             &normalize_path(&source_path),
             Some(&overrides),
+            None,
         )
         .expect("override include context should load");
 
