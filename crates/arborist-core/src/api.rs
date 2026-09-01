@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 
 pub use crate::api_patch_validation::*;
 pub use crate::api_source_query::*;
-use crate::deadline::CooperativeDeadline;
+use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 use crate::language::read_source;
 use crate::model::{MAX_SEMANTIC_EXPAND_NODES, SemanticSkeleton};
 use crate::{language, semantic};
@@ -75,7 +75,11 @@ fn get_semantic_skeleton_with_deadline(
     deadline: &CooperativeDeadline,
 ) -> Result<SemanticSkeleton> {
     deadline.check("source parse")?;
-    let document = language::parse_document(path, source)?;
+    let document = language::parse_document_with_timeout(
+        path,
+        source,
+        DeadlineCheck::remaining_timeout_micros(deadline, "source parse")?.unwrap_or(0),
+    )?;
     deadline.check("semantic traversal")?;
     semantic::get_semantic_skeleton_with_deadline(
         path,
