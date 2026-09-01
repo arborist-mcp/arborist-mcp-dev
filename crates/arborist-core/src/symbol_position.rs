@@ -3,7 +3,8 @@ use std::path::Path;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    builtin_language_registry, normalize_path, offset_for_position, parse_document, read_source,
+    builtin_language_registry, normalize_path, offset_for_position, parse_document_with_timeout,
+    read_source,
 };
 use crate::model::{Position, SymbolMeta};
 use crate::semantic::ascend_to_symbol;
@@ -25,7 +26,17 @@ pub(crate) fn resolve_symbol_at_position_with_deadline<'a>(
         None => read_source(file_path)?,
     };
     check_position_deadline(deadline, "parsing symbol position")?;
-    let document = parse_document(file_path, &source)?;
+    let document = parse_document_with_timeout(
+        file_path,
+        &source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "parsing symbol position")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     check_position_deadline(deadline, "resolving symbol position")?;
     let byte_offset = offset_for_position(&source, position)?;
     let node = selection::node_at_byte_offset(document.tree.root_node(), &source, byte_offset)
