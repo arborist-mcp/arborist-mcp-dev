@@ -40,11 +40,7 @@ pub fn execute_tree_query_from_path_with_timeout(
         validate_source_length(&path, source.len())?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         if std::time::Instant::now() >= deadline {
-            bail!(
-                "Tree-sitter query timed out for {} after {} microseconds",
-                path.display(),
-                timeout_ms.saturating_mul(1_000)
-            );
+            bail!("invalid Tree-sitter query timeout_ms: value must be greater than zero");
         }
     }
     execute_tree_query_with_timeout(&path, &source, query, max_captures, timeout_ms)
