@@ -7,7 +7,7 @@ use tree_sitter::Node;
 use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, c_companion_source_path, c_include_targets, first_identifier, node_text,
-    normalize_path, parse_document, read_source, resolve_local_c_include,
+    normalize_path, parse_document_with_timeout, read_source, resolve_local_c_include,
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
@@ -123,7 +123,17 @@ pub(super) fn collect_c_accessible_names_with_deadline(
         };
         let include_source = read_source(&include_path)?;
         check_deadline(deadline, "parsing C/C++ includes")?;
-        let include_document = parse_document(&include_path, &include_source)?;
+        let include_document = parse_document_with_timeout(
+            &include_path,
+            &include_source,
+            deadline
+                .map(|deadline| {
+                    DeadlineCheck::remaining_timeout_micros(deadline, "parsing C/C++ includes")
+                })
+                .transpose()?
+                .flatten()
+                .unwrap_or(0),
+        )?;
         collect_c_accessible_names_with_deadline(
             &include_path,
             &include_document,
@@ -222,7 +232,17 @@ fn collect_c_accessible_symbols_from_document(
 
         let include_source = read_source(&include_path)?;
         check_deadline(deadline, "parsing C/C++ includes")?;
-        let include_document = parse_document(&include_path, &include_source)?;
+        let include_document = parse_document_with_timeout(
+            &include_path,
+            &include_source,
+            deadline
+                .map(|deadline| {
+                    DeadlineCheck::remaining_timeout_micros(deadline, "parsing C/C++ includes")
+                })
+                .transpose()?
+                .flatten()
+                .unwrap_or(0),
+        )?;
         collect_c_accessible_symbols_from_document(
             &include_path,
             &include_document,
@@ -244,7 +264,20 @@ fn collect_c_accessible_symbols_from_document(
             if state.visited_companion_sources.insert(normalized_companion) {
                 let companion_source = read_source(&companion_source_path)?;
                 check_deadline(deadline, "parsing C/C++ companion sources")?;
-                let companion_document = parse_document(&companion_source_path, &companion_source)?;
+                let companion_document = parse_document_with_timeout(
+                    &companion_source_path,
+                    &companion_source,
+                    deadline
+                        .map(|deadline| {
+                            DeadlineCheck::remaining_timeout_micros(
+                                deadline,
+                                "parsing C/C++ companion sources",
+                            )
+                        })
+                        .transpose()?
+                        .flatten()
+                        .unwrap_or(0),
+                )?;
                 collect_c_symbol_candidates_from_root(
                     &companion_source_path,
                     companion_document.tree.root_node(),
