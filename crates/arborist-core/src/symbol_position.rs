@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::deadline::DeadlineCheck;
 use crate::language::{
     builtin_language_registry, normalize_path, offset_for_position, parse_document_with_timeout,
-    read_source,
+    read_source, validate_source_length,
 };
 use crate::model::{Position, SymbolMeta};
 use crate::semantic::ascend_to_symbol;
@@ -23,7 +23,12 @@ pub(crate) fn resolve_symbol_at_position_with_deadline<'a>(
     let normalized_file_path = normalize_path(file_path);
     let source = match file_overrides.and_then(|overrides| overrides.get(&normalized_file_path)) {
         Some(source) => source.clone(),
-        None => read_source(file_path)?,
+        None => {
+            check_position_deadline(deadline, "reading symbol position source")?;
+            let source = read_source(file_path)?;
+            validate_source_length(file_path, source.len())?;
+            source
+        }
     };
     check_position_deadline(deadline, "parsing symbol position")?;
     let document = parse_document_with_timeout(
