@@ -6,7 +6,7 @@ use tree_sitter::Node;
 use crate::deadline::DeadlineCheck;
 use crate::language::{
     LanguageCapabilities, ParsedDocument, builtin_language_registry, normalize_absolute_path,
-    offset_for_position, parse_document, position_from,
+    offset_for_position, parse_document_with_timeout, position_from,
 };
 use crate::model::{LanguageId, Position, ValidationIssue};
 use crate::semantic::{ascend_to_symbol, find_semantic_node_with_deadline};
@@ -35,7 +35,17 @@ pub(crate) fn semantic_target_at_position_with_deadline(
 ) -> Result<String> {
     let path = normalize_absolute_path(path)?;
     check_deadline(deadline, "position target parse")?;
-    let document = parse_document(&path, source)?;
+    let document = parse_document_with_timeout(
+        &path,
+        source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "position target parse")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     builtin_language_registry().require_capability(
         document.language_id,
         LanguageCapabilities::PATCH_TARGETING,
@@ -167,7 +177,17 @@ fn semantic_target_info(
 ) -> Result<SemanticTargetInfo> {
     validate_semantic_target(semantic_target)?;
     check_deadline(deadline, "semantic target parse")?;
-    let document = parse_document(path, source)?;
+    let document = parse_document_with_timeout(
+        path,
+        source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "semantic target parse")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     builtin_language_registry().require_capability(
         document.language_id,
         LanguageCapabilities::PATCH_TARGETING,
