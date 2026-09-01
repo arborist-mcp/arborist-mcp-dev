@@ -95,9 +95,13 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
 
     let mut include_paths = BTreeSet::new();
     let mut visited = BTreeSet::from([normalize_path(path)]);
-    for include_target in
-        c_include_targets_before_cached(path, file_overrides, byte_offset, include_targets_cache)?
-    {
+    for include_target in c_include_targets_before_cached(
+        path,
+        file_overrides,
+        byte_offset,
+        include_targets_cache,
+        deadline,
+    )? {
         let Some(include_path) =
             resolve_local_c_include_with_overrides(path, &include_target, file_overrides)
         else {
@@ -137,11 +141,27 @@ fn c_include_targets_before_cached(
     file_overrides: Option<&BTreeMap<String, String>>,
     byte_offset: usize,
     include_targets_cache: &mut CIncludeTargetsCache,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<String>> {
     let key = normalize_path(path);
     if !include_targets_cache.by_file.contains_key(&key) {
+        if let Some(deadline) = deadline {
+            deadline.check("parsing C include context")?;
+        }
         let source = source_for_path(path, file_overrides)?;
-        let document = parse_document(path, &source)?;
+        if let Some(deadline) = deadline {
+            deadline.check("parsing C include context")?;
+        }
+        let document = match deadline {
+            Some(deadline) => parse_document_with_timeout(
+                path,
+                &source,
+                deadline
+                    .remaining_timeout_micros("parsing C include context")?
+                    .unwrap_or(0),
+            )?,
+            None => parse_document(path, &source)?,
+        };
         let targets = c_include_targets_with_offsets(document.tree.root_node(), &source)?;
         include_targets_cache.by_file.insert(key.clone(), targets);
     }
