@@ -239,6 +239,9 @@ pub(crate) fn c_local_include_dependency_paths_with_deadline(
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<PathBuf>> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting local file dependencies")?;
+    }
     let include_nodes = c_include_target_nodes(root, source, None, deadline)?;
     let local_include_targets = include_targets_for_nodes(
         include_nodes.clone(),
@@ -342,6 +345,32 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn local_include_dependency_extraction_honors_deadline_before_tree_walk() {
+        let source = "#include \"first.h\"\n";
+        let path = Path::new("source.c");
+        let document = parse_document(path, source).expect("C source should parse");
+        let deadline = RejectAfterChecks {
+            checks: Cell::new(0),
+            reject_after: 0,
+        };
+
+        let error = c_local_include_dependency_paths_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("dependency extraction should stop before walking the tree");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during extracting local file dependencies")
+        );
+        assert_eq!(deadline.checks.get(), 1);
     }
 
     #[test]
