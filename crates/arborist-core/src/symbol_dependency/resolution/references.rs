@@ -71,7 +71,7 @@ use super::type_alias::{
 use crate::language::{
     JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
-    normalize_path, parse_document, read_source,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
     resolve_local_javascript_module_path_with_overrides,
 };
 use crate::model::LanguageId;
@@ -16723,7 +16723,15 @@ fn resolve_java_class_receiver_interface_default_method(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     let mut interface_references = None;
     while let Some(node) = stack.pop() {
@@ -18254,7 +18262,15 @@ fn java_direct_interface_parent_references(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     while let Some(node) = stack.pop() {
         if let Some(deadline) = deadline {
@@ -18294,7 +18310,15 @@ fn java_resolved_direct_interface_paths(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     let mut interface_references = None;
     while let Some(node) = stack.pop() {
@@ -18756,7 +18780,15 @@ fn java_simple_superclass_path(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     let mut superclass_reference = None;
     while let Some(node) = stack.pop() {
@@ -18815,7 +18847,15 @@ fn java_simple_superclass_path_for_class(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     let mut superclass_reference = None;
     while let Some(node) = stack.pop() {
@@ -20224,7 +20264,15 @@ fn resolve_kotlin_superclass_path(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     let mut superclass_reference = None;
     while let Some(node) = stack.pop() {
@@ -23208,7 +23256,15 @@ fn kotlin_direct_interface_parent_spellings(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     while let Some(node) = stack.pop() {
         if let Some(deadline) = deadline {
@@ -23431,7 +23487,15 @@ fn kotlin_class_delegation_spellings(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
+    let document = if let Some(deadline) = deadline {
+        parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing referenced type context")?,
+        )?
+    } else {
+        parse_document(path, &source)?
+    };
     let mut stack = vec![document.tree.root_node()];
     while let Some(node) = stack.pop() {
         if let Some(deadline) = deadline {
