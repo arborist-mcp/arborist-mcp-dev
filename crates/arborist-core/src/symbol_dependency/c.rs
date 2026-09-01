@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{
     c_companion_source_path, c_include_targets, c_include_targets_with_offsets, detect_language,
     is_c_header_path, normalize_path, parse_document, parse_document_with_timeout, read_source,
@@ -10,7 +11,6 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Default)]
 pub(crate) struct CIncludeContext {
@@ -32,7 +32,7 @@ pub(crate) fn c_include_context_for_file_with_overrides(
 pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
     file_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<CIncludeContext> {
     let path = Path::new(file_path);
     if !matches!(
@@ -52,6 +52,9 @@ pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
         deadline,
     )?;
 
+    if let Some(deadline) = deadline {
+        deadline.check("building C include context")?;
+    }
     let companion_source_paths = include_paths
         .iter()
         .filter_map(|include_path| {
@@ -87,7 +90,11 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
     byte_offset: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_targets_cache: &mut CIncludeTargetsCache,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<CIncludeContext> {
+    if let Some(deadline) = deadline {
+        deadline.check("building C include context")?;
+    }
     let path = Path::new(file_path);
     if !matches!(
         detect_language(path).ok(),
@@ -113,11 +120,14 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
                 &mut include_paths,
                 &mut visited,
                 file_overrides,
-                None,
+                deadline,
             )?;
         }
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("building C include context")?;
+    }
     let companion_source_paths = include_paths
         .iter()
         .filter_map(|include_path| {
@@ -191,7 +201,7 @@ fn collect_c_include_closure_with_overrides(
     include_paths: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
     file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("building C include context")?;
@@ -206,7 +216,9 @@ fn collect_c_include_closure_with_overrides(
         Some(deadline) => parse_document_with_timeout(
             path,
             &source,
-            deadline.remaining_timeout_micros("parsing C include context")?,
+            deadline
+                .remaining_timeout_micros("parsing C include context")?
+                .unwrap_or(0),
         )?,
         None => parse_document(path, &source)?,
     };
@@ -347,6 +359,7 @@ mod tests {
             before_offset,
             None,
             &mut cache,
+            None,
         )
         .expect("before include context should load");
         assert!(
@@ -365,6 +378,7 @@ mod tests {
             after_offset,
             None,
             &mut cache,
+            None,
         )
         .expect("after include context should load");
         assert!(after.include_paths.contains(&normalize_path(&first_header)));
@@ -381,6 +395,7 @@ mod tests {
             before_offset,
             None,
             &mut fresh_cache,
+            None,
         )
         .expect("fresh before include context should load");
         assert!(

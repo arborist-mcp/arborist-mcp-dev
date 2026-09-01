@@ -3,6 +3,8 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
+
 use super::super::c::{
     CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_with_overrides_and_deadline,
 };
@@ -2143,7 +2145,7 @@ fn resolve_reference_path_with_deadline<'a>(
         let context = c_include_context_for_file_with_overrides_and_deadline(
             &source_symbol.file_path,
             file_overrides,
-            deadline,
+            deadline.map(|deadline| deadline as &dyn DeadlineCheck),
         )
         .ok();
         if let Some(deadline) = deadline {

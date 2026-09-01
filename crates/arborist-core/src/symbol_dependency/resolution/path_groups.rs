@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
+
 use super::super::c::{
     CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
 };
@@ -46,6 +48,7 @@ pub(super) fn cpp_unqualified_call_candidate_groups(
         source_symbol.byte_range.0,
         file_overrides,
         include_targets_cache,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
     )
     .ok();
     let scopes = source_symbol
@@ -149,6 +152,7 @@ pub(super) fn cpp_qualified_reference_path_group(
         visibility_source.byte_range.0,
         file_overrides,
         include_targets_cache,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
     )
     .ok();
     let mut pending = VecDeque::from([reference_path]);

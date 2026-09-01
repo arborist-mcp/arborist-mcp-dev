@@ -3,6 +3,8 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
+
 use super::super::c::{
     CIncludeContext, CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
 };
@@ -81,6 +83,7 @@ pub(super) fn cpp_type_alias_target_indexes(
         source_symbol.byte_range.0,
         file_overrides,
         include_targets_cache,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
     )
     .ok();
     let mut pending = candidates

@@ -9,7 +9,7 @@ mod refresh;
 mod resolution;
 mod rust;
 
-pub(crate) use c::{CIncludeContext, c_include_context_for_file};
+pub(crate) use c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 pub(crate) use refresh::{
     RefreshResolutionInputs, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
     symbol_meta_from_indexed,
