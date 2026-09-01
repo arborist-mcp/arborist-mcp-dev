@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::language::{normalize_absolute_path, read_source};
 use crate::model::QueryCaptureResult;
@@ -36,6 +36,16 @@ pub fn execute_tree_query_from_path_with_timeout(
 ) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     let source = read_source(&path)?;
+    if let Some(timeout_ms) = timeout_ms {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        if std::time::Instant::now() >= deadline {
+            bail!(
+                "Tree-sitter query timed out for {} after {} microseconds",
+                path.display(),
+                timeout_ms.saturating_mul(1_000)
+            );
+        }
+    }
     execute_tree_query_with_timeout(&path, &source, query, max_captures, timeout_ms)
 }
 
