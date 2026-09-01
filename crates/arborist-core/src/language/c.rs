@@ -63,9 +63,19 @@ pub(crate) fn extension_case_candidates(path: &Path, extensions: &[&str]) -> Vec
 }
 
 pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
+    c_companion_source_path_with_deadline(include_path, None)
+        .ok()
+        .flatten()
+}
+
+pub(crate) fn c_companion_source_path_with_deadline(
+    include_path: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<PathBuf>> {
     if !is_c_header_path(include_path) {
-        return None;
+        return Ok(None);
     }
+    check_companion_source_deadline(deadline)?;
 
     let preferred_extensions = if is_cpp_header_path(include_path) {
         CPP_COMPANION_SOURCE_EXTENSIONS
@@ -83,15 +93,30 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
         .map(|source_extension| include_path.with_extension(source_extension))
         .collect::<Vec<_>>();
 
-    candidates
-        .iter()
-        .find_map(|candidate| existing_path_with_exact_file_name(candidate))
-        .or_else(|| {
-            candidates
-                .iter()
-                .find_map(|candidate| existing_path_with_case_insensitive_file_name(candidate))
-        })
-        .or_else(|| candidates.into_iter().find(|candidate| candidate.exists()))
+    for candidate in &candidates {
+        if let Some(found) = existing_path_with_exact_file_name(candidate, deadline)? {
+            return Ok(Some(found));
+        }
+    }
+    for candidate in &candidates {
+        if let Some(found) = existing_path_with_case_insensitive_file_name(candidate, deadline)? {
+            return Ok(Some(found));
+        }
+    }
+    for candidate in candidates {
+        check_companion_source_deadline(deadline)?;
+        if candidate.exists() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+fn check_companion_source_deadline(deadline: Option<&dyn DeadlineCheck>) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("scanning C/C++ companion source paths")?;
+    }
+    Ok(())
 }
 
 pub fn c_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
@@ -280,29 +305,50 @@ fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) ->
     normalize_absolute_path(&parent.join(include_target)).ok()
 }
 
-fn existing_path_with_exact_file_name(candidate: &Path) -> Option<PathBuf> {
-    existing_path_with_file_name(candidate, |left, right| left == right)
+fn existing_path_with_exact_file_name(
+    candidate: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<PathBuf>> {
+    existing_path_with_file_name(candidate, |left, right| left == right, deadline)
 }
 
-fn existing_path_with_case_insensitive_file_name(candidate: &Path) -> Option<PathBuf> {
-    existing_path_with_file_name(candidate, |left, right| left.eq_ignore_ascii_case(right))
+fn existing_path_with_case_insensitive_file_name(
+    candidate: &Path,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<PathBuf>> {
+    existing_path_with_file_name(
+        candidate,
+        |left, right| left.eq_ignore_ascii_case(right),
+        deadline,
+    )
 }
 
 fn existing_path_with_file_name(
     candidate: &Path,
     matches_name: impl Fn(&str, &str) -> bool,
-) -> Option<PathBuf> {
-    let parent = candidate.parent()?;
-    let candidate_name = candidate.file_name()?.to_str()?;
-    for entry in fs::read_dir(parent).ok()? {
-        let entry = entry.ok()?;
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Option<PathBuf>> {
+    check_companion_source_deadline(deadline)?;
+    let Some(parent) = candidate.parent() else {
+        return Ok(None);
+    };
+    let Some(candidate_name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    for entry in fs::read_dir(parent).ok().into_iter().flatten() {
+        check_companion_source_deadline(deadline)?;
+        let Ok(entry) = entry else {
+            continue;
+        };
         let entry_name = entry.file_name();
-        let entry_name = entry_name.to_str()?;
+        let Some(entry_name) = entry_name.to_str() else {
+            continue;
+        };
         if matches_name(entry_name, candidate_name) {
-            return Some(entry.path());
+            return Ok(Some(entry.path()));
         }
     }
-    None
+    Ok(None)
 }
 
 fn normalize_include_target(raw: &str) -> Option<String> {

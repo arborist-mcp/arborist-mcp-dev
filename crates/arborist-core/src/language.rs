@@ -18,8 +18,9 @@ pub use c::{
     c_companion_source_path, c_include_targets, is_c_header_path, resolve_local_c_include,
 };
 pub(crate) use c::{
-    c_include_targets_with_offsets, c_local_include_dependency_paths,
-    c_local_include_dependency_paths_with_deadline, extension_case_candidates,
+    c_companion_source_path_with_deadline, c_include_targets_with_offsets,
+    c_local_include_dependency_paths, c_local_include_dependency_paths_with_deadline,
+    extension_case_candidates,
 };
 pub(crate) use csharp::{
     csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,

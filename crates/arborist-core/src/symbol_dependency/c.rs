@@ -5,9 +5,9 @@ use anyhow::Result;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    c_companion_source_path, c_include_targets, c_include_targets_with_offsets, detect_language,
-    is_c_header_path, normalize_path, parse_document, parse_document_with_timeout, read_source,
-    resolve_local_c_include,
+    c_companion_source_path_with_deadline, c_include_targets, c_include_targets_with_offsets,
+    detect_language, is_c_header_path, normalize_path, parse_document, parse_document_with_timeout,
+    read_source, resolve_local_c_include,
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
@@ -45,13 +45,14 @@ pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
     if let Some(deadline) = deadline {
         deadline.check("building C include context")?;
     }
-    let companion_source_paths = include_paths
-        .iter()
-        .filter_map(|include_path| {
-            c_companion_source_path(Path::new(include_path))
-                .map(|candidate| normalize_path(&candidate))
-        })
-        .collect();
+    let mut companion_source_paths = BTreeSet::new();
+    for include_path in &include_paths {
+        if let Some(candidate) =
+            c_companion_source_path_with_deadline(Path::new(include_path), deadline)?
+        {
+            companion_source_paths.insert(normalize_path(&candidate));
+        }
+    }
 
     Ok(CIncludeContext {
         include_paths,
@@ -122,13 +123,14 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
     if let Some(deadline) = deadline {
         deadline.check("building C include context")?;
     }
-    let companion_source_paths = include_paths
-        .iter()
-        .filter_map(|include_path| {
-            c_companion_source_path(Path::new(include_path))
-                .map(|candidate| normalize_path(&candidate))
-        })
-        .collect();
+    let mut companion_source_paths = BTreeSet::new();
+    for include_path in &include_paths {
+        if let Some(candidate) =
+            c_companion_source_path_with_deadline(Path::new(include_path), deadline)?
+        {
+            companion_source_paths.insert(normalize_path(&candidate));
+        }
+    }
 
     Ok(CIncludeContext {
         include_paths,
@@ -311,11 +313,25 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
 
+    use anyhow::Result;
+
     use super::{
         CIncludeTargetsCache, c_include_context_for_file_before_with_overrides,
         c_include_context_for_file_with_overrides_and_deadline,
     };
+    use crate::deadline::DeadlineCheck;
     use crate::language::{normalize_path, write_source_atomic};
+
+    struct RejectCompanionSourceScan;
+
+    impl DeadlineCheck for RejectCompanionSourceScan {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == "scanning C/C++ companion source paths" {
+                anyhow::bail!("test deadline expired during {phase}");
+            }
+            Ok(())
+        }
+    }
 
     #[test]
     fn include_context_reads_source_overrides() {
@@ -348,6 +364,38 @@ mod tests {
             context
                 .include_paths
                 .contains(&normalize_path(&header_path))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn include_context_companion_source_scan_honors_deadline() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-c-include-companion-deadline-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temporary include workspace should be created");
+        let header = root.join("helper.h");
+        let source_path = root.join("main.c");
+        write_source_atomic(&header, "int helper(int value);\n").expect("header should be written");
+        write_source_atomic(
+            &source_path,
+            "#include \"helper.h\"\nint main(void) { return helper(1); }\n",
+        )
+        .expect("source should be written");
+
+        let error = c_include_context_for_file_with_overrides_and_deadline(
+            &normalize_path(&source_path),
+            None,
+            Some(&RejectCompanionSourceScan),
+        )
+        .expect_err("companion source scanning must honor the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test deadline expired during scanning C/C++ companion source paths")
         );
         let _ = fs::remove_dir_all(&root);
     }
