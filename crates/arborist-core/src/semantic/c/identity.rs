@@ -3,7 +3,7 @@ use std::path::Path;
 use tree_sitter::Node;
 
 use super::find_first_descendant_by_kind;
-use crate::language::{node_text, parse_document};
+use crate::language::{node_text, parse_document_with_timeout};
 
 pub(crate) fn cpp_callable_symbol_id(
     semantic_path: &str,
@@ -33,7 +33,8 @@ fn cpp_parameter_type_identity(parameter: &str) -> String {
 
 fn cpp_parameter_type_identity_from_tree(parameter: &str) -> Option<String> {
     let source = format!("void arborist_identity({parameter});");
-    let document = parse_document(Path::new("arborist_identity.cpp"), &source).ok()?;
+    let document =
+        parse_document_with_timeout(Path::new("arborist_identity.cpp"), &source, 250_000).ok()?;
     let parameter_node = find_first_descendant_by_kind(
         document.tree.root_node(),
         if parameter.trim() == "..." {
