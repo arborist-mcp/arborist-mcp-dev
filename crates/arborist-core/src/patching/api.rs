@@ -37,6 +37,7 @@ pub fn patch_ast_node_from_path_with_timeout(
     let path = normalize_absolute_path(path)?;
     deadline.check("source read")?;
     let disk_source = read_source(&path)?;
+    validate_source_length(&path, disk_source.len())?;
     deadline.check("patch validation")?;
     let result = patch_ast_node_with_deadline(
         &path,
@@ -72,6 +73,7 @@ pub fn patch_ast_node_at_position_from_path_with_timeout(
     let path = normalize_absolute_path(path)?;
     deadline.check("source read")?;
     let disk_source = read_source(&path)?;
+    validate_source_length(&path, disk_source.len())?;
     deadline.check("position patch validation")?;
     let result = patch_ast_node_at_position_with_deadline(
         &path,
@@ -127,6 +129,7 @@ pub fn preview_patch_ast_node_from_path_with_timeout(
     let path = normalize_absolute_path(path)?;
     deadline.check("source read")?;
     let disk_source = read_source(&path)?;
+    validate_source_length(&path, disk_source.len())?;
     deadline.check("source validation")?;
     preview_patch_ast_node_with_deadline(
         &path,
@@ -164,6 +167,7 @@ pub fn preview_patch_ast_node_at_position_from_path_with_timeout(
     let path = normalize_absolute_path(path)?;
     deadline.check("source read")?;
     let disk_source = read_source(&path)?;
+    validate_source_length(&path, disk_source.len())?;
     deadline.check("source validation")?;
     preview_patch_ast_node_at_position_with_deadline(
         &path,
