@@ -16,7 +16,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::{
     C_FAMILY_HEADER_EXTENSIONS, c_include_targets, detect_language, extension_case_candidates,
     first_identifier, is_c_header_path, last_type_identifier, node_text, normalize_path,
-    parse_document, read_source, resolve_local_c_include,
+    parse_document_with_timeout, read_source, resolve_local_c_include,
 };
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
@@ -355,10 +355,17 @@ fn collect_declaring_include_headers(
         return Ok(());
     }
 
-    if let Some(deadline) = deadline {
-        deadline.check("resolving C/C++ symbol identity")?;
-    }
-    let document = parse_document(path, source)?;
+    let document = parse_document_with_timeout(
+        path,
+        source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "parsing C/C++ symbol identity")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     for include_target in c_include_targets(document.tree.root_node(), source)? {
         let Some(include_path) = resolve_local_c_include(path, &include_target) else {
             continue;
@@ -369,7 +376,6 @@ fn collect_declaring_include_headers(
         {
             headers.insert(normalize_path(&include_path));
         }
-
         let include_source = read_source(&include_path)?;
         collect_declaring_include_headers(
             &include_path,
@@ -393,7 +399,17 @@ fn c_file_declares_symbol(
         deadline.check("resolving C/C++ symbol identity")?;
     }
     let source = read_source(path)?;
-    let document = parse_document(path, &source)?;
+    let document = parse_document_with_timeout(
+        path,
+        &source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "parsing C/C++ symbol identity")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     let root = document.tree.root_node();
     let mut cursor = root.walk();
 

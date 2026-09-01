@@ -627,6 +627,57 @@ fn every_language_builds_a_valid_semantic_skeleton() {
 }
 
 #[test]
+fn c_symbol_family_anchor_parsing_rejects_phase_rejecting_deadlines() {
+    use crate::semantic::get_semantic_skeleton_with_deadline;
+    use crate::tests::temporary_dir;
+
+    struct RejectPhase(&'static str);
+
+    impl crate::deadline::DeadlineCheck for RejectPhase {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            if phase == self.0 {
+                anyhow::bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+
+        fn remaining_timeout_micros(&self, phase: &str) -> anyhow::Result<Option<u64>> {
+            anyhow::bail!("deadline budget requested during {phase}");
+        }
+    }
+
+    let dir = temporary_dir();
+    let header = dir.join("helper.h");
+    let source_path = dir.join("helper.c");
+    fs::write(&header, "int helper(int value);\n").unwrap();
+    fs::write(
+        &source_path,
+        "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+    )
+    .unwrap();
+
+    let source = fs::read_to_string(&source_path).unwrap();
+    let document = parse_document(&source_path, &source).unwrap();
+    let deadline = RejectPhase("parsing C/C++ symbol identity");
+    let error = get_semantic_skeleton_with_deadline(
+        &source_path,
+        document.language_id,
+        &source,
+        &document.tree,
+        64,
+        &[],
+        Some(&deadline),
+    )
+    .expect_err("included-header symbol parsing must honor the deadline");
+
+    assert!(
+        error
+            .to_string()
+            .contains("deadline budget requested during parsing C/C++ symbol identity")
+    );
+}
+
+#[test]
 fn symbol_extraction_is_stable_across_unchanged_source() {
     use crate::symbol_extractor::index_symbols_from_document;
 
