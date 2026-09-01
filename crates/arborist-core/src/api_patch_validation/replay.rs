@@ -16,7 +16,20 @@ pub(crate) fn validate_replay_patch_payload_with_deadline(
     patch.validate_public_output()?;
 
     check_deadline(deadline, "parsing updated patch source")?;
-    let document = language::parse_document(Path::new(&patch.file), &patch.updated_source)?;
+    let document = language::parse_document_with_timeout(
+        Path::new(&patch.file),
+        &patch.updated_source,
+        deadline
+            .map(|deadline| {
+                crate::deadline::DeadlineCheck::remaining_timeout_micros(
+                    deadline,
+                    "parsing updated patch source",
+                )
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     check_deadline(deadline, "validating patch syntax")?;
     let expected_syntax_errors = patching::collect_syntax_errors_with_deadline(
         document.tree.root_node(),
