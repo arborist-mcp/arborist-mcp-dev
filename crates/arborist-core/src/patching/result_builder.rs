@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    LanguageCapabilities, builtin_language_registry, normalize_path, parse_document,
+    LanguageCapabilities, builtin_language_registry, normalize_path, parse_document_with_timeout,
 };
 use crate::model::{
     PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
@@ -63,7 +63,17 @@ pub(crate) fn build_patch_result_with_deadline(
         mut preflight_issues,
     } = input;
     check_deadline(deadline, "updated source parse")?;
-    let virtual_document = parse_document(path, &updated_source)?;
+    let virtual_document = parse_document_with_timeout(
+        path,
+        &updated_source,
+        deadline
+            .map(|deadline| {
+                DeadlineCheck::remaining_timeout_micros(deadline, "updated source parse")
+            })
+            .transpose()?
+            .flatten()
+            .unwrap_or(0),
+    )?;
     builtin_language_registry().require_capability(
         virtual_document.language_id,
         LanguageCapabilities::PATCH_VALIDATION,
