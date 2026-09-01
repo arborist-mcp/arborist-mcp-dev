@@ -144,6 +144,7 @@ pub(crate) fn collect_c_reference_validation_with_deadline(
                         document,
                         source,
                         &candidate_summaries,
+                        deadline,
                     )?,
                     candidates: candidate_summaries,
                 });

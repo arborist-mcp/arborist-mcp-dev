@@ -3,8 +3,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{
-    ParsedDocument, c_include_targets, normalize_path, parse_document, read_source,
+    ParsedDocument, c_include_targets, normalize_path, parse_document_with_timeout, read_source,
     resolve_local_c_include,
 };
 use crate::model::{DisambiguationContext, SymbolSummary};
@@ -27,10 +28,12 @@ pub(super) fn ambiguity_disambiguation_context(
     document: &ParsedDocument,
     source: &str,
     candidates: &[SymbolSummary],
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<DisambiguationContext> {
-    let visible_include_families = collect_visible_include_families(path, document, source)?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let visible_include_families =
+        collect_visible_include_families(path, document, source, deadline)?
+            .into_iter()
+            .collect::<Vec<_>>();
     let candidate_include_families = ordered_candidate_include_families(candidates);
     let matched_visible_families = visible_include_families
         .iter()
@@ -79,6 +82,7 @@ fn collect_visible_include_families(
     path: &Path,
     document: &ParsedDocument,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<String>> {
     let mut families = Vec::new();
     let mut visited = BTreeSet::new();
@@ -88,6 +92,7 @@ fn collect_visible_include_families(
         source,
         &mut families,
         &mut visited,
+        deadline,
     )?;
     Ok(families)
 }
@@ -98,6 +103,7 @@ fn collect_visible_include_families_from_document(
     source: &str,
     families: &mut Vec<String>,
     visited: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let normalized = normalize_path(path);
     if !visited.insert(normalized) {
@@ -111,14 +117,31 @@ fn collect_visible_include_families_from_document(
         let include_family = normalize_path(&include_path);
         push_unique(families, include_family);
 
+        if let Some(deadline) = deadline {
+            deadline.check("parsing C/C++ ambiguity include families")?;
+        }
         let include_source = read_source(&include_path)?;
-        let include_document = parse_document(&include_path, &include_source)?;
+        let include_document = parse_document_with_timeout(
+            &include_path,
+            &include_source,
+            deadline
+                .map(|deadline| {
+                    DeadlineCheck::remaining_timeout_micros(
+                        deadline,
+                        "parsing C/C++ ambiguity include families",
+                    )
+                })
+                .transpose()?
+                .flatten()
+                .unwrap_or(0),
+        )?;
         collect_visible_include_families_from_document(
             &include_path,
             &include_document,
             &include_source,
             families,
             visited,
+            deadline,
         )?;
     }
 
