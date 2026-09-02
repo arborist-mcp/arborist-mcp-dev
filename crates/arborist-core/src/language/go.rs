@@ -673,6 +673,9 @@ fn go_source_files_in_directory_with_deadline(
         let Ok(source) = read_source(&path) else {
             continue;
         };
+        if validate_source_length(&path, source.len()).is_err() {
+            continue;
+        }
         let Some(document) = parse_go_source_with_deadline(
             &path,
             &source,
