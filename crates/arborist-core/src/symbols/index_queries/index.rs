@@ -18,7 +18,7 @@ use crate::index_store::{
 };
 use crate::language::{
     detect_language, ensure_path_inside_workspace, normalize_absolute_path, normalize_path,
-    parse_document_with_timeout, read_source,
+    parse_document_with_timeout, read_source, validate_source_length,
 };
 use crate::model::SymbolIndexStats;
 use crate::symbol_dependency::{
@@ -145,9 +145,10 @@ fn read_existing_refresh_source_with_deadline(
 
     validate_source_file_size(refresh_path, limits)?;
     deadline.check(phase)?;
-    let source = read_source(refresh_path);
+    let source = read_source(refresh_path)?;
+    validate_source_length(refresh_path, source.len())?;
     deadline.check(phase)?;
-    source
+    Ok(source)
 }
 
 pub fn refresh_symbol_index_for_file(

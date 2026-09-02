@@ -8,7 +8,9 @@ use crate::index_schema::{ensure_symbol_tables_with_deadline, open_symbol_index_
 use crate::index_store::{
     load_file_states_with_deadline, load_indexed_symbols_grouped_by_file_with_deadline,
 };
-use crate::language::{normalize_path, parse_document_with_timeout, read_source};
+use crate::language::{
+    normalize_path, parse_document_with_timeout, read_source, validate_source_length,
+};
 use crate::symbol_dependency::{
     assign_symbol_ids_with_deadline, resolve_symbol_dependencies_with_overrides_with_deadline,
 };
@@ -114,9 +116,10 @@ fn read_incremental_source_with_deadline(
     deadline.check("indexing workspace files")?;
     validate_source_file_size(path, limits)?;
     deadline.check("indexing workspace files")?;
-    let source = read_source(path);
+    let source = read_source(path)?;
+    validate_source_length(path, source.len())?;
     deadline.check("indexing workspace files")?;
-    source
+    Ok(source)
 }
 
 #[cfg(test)]
