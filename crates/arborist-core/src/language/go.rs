@@ -9,7 +9,7 @@ use tree_sitter::Node;
 
 use super::{
     node_text, normalize_absolute_path, parse_document, parse_document_with_timeout,
-    path_is_inside_workspace, read_source,
+    path_is_inside_workspace, read_source, validate_source_length,
 };
 
 const MAX_GO_PACKAGE_DIRECTORY_ENTRIES: usize = 4_096;
@@ -86,6 +86,7 @@ fn go_same_package_source_paths_with_deadline(
             continue;
         }
         let candidate_source = read_source(&candidate_path)?;
+        validate_source_length(&candidate_path, candidate_source.len())?;
         let Some(document) = parse_go_source_with_deadline(
             &candidate_path,
             &candidate_source,
@@ -218,6 +219,7 @@ fn go_unique_local_package_name(
             Ok(candidate_source) => candidate_source,
             Err(_) => return Ok(None),
         };
+        validate_source_length(&source_path, candidate_source.len())?;
         let Some(candidate_name) =
             go_source_package_name_with_deadline(&source_path, &candidate_source, deadline)?
         else {
@@ -398,6 +400,9 @@ fn find_go_module(
             let Ok(source) = read_source(&module_file) else {
                 return Ok(None);
             };
+            if validate_source_length(&module_file, source.len()).is_err() {
+                return Ok(None);
+            }
             if let Some(deadline) = deadline {
                 deadline.check("reading Go module file")?;
             }

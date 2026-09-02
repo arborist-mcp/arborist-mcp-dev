@@ -72,7 +72,9 @@ fn symbol_source_text_with_cache<'a>(
         {
             source.clone()
         } else {
-            read_source(Path::new(&symbol.file_path))?
+            let source = read_source(Path::new(&symbol.file_path))?;
+            validate_source_length(Path::new(&symbol.file_path), source.len())?;
+            source
         };
         source_cache.insert(symbol.file_path.clone(), source);
     }

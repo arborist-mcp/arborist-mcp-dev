@@ -10,7 +10,9 @@ use super::super::python_bindings::python_symbol_summary;
 use super::PythonImportBinding;
 use super::bindings::{python_import_from_binding, python_imported_symbol_name};
 use super::module_path::resolve_local_python_module_path;
-use crate::language::{node_text, normalize_path, parse_document_with_timeout, read_source};
+use crate::language::{
+    node_text, normalize_path, parse_document_with_timeout, read_source, validate_source_length,
+};
 use crate::model::{LanguageId, SymbolSummary};
 
 pub(crate) fn resolve_local_python_imported_symbol_with_deadline<D>(
@@ -55,6 +57,7 @@ where
         deadline.check("reading imported Python module")?;
     }
     let module_source = read_source(&module_path)?;
+    validate_source_length(&module_path, module_source.len())?;
     let document = parse_document_with_timeout(
         &module_path,
         &module_source,
