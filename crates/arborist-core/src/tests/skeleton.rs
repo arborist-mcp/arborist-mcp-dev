@@ -64,6 +64,20 @@ fn oversized_path_skeleton_fails_closed_before_parse_work() {
 }
 
 #[test]
+fn oversized_inline_skeleton_fails_closed_before_parse_work() {
+    let error = get_semantic_skeleton_with_timeout(
+        Path::new("sample.py"),
+        &"x".repeat(MAX_SOURCE_FILE_BYTES as usize + 1),
+        2,
+        &[],
+        Some(MAX_SEMANTIC_SKELETON_TIMEOUT_MS),
+    )
+    .expect_err("oversized inline skeletons should be rejected before parsing");
+
+    assert!(error.to_string().contains("source text too large"));
+}
+
+#[test]
 fn builds_python_skeleton_with_nested_members() {
     let source = r#"
 class Greeter:
