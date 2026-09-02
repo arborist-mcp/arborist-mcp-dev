@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use tree_sitter::InputEdit;
+use tree_sitter::{InputEdit, ParseOptions};
 
 use super::super::state::{VirtualFileEntry, normalized_virtual_path, validate_edit_range};
 use super::super::{MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS, VirtualFileSystem};
@@ -136,9 +137,39 @@ impl VirtualFileSystem {
             edited_tree.edit(&edit);
             let mut parser = parser_for_language(entry.language_id)?;
             check_optional_deadline(deadline, "virtual incremental parse")?;
-            let new_tree = parser
-                .parse(&updated_source, Some(&edited_tree))
-                .ok_or_else(|| anyhow!("incremental parse failed for {}", entry.path.display()))?;
+            let timeout_micros = deadline
+                .map(|deadline| {
+                    DeadlineCheck::remaining_timeout_micros(deadline, "virtual incremental parse")
+                })
+                .transpose()?
+                .flatten()
+                .unwrap_or(0);
+            let new_tree = if timeout_micros > 0 {
+                let parse_deadline = Instant::now() + Duration::from_micros(timeout_micros);
+                let mut progress_callback =
+                    |_: &tree_sitter::ParseState| Instant::now() >= parse_deadline;
+                let parse_options = ParseOptions::new().progress_callback(&mut progress_callback);
+                let mut read_source = |byte_offset: usize, _position: tree_sitter::Point| {
+                    updated_source
+                        .as_bytes()
+                        .get(byte_offset..)
+                        .unwrap_or_default()
+                };
+                parser.parse_with_options(&mut read_source, Some(&edited_tree), Some(parse_options))
+            } else {
+                parser.parse(&updated_source, Some(&edited_tree))
+            }
+            .ok_or_else(|| {
+                if timeout_micros > 0 {
+                    anyhow!(
+                        "incremental parse timed out after {} microseconds for {}",
+                        timeout_micros,
+                        entry.path.display()
+                    )
+                } else {
+                    anyhow!("incremental parse failed for {}", entry.path.display())
+                }
+            })?;
 
             check_optional_deadline(deadline, "virtual syntax collection")?;
             let syntax_errors = collect_syntax_errors(new_tree.root_node(), &updated_source);
