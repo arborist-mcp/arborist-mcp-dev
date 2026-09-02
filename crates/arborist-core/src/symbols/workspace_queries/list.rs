@@ -6,6 +6,7 @@ use crate::deadline::DeadlineCheck;
 
 use crate::language::{
     ensure_path_inside_workspace, normalize_absolute_path, parse_document_with_timeout,
+    validate_source_length,
 };
 use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
@@ -52,6 +53,7 @@ pub fn list_symbols_in_file_with_source_filtered_with_timeout(
         );
     }
 
+    validate_source_length(&file_path, source.len())?;
     deadline.check("single-file symbol parsing")?;
     let document = parse_document_with_timeout(
         &file_path,

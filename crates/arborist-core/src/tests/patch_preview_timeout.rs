@@ -161,8 +161,7 @@ fn oversized_path_patch_preview_fails_closed_before_patch_work() {
 
     let message = format!("{error:#}");
     assert!(
-        message.contains("exceeds max source file bytes")
-            || message.contains("source file too large"),
+        message.contains("source text too large") || message.contains("source file too large"),
         "unexpected error: {message}"
     );
 
