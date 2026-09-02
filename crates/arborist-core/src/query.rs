@@ -36,8 +36,8 @@ pub fn execute_tree_query_from_path_with_timeout(
 ) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     let source = read_source(&path)?;
+    validate_source_length(&path, source.len())?;
     if let Some(timeout_ms) = timeout_ms {
-        validate_source_length(&path, source.len())?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         if std::time::Instant::now() >= deadline {
             bail!("invalid Tree-sitter query timeout_ms: value must be greater than zero");
