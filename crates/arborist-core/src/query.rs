@@ -2,7 +2,9 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
-use crate::language::{normalize_absolute_path, read_source, validate_source_length};
+use crate::language::{
+    normalize_absolute_path, read_source, validate_source_length, validate_source_size,
+};
 use crate::model::QueryCaptureResult;
 
 mod execution;
@@ -70,6 +72,7 @@ pub fn execute_tree_query_with_timeout(
     max_captures: usize,
     timeout_ms: Option<u64>,
 ) -> Result<Vec<QueryCaptureResult>> {
+    validate_source_size(path, source)?;
     execution::execute_tree_query_with_timeout(path, source, query, max_captures, timeout_ms)
 }
 
