@@ -28,6 +28,7 @@ fn rejects_excessive_workspace_edit_preview_timeout() {
 use std::fs;
 
 use super::support::temporary_dir;
+use crate::language::MAX_SOURCE_FILE_BYTES;
 use crate::{
     MAX_POSITION_EDIT_NEW_TEXT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS,
     MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit, WorkspacePositionEdits,
@@ -130,6 +131,33 @@ fn rejects_invalid_position_edits_without_writing_any_file() {
         fs::read_to_string(&second).unwrap(),
         "def second() -> int:\n    return 2\n"
     );
+}
+
+#[test]
+fn rejects_oversized_disk_source_before_applying_edits() {
+    let dir = temporary_dir();
+    let path = dir.join("oversized.py");
+    fs::write(&path, "value = 1\n").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_SOURCE_FILE_BYTES + 1)
+        .unwrap();
+
+    let error = preview_workspace_position_edits(&[WorkspacePositionEdits {
+        file_path: path.display().to_string(),
+        source: None,
+        edits: vec![PositionEdit {
+            start: Position { row: 0, column: 8 },
+            end: Position { row: 0, column: 9 },
+            new_text: "2".to_string(),
+        }],
+    }])
+    .expect_err("oversized disk sources should be rejected before edit application");
+
+    assert!(error.to_string().contains("source file too large"));
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
