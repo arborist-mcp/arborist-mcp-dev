@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 pub use crate::api_patch_validation::*;
 pub use crate::api_source_query::*;
 use crate::deadline::{CooperativeDeadline, DeadlineCheck};
-use crate::language::{read_source, validate_source_length};
+use crate::language::{read_source, validate_source_length, validate_source_size};
 use crate::model::{MAX_SEMANTIC_EXPAND_NODES, SemanticSkeleton};
 use crate::{language, semantic};
 
@@ -65,6 +65,7 @@ pub fn get_semantic_skeleton_with_timeout(
     let path = language::normalize_absolute_path(path)?;
     validate_depth_limit(depth_limit)?;
     validate_expand_nodes(expand_nodes)?;
+    validate_source_size(&path, source)?;
     get_semantic_skeleton_with_deadline(&path, source, depth_limit, expand_nodes, &deadline)
 }
 
