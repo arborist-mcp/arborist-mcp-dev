@@ -38,6 +38,7 @@ pub(in super::super) fn collect_python_scope_symbols_with_deadline(
             origin_type,
             scope_rank + 500_000,
             symbols,
+            deadline,
         )?;
     }
 
@@ -173,6 +174,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
                         visibility: PythonSymbolVisibility::Always,
                     },
                     symbols,
+                    deadline,
                 )?;
             }
         }
@@ -190,6 +192,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
                         visibility: PythonSymbolVisibility::Always,
                     },
                     symbols,
+                    deadline,
                 )?;
             }
             collect_python_child_block_symbols_with_deadline(
@@ -212,6 +215,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
                 origin_type,
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
+                deadline,
             )?;
             collect_python_child_block_symbols_with_deadline(
                 statement_node,
@@ -233,6 +237,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
                 origin_type,
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
+                deadline,
             )?;
             collect_python_child_block_symbols_with_deadline(
                 statement_node,
@@ -254,6 +259,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
                 origin_type,
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
+                deadline,
             )?;
             collect_python_child_block_symbols_with_deadline(
                 statement_node,
@@ -321,7 +327,11 @@ fn collect_python_comprehension_target_symbols_with_deadline(
     symbols: &mut Vec<PythonAccessibleSymbol>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let mut collection_error = None;
     let mut callback = |candidate: Node<'_>| {
+        if collection_error.is_some() {
+            return;
+        }
         if !matches!(
             candidate.kind(),
             "list_comprehension"
@@ -343,7 +353,7 @@ fn collect_python_comprehension_target_symbols_with_deadline(
                 clause_index += 1;
                 continue;
             };
-            collect_python_target_symbols(
+            if let Err(error) = collect_python_target_symbols(
                 left,
                 PythonTargetCollection {
                     source,
@@ -358,18 +368,22 @@ fn collect_python_comprehension_target_symbols_with_deadline(
                     },
                 },
                 symbols,
-            )
-            .ok();
+                deadline,
+            ) {
+                collection_error = Some(error);
+                return;
+            }
             clause_index += 1;
         }
     };
     match deadline {
-        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline),
-        None => {
-            visit_tree(node, &mut callback);
-            Ok(())
-        }
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline)?,
+        None => visit_tree(node, &mut callback),
     }
+    if let Some(error) = collection_error {
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
