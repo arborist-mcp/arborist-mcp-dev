@@ -1,8 +1,10 @@
+use anyhow::Result;
 use tree_sitter::Node;
 
 use super::type_qualifiers::*;
 use super::types::CppLocalBinding;
-use crate::language::{node_text, visit_tree};
+use crate::deadline::DeadlineCheck;
+use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
 
 mod auto;
 mod declared;
@@ -14,7 +16,8 @@ pub(super) use declared::*;
 pub(in super::super) fn collect_cpp_local_bindings(
     node: Node<'_>,
     source: &str,
-) -> Vec<CppLocalBinding> {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<CppLocalBinding>> {
     let mut bindings = Vec::new();
     let mut callback = |candidate: Node<'_>| match candidate.kind() {
         "declaration" => {
@@ -34,8 +37,11 @@ pub(in super::super) fn collect_cpp_local_bindings(
         }
         _ => {}
     };
-    visit_tree(node, &mut callback);
-    bindings
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline)?,
+        None => visit_tree(node, &mut callback),
+    }
+    Ok(bindings)
 }
 
 fn cpp_local_binding(
@@ -151,4 +157,44 @@ fn cpp_object_binding(
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::bail;
+
+    use super::collect_cpp_local_bindings;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectTreeWalk;
+
+    impl DeadlineCheck for RejectTreeWalk {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            if phase == "walking syntax tree" {
+                bail!("deadline reached during binding walk");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cpp_local_binding_walk_honors_deadline() {
+        let source = "int sample() { int local = 1; return local; }\n";
+        let path = Path::new("sample.cpp");
+        let document = parse_document(path, source).expect("source should parse");
+        let root = document.tree.root_node();
+
+        let error = collect_cpp_local_bindings(root, source, Some(&RejectTreeWalk))
+            .err()
+            .expect("C++ local binding walks should honor the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline reached during binding walk")
+        );
+    }
 }

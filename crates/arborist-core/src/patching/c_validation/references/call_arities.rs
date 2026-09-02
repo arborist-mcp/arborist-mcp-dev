@@ -55,7 +55,7 @@ pub(crate) fn collect_cpp_call_arities_with_deadline(
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    let local_bindings = collect_cpp_local_bindings(node, source);
+    let local_bindings = collect_cpp_local_bindings(node, source, deadline)?;
     let mut callback = |candidate: Node<'_>| match candidate.kind() {
         "call_expression" => {
             collect_cpp_call_arity(candidate, source, call_arities, &local_bindings)
