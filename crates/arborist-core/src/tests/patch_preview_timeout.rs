@@ -7,6 +7,7 @@ use super::{
     preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path_with_timeout,
     preview_patch_ast_node_with_timeout, temporary_dir,
 };
+use crate::language::MAX_SOURCE_FILE_BYTES;
 
 const SOURCE: &str = "def sample():\n    return 1\n";
 const REPLACEMENT: &str = "def sample():\n    return 2\n";
@@ -132,6 +133,37 @@ fn timed_path_patch_previews_read_without_writing() {
     assert_eq!(
         fs::read_to_string(&path).expect("fixture should remain"),
         SOURCE
+    );
+
+    fs::remove_dir_all(workspace).expect("fixture directory should be removed");
+}
+
+#[test]
+fn oversized_path_patch_preview_fails_closed_before_patch_work() {
+    let workspace = temporary_dir();
+    let path = workspace.join("sample.py");
+    fs::write(&path, SOURCE).expect("fixture should be written");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("fixture should be opened for truncation")
+        .set_len(MAX_SOURCE_FILE_BYTES + 1)
+        .expect("fixture should be resized past the source limit");
+
+    let error = preview_patch_ast_node_from_path_with_timeout(
+        &path,
+        "sample",
+        REPLACEMENT,
+        None,
+        Some(MAX_PATCH_PREVIEW_TIMEOUT_MS),
+    )
+    .expect_err("path preview should reject oversized sources");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("exceeds max source file bytes")
+            || message.contains("source file too large"),
+        "unexpected error: {message}"
     );
 
     fs::remove_dir_all(workspace).expect("fixture directory should be removed");
