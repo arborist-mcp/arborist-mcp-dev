@@ -270,7 +270,14 @@ impl VirtualFileSystem {
     }
 
     pub fn close_file(&mut self, path: &Path, persist: bool) -> Result<VirtualFileSnapshot> {
-        self.close_file_with_timeout(path, persist, None)
+        if persist {
+            self.commit_file(path)
+        } else {
+            self.discard_file(path)
+        }
+        .inspect(|snapshot| {
+            self.entries.remove(&snapshot.file);
+        })
     }
 
     pub fn close_file_with_timeout(
