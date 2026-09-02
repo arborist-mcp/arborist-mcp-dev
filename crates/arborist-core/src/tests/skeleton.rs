@@ -37,6 +37,31 @@ fn semantic_skeleton_timeout_variants_reject_invalid_budgets_before_path_work() 
 }
 
 use super::*;
+use crate::language::MAX_SOURCE_FILE_BYTES;
+
+#[test]
+fn oversized_path_skeleton_fails_closed_before_parse_work() {
+    let workspace = temporary_dir();
+    let path = workspace.join("sample.py");
+    fs::write(&path, "value = 1\n").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_SOURCE_FILE_BYTES + 1)
+        .unwrap();
+
+    let error = get_semantic_skeleton_from_path_with_timeout(
+        &path,
+        2,
+        &[],
+        Some(MAX_SEMANTIC_SKELETON_TIMEOUT_MS),
+    )
+    .expect_err("oversized path skeletons should be rejected before parsing");
+
+    assert!(error.to_string().contains("source file too large"));
+    fs::remove_dir_all(workspace).unwrap();
+}
 
 #[test]
 fn builds_python_skeleton_with_nested_members() {
