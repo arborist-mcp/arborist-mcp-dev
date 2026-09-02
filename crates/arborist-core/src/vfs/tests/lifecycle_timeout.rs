@@ -197,6 +197,21 @@ fn close_discard_timeout_keeps_dirty_entry_open() {
 }
 
 #[test]
+fn close_discard_timeout_removes_entry_loaded_only_for_failed_request() {
+    let disk_source = "def value() -> int:\n    return 1\n";
+    let file = temp_file(disk_source);
+    let mut vfs = VirtualFileSystem::new();
+    let deadline = FailOnPhase {
+        phase: "disk source read",
+    };
+
+    vfs.close_file_with_deadline(&file, false, &deadline)
+        .expect_err("close should fail after loading the source for discard");
+
+    assert!(vfs.virtual_file_statuses(false).unwrap().is_empty());
+}
+
+#[test]
 fn timed_close_persists_source_and_removes_virtual_entry() {
     let file = temp_file("def value() -> int:\n    return 1\n");
     let mut vfs = VirtualFileSystem::new();
