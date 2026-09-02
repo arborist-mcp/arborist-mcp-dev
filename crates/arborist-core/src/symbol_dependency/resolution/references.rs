@@ -72,7 +72,7 @@ use crate::language::{
     JavaDirectSuperclassReference, LanguageRegistry, detect_language,
     java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
     normalize_path, parse_document, parse_document_with_timeout, read_source,
-    resolve_local_javascript_module_path_with_overrides,
+    resolve_local_javascript_module_path_with_overrides, validate_source_length,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol_with_deadline;
@@ -16727,6 +16727,7 @@ fn resolve_java_class_receiver_interface_default_method(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -18272,6 +18273,7 @@ fn java_direct_interface_parent_references(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -18326,6 +18328,7 @@ fn java_resolved_direct_interface_paths(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -18802,6 +18805,7 @@ fn java_simple_superclass_path(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -18875,6 +18879,7 @@ fn java_simple_superclass_path_for_class(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -20298,6 +20303,7 @@ fn resolve_kotlin_superclass_path(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -23296,6 +23302,7 @@ fn kotlin_direct_interface_parent_spellings(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
@@ -23533,6 +23540,7 @@ fn kotlin_class_delegation_spellings(
         .cloned()
         .map(Ok)
         .unwrap_or_else(|| read_source(path))?;
+    validate_source_length(path, source.len())?;
     if let Some(deadline) = deadline {
         deadline.check("parsing referenced type context")?;
     }
