@@ -193,6 +193,7 @@ pub(super) fn collect_python_reference_entries_with_deadline(
                 node,
                 source,
                 &name,
+                deadline,
             )?
         {
             return Ok(());

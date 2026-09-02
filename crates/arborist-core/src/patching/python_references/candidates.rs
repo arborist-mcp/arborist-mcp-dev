@@ -194,10 +194,12 @@ pub(super) fn python_enclosing_local_binding_should_suppress_reference(
     reference_node: Node<'_>,
     source: &str,
     name: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<bool> {
     if python_reference_is_global_declared(reference_node, source, name) {
         return Ok(false);
     }
+    check_deadline(deadline, "resolving Python suppression bindings")?;
 
     let normalized_path = normalize_path(current_path);
     let mut candidates = Vec::new();
@@ -237,10 +239,11 @@ pub(super) fn python_enclosing_local_binding_should_suppress_reference(
                 &normalized_path,
                 scope_rank,
                 &mut candidates,
-                None,
+                deadline,
             )?;
             scope_rank = scope_rank.saturating_sub(1_000_000);
         }
+        check_deadline(deadline, "resolving Python suppression bindings")?;
 
         current = node.parent();
     }
@@ -297,4 +300,67 @@ fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str)
     python_nearest_scope_node(node).is_some_and(|scope| {
         python_scope_declares_external_name(scope, source, name, "global_statement")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::bail;
+
+    use super::python_enclosing_local_binding_should_suppress_reference;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectScopeCollection;
+
+    impl DeadlineCheck for RejectScopeCollection {
+        fn check(&self, phase: &str) -> anyhow::Result<()> {
+            if phase == "collecting Python scope symbols" {
+                bail!("deadline reached during suppression scope collection");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn enclosing_local_binding_suppression_honors_deadline() {
+        let source = "def outer():\n    value = 1\n    def inner():\n        return value\n";
+        let path = Path::new("sample.py");
+        let document = parse_document(path, source).expect("source should parse");
+        let reference_byte = source
+            .rfind("value")
+            .expect("reference identifier should exist");
+        let reference_node = document
+            .tree
+            .root_node()
+            .named_descendant_for_byte_range(reference_byte, reference_byte + 1)
+            .expect("reference identifier node should resolve");
+
+        assert!(
+            python_enclosing_local_binding_should_suppress_reference(
+                path,
+                reference_node,
+                source,
+                "value",
+                None,
+            )
+            .expect("suppression resolution should succeed without a deadline")
+        );
+
+        let error = python_enclosing_local_binding_should_suppress_reference(
+            path,
+            reference_node,
+            source,
+            "value",
+            Some(&RejectScopeCollection),
+        )
+        .expect_err("suppression scope collection should honor the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("deadline reached during suppression scope collection")
+        );
+    }
 }
