@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 use crate::language::{
     normalize_absolute_path, normalize_path, read_source, validate_source_length,
-    write_source_atomic,
+    validate_source_size, write_source_atomic,
 };
 use crate::model::{PatchAstNodeResult, PatchPreviewResult, Position};
 
@@ -218,6 +218,7 @@ pub(crate) fn patch_ast_node_with_deadline(
 ) -> Result<PatchAstNodeResult> {
     check_deadline(deadline, "patch input validation")?;
     let path = normalize_absolute_path(path)?;
+    validate_source_size(&path, source)?;
     validate_patch_replacement(new_code)?;
     validate_bypass_reason(bypass_reason)?;
     let prepared = match deadline {
@@ -363,6 +364,7 @@ fn patch_ast_node_at_position_with_deadline(
 ) -> Result<PatchAstNodeResult> {
     check_deadline(deadline, "position target resolution")?;
     let path = normalize_absolute_path(path)?;
+    validate_source_size(&path, source)?;
     let semantic_target =
         semantic_target_at_position_with_deadline(&path, source, position, deadline)?;
     patch_ast_node_with_deadline(
