@@ -7,7 +7,7 @@ use crate::deadline::DeadlineCheck;
 use crate::index_store::validate_resolved_symbol_edges_with_deadline;
 use crate::language::{
     detect_language, normalize_absolute_path, normalize_path, path_identity,
-    path_is_inside_workspace, read_source,
+    path_is_inside_workspace, read_source, validate_source_length,
 };
 use crate::model::SymbolMeta;
 use crate::workspace_scan::{
@@ -173,11 +173,12 @@ pub(super) fn validate_persisted_symbol_paths_with_deadline(
             let source = match sources_by_path.entry(symbol.file_path.clone()) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let source = read_source(path);
+                    let source = read_source(path)?;
+                    validate_source_length(path, source.len())?;
                     if let Some(deadline) = deadline {
                         deadline.check("validating persisted symbol paths")?;
                     }
-                    entry.insert(source?)
+                    entry.insert(source)
                 }
             };
             if source
