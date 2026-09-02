@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use tree_sitter::Tree;
 
-use crate::language::{normalize_absolute_path, normalize_path, read_source};
+use crate::language::{
+    normalize_absolute_path, normalize_path, read_source, validate_source_length,
+};
 use crate::model::{LanguageId, VirtualFileSnapshot};
 use crate::patching::collect_syntax_errors;
 
@@ -29,7 +31,9 @@ pub(super) fn read_virtual_disk_source(path: &Path) -> Result<String> {
     if !path.exists() {
         return Ok(String::new());
     }
-    read_source(path)
+    let source = read_source(path)?;
+    validate_source_length(path, source.len())?;
+    Ok(source)
 }
 
 pub(super) fn snapshot_from_entry(
