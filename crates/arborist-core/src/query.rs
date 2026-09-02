@@ -79,7 +79,7 @@ pub fn execute_tree_query_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_TREE_QUERY_CAPTURES, MAX_TREE_QUERY_TIMEOUT_MS,
+        DEFAULT_TREE_QUERY_MAX_CAPTURES, MAX_TREE_QUERY_CAPTURES, MAX_TREE_QUERY_TIMEOUT_MS,
         validation::{validate_max_captures, validate_timeout},
     };
 
@@ -96,5 +96,23 @@ mod tests {
         assert!(validate_max_captures(0).is_err());
         assert!(validate_max_captures(MAX_TREE_QUERY_CAPTURES + 1).is_err());
         assert!(validate_max_captures(MAX_TREE_QUERY_CAPTURES).is_ok());
+    }
+
+    #[test]
+    fn oversized_inline_source_rejected_before_query_work() {
+        use crate::language::MAX_SOURCE_FILE_BYTES;
+        use std::path::Path;
+
+        let source = "x".repeat(MAX_SOURCE_FILE_BYTES as usize + 1);
+        let error = super::execute_tree_query_with_timeout(
+            Path::new("sample.py"),
+            &source,
+            "(function_definition name: (identifier) @name)",
+            DEFAULT_TREE_QUERY_MAX_CAPTURES,
+            None,
+        )
+        .expect_err("oversized inline sources should be rejected before query execution");
+
+        assert!(error.to_string().contains("source text too large"));
     }
 }

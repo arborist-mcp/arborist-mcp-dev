@@ -240,4 +240,27 @@ mod tests {
 
         fs::remove_dir_all(&workspace).expect("temporary workspace should be removed");
     }
+
+    #[test]
+    fn oversized_inline_source_rejected_before_parse_work() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("arborist-single-file-list-oversized-{unique}"));
+        let target = workspace.join("target.py");
+        fs::create_dir_all(&workspace).expect("temporary workspace should be created");
+        fs::write(&target, "def target():\n    return 1\n").expect("target should be written");
+
+        let oversized = "x".repeat(crate::language::MAX_SOURCE_FILE_BYTES as usize + 1);
+        let error = list_symbols_in_file_with_source_filtered_with_timeout(
+            &workspace, &target, &oversized, 10, None, None, None,
+        )
+        .expect_err("oversized inline sources should be rejected before parsing");
+
+        assert!(error.to_string().contains("source text too large"));
+
+        fs::remove_dir_all(&workspace).expect("temporary workspace should be removed");
+    }
 }

@@ -6,6 +6,7 @@ use super::{
     patch_ast_node_at_position_with_timeout, patch_ast_node_from_path_with_timeout,
     patch_ast_node_with_timeout, temporary_dir,
 };
+use crate::language::MAX_SOURCE_FILE_BYTES;
 
 const SOURCE: &str = "def sample():\n    return 1\n";
 const REPLACEMENT: &str = "def sample():\n    return 2\n";
@@ -154,6 +155,35 @@ fn timed_blocked_path_patch_does_not_write_source() {
     );
 
     fs::remove_dir_all(workspace).expect("fixture directory should be removed");
+}
+
+#[test]
+fn oversized_inline_patch_rejected_before_patch_work() {
+    let oversized = "x".repeat(MAX_SOURCE_FILE_BYTES as usize + 1);
+    let errors = [
+        patch_ast_node_with_timeout(
+            Path::new("sample.py"),
+            &oversized,
+            "sample",
+            REPLACEMENT,
+            None,
+            Some(MAX_PATCH_TIMEOUT_MS),
+        )
+        .expect_err("oversized inline semantic patches should be rejected"),
+        patch_ast_node_at_position_with_timeout(
+            Path::new("sample.py"),
+            &oversized,
+            &Position { row: 0, column: 4 },
+            REPLACEMENT,
+            None,
+            Some(MAX_PATCH_TIMEOUT_MS),
+        )
+        .expect_err("oversized inline position patches should be rejected"),
+    ];
+
+    for error in errors {
+        assert!(error.to_string().contains("source text too large"));
+    }
 }
 
 #[test]

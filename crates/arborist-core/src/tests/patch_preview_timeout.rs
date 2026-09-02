@@ -169,6 +169,35 @@ fn oversized_path_patch_preview_fails_closed_before_patch_work() {
 }
 
 #[test]
+fn oversized_inline_patch_preview_rejected_before_patch_work() {
+    let oversized = "x".repeat(MAX_SOURCE_FILE_BYTES as usize + 1);
+    let errors = [
+        preview_patch_ast_node_with_timeout(
+            Path::new("sample.py"),
+            &oversized,
+            "sample",
+            REPLACEMENT,
+            None,
+            Some(MAX_PATCH_PREVIEW_TIMEOUT_MS),
+        )
+        .expect_err("oversized inline semantic previews should be rejected"),
+        preview_patch_ast_node_at_position_with_timeout(
+            Path::new("sample.py"),
+            &oversized,
+            &Position { row: 0, column: 4 },
+            REPLACEMENT,
+            None,
+            Some(MAX_PATCH_PREVIEW_TIMEOUT_MS),
+        )
+        .expect_err("oversized inline position previews should be rejected"),
+    ];
+
+    for error in errors {
+        assert!(error.to_string().contains("source text too large"));
+    }
+}
+
+#[test]
 fn timed_c_patch_preview_preserves_reference_validation() {
     let source = "int helper(void) { return 1; }\nint sample(void) { return helper(); }\n";
     let replacement = "int sample(void) { return helper() + 1; }";
