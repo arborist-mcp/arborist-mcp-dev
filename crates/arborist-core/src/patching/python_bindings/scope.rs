@@ -435,6 +435,7 @@ fn collect_python_named_expression_symbols_with_deadline(
     symbols: &mut Vec<PythonAccessibleSymbol>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let mut collection_error: Option<anyhow::Error> = None;
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() != "named_expression" {
             return;
@@ -471,13 +472,23 @@ fn collect_python_named_expression_symbols_with_deadline(
                 });
             }
         };
-        visit_tree(left, &mut target_callback);
+        match deadline {
+            Some(deadline) => {
+                if let Err(error) = visit_tree_with_deadline(left, &mut target_callback, deadline) {
+                    collection_error = Some(error);
+                }
+            }
+            None => visit_tree(left, &mut target_callback),
+        };
     };
     match deadline {
-        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline),
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline)?,
         None => {
             visit_tree(node, &mut callback);
-            Ok(())
         }
     }
+    if let Some(error) = collection_error {
+        return Err(error);
+    }
+    Ok(())
 }
