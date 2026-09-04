@@ -711,20 +711,24 @@ fn parse_document_rejects_oversized_source_overlays() {
 }
 
 #[test]
-fn lua_adapter_exposes_tree_query_capabilities_only() {
+fn lua_adapter_exposes_supported_capabilities_only() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Lua).unwrap();
 
     assert_eq!(descriptor.display_name, "Lua");
     assert_eq!(descriptor.extensions, &["lua"]);
-    assert_eq!(descriptor.analysis_revision, "lua-parse-v1");
+    assert_eq!(descriptor.analysis_revision, "lua-skeleton-v2");
     assert!(
         descriptor
             .capabilities
             .contains(LanguageCapabilities::TREE_QUERY)
     );
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::SEMANTIC_SKELETON)
+    );
     for capability in [
-        LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,

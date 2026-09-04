@@ -13,6 +13,7 @@ pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod javascript;
 pub(crate) mod kotlin;
+pub(crate) mod lua;
 mod paths;
 pub(crate) mod python;
 mod python_identity;
