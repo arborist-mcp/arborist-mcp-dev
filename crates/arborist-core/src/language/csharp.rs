@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{node_text, normalize_absolute_path, parse_document, parse_document_with_timeout};
+use super::{
+    node_text, normalize_absolute_path, parse_document, parse_document_with_timeout, read_source,
+};
 use crate::deadline::DeadlineCheck;
 
 pub(crate) fn csharp_local_file_dependency_paths(
@@ -254,7 +256,7 @@ fn csharp_candidate_declares(
     predicate: impl FnOnce(&crate::model::SemanticSkeleton) -> bool,
 ) -> Result<bool> {
     check_local_file_dependency_deadline(deadline)?;
-    let Ok(source) = fs::read_to_string(candidate) else {
+    let Ok(source) = read_source(candidate) else {
         return Ok(false);
     };
     check_local_file_dependency_deadline(deadline)?;
@@ -1609,6 +1611,22 @@ class Caller {}
                 .contains("test deadline expired during extracting local file dependencies")
         );
         assert!(deadline.checks.get() >= 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_oversized_candidate_sources() {
+        let root = temporary_dir();
+        let candidate = root.join("Helper.cs");
+        let file = fs::File::create(&candidate).unwrap();
+        file.set_len(crate::language::MAX_SOURCE_FILE_BYTES + 1)
+            .unwrap();
+        drop(file);
+
+        assert!(
+            !super::csharp_candidate_declares(&candidate, None, |_| true)
+                .expect("oversized C# candidates should be ignored")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{node_text, normalize_absolute_path, parse_document, parse_document_with_timeout};
+use super::{
+    node_text, normalize_absolute_path, parse_document, parse_document_with_timeout, read_source,
+};
 use crate::deadline::DeadlineCheck;
 
 pub(crate) fn kotlin_local_file_dependency_paths(
@@ -249,7 +251,7 @@ fn candidate_declares_package(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<bool> {
     check_local_file_dependency_deadline(deadline)?;
-    let Ok(source) = fs::read_to_string(candidate) else {
+    let Ok(source) = read_source(candidate) else {
         return Ok(false);
     };
     check_local_file_dependency_deadline(deadline)?;
@@ -414,6 +416,24 @@ mod tests {
                 .contains("test deadline expired during extracting local file dependencies")
         );
         assert!(deadline.checks.get() >= 5);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_oversized_package_candidate_files() {
+        let root = temporary_dir();
+        let package_dir = root.join("src/com/example");
+        let candidate = package_dir.join("Helper.kt");
+        fs::create_dir_all(&package_dir).unwrap();
+        let file = fs::File::create(&candidate).unwrap();
+        file.set_len(crate::language::MAX_SOURCE_FILE_BYTES + 1)
+            .unwrap();
+        drop(file);
+
+        assert!(
+            !kotlin_package_directory_contains_source_file(&package_dir, "com.example", None)
+                .expect("oversized Kotlin candidates should be ignored")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

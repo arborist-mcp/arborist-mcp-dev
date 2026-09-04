@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{node_text, normalize_absolute_path, parse_document, parse_document_with_timeout};
+use super::{
+    node_text, normalize_absolute_path, parse_document, parse_document_with_timeout, read_source,
+};
 use crate::deadline::DeadlineCheck;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -608,7 +610,7 @@ fn resolve_unique_java_default_package_source_path(
 }
 
 fn candidate_declares_default_package(candidate: &Path) -> bool {
-    let Ok(source) = fs::read_to_string(candidate) else {
+    let Ok(source) = read_source(candidate) else {
         return false;
     };
     let Ok(document) = parse_document(candidate, &source) else {
@@ -663,7 +665,7 @@ fn candidate_declares_import_package(candidate: &Path, import_path: &str) -> boo
 }
 
 fn candidate_declares_package(candidate: &Path, expected_package: &str) -> bool {
-    let Ok(source) = fs::read_to_string(candidate) else {
+    let Ok(source) = read_source(candidate) else {
         return false;
     };
     let Ok(document) = parse_document(candidate, &source) else {
@@ -1068,7 +1070,7 @@ fn read_java_dependency_candidate_with_deadline(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<JavaDependencyCandidate>> {
     check_local_file_dependency_deadline(deadline)?;
-    let Ok(source) = fs::read_to_string(candidate) else {
+    let Ok(source) = read_source(candidate) else {
         return Ok(None);
     };
     check_local_file_dependency_deadline(deadline)?;
@@ -1214,6 +1216,28 @@ mod tests {
                 .contains("test deadline expired during extracting local file dependencies")
         );
         assert!(deadline.checks.get() >= 6);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_oversized_package_candidate_files() {
+        let root = temporary_dir();
+        let package_dir = root.join("src/com/example");
+        let candidate = package_dir.join("Helper.java");
+        fs::create_dir_all(&package_dir).unwrap();
+        let file = fs::File::create(&candidate).unwrap();
+        file.set_len(crate::language::MAX_SOURCE_FILE_BYTES + 1)
+            .unwrap();
+        drop(file);
+
+        assert!(
+            !java_package_directory_contains_source_file_with_deadline(
+                &package_dir,
+                "com.example",
+                None,
+            )
+            .expect("oversized Java candidates should be ignored")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
