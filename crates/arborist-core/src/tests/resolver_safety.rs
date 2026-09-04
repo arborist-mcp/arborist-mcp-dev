@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::language::LanguageCapabilities;
 use crate::language::builtin_language_registry;
 use crate::model::{LanguageId, TraceDirection};
 use crate::symbol_index_model::symbol_base_name_ref;
@@ -18,6 +19,13 @@ fn registered_languages() -> Vec<LanguageId> {
     builtin_language_registry().language_ids().collect()
 }
 
+fn advertises_capability(language_id: LanguageId, required: LanguageCapabilities) -> bool {
+    builtin_language_registry()
+        .descriptor(language_id)
+        .expect("every registered language must have a descriptor")
+        .capabilities
+        .contains(required)
+}
 fn sample_path(language_id: LanguageId) -> PathBuf {
     let registry = builtin_language_registry();
     let descriptor = registry
@@ -55,6 +63,7 @@ fn caller_with_helper(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\nfun helper(value: Int): Int = value + 1\n\nfun orchestrate(value: Int): Int = helper(value)\n"
         }
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -87,6 +96,7 @@ fn caller_with_unresolved_call(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\nfun orchestrate(value: Int): Int = missing_helper(value)\n"
         }
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -107,6 +117,7 @@ fn helper_only(language_id: LanguageId) -> &'static str {
             "package demo;\n\npublic final class Demo {\n    static int helper(int value) {\n        return value + 1;\n    }\n}\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun helper(value: Int): Int = value + 1\n",
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -134,6 +145,9 @@ fn orchestrate_semantic_path(workspace: &Path, base_name: &str) -> String {
 #[test]
 fn clear_same_language_targets_resolve_and_persisted_graphs_agree() {
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::REFERENCE_TRACE) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let file_name = sample_path(language_id)
             .file_name()
@@ -179,6 +193,9 @@ fn clear_same_language_targets_resolve_and_persisted_graphs_agree() {
 #[test]
 fn unresolved_names_produce_no_accidental_edges_for_every_language() {
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::REFERENCE_TRACE) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let file_name = sample_path(language_id)
             .file_name()
@@ -208,6 +225,9 @@ fn unresolved_names_produce_no_accidental_edges_for_every_language() {
 #[test]
 fn cross_language_matching_is_disabled_for_every_language() {
     for callee_language in registered_languages() {
+        if !advertises_capability(callee_language, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         fs::write(
             dir.join("caller.py"),

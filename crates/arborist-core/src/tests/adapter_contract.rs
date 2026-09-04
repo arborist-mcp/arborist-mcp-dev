@@ -17,6 +17,14 @@ fn registered_languages() -> Vec<LanguageId> {
     builtin_language_registry().language_ids().collect()
 }
 
+fn advertises_capability(language_id: LanguageId, required: LanguageCapabilities) -> bool {
+    builtin_language_registry()
+        .descriptor(language_id)
+        .expect("every registered language must have a descriptor")
+        .capabilities
+        .contains(required)
+}
+
 fn sample_path(language_id: LanguageId) -> std::path::PathBuf {
     let registry = builtin_language_registry();
     let descriptor = registry
@@ -137,6 +145,11 @@ public final class Broken {
 }
 "
         }
+        LanguageId::Lua => {
+            "local function broken(
+    return
+"
+        }
     }
 }
 
@@ -210,6 +223,7 @@ fn sample_source(language_id: LanguageId) -> &'static str {
             "package demo;\n\npublic final class Demo {\n    public static int compute(int value) {\n        return value + 1;\n    }\n}\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun compute(value: Int): Int = value + 1\n",
+        LanguageId::Lua => "local function compute(value)\n    return value + 1\nend\n",
     }
 }
 
@@ -238,6 +252,7 @@ fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
             "public static int compute(int value) {\n        return value + 2;\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = value + 2\n",
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -261,6 +276,7 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
             "public static int compute(int value) {\n        return missing(value);\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = missing(value)\n",
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -310,6 +326,7 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_direct_calls.kt"
         )),
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -359,6 +376,7 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_unresolved_calls.kt"
         )),
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -382,6 +400,7 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
             "package demo; public final class Demo { public static int caller(int value) { return compute(value); } }\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun caller(value: Int): Int = compute(value)\n",
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -553,6 +572,7 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\n/* café */ fun compute(value: Int): Int = value + 1\n"
         }
+        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
     }
 }
 
@@ -594,6 +614,9 @@ fn every_language_builds_a_valid_semantic_skeleton() {
     use crate::semantic::get_semantic_skeleton_with_deadline;
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SEMANTIC_SKELETON) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = sample_source(language_id);
         let document = parse_document(&path, source)
@@ -682,6 +705,9 @@ fn symbol_extraction_is_stable_across_unchanged_source() {
     use crate::symbol_extractor::index_symbols_from_document;
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = sample_source(language_id);
         let document = parse_document(&path, source)
@@ -714,6 +740,9 @@ fn extracted_symbols_satisfy_range_and_name_invariants() {
     use crate::symbol_extractor::index_symbols_from_document;
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = sample_source(language_id);
         let document = parse_document(&path, source)
@@ -756,6 +785,9 @@ fn utf8_positions_resolve_symbols_consistently_for_every_language() {
     };
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = utf8_position_contract_source(language_id);
         let symbol_name = utf8_position_contract_symbol_base_name(language_id);
@@ -1028,6 +1060,9 @@ fn persisted_indexes_reload_and_reject_stale_language_revisions_for_every_langua
     use crate::{read_symbol_from_index, rebuild_symbol_index};
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let relative_path = sample_path(language_id);
         let path = dir.join(
@@ -1083,6 +1118,9 @@ fn vfs_overlay_reads_match_persisted_index_source_overlays_for_every_language() 
     use crate::{VirtualFileSystem, read_symbol_from_index_with_source, rebuild_symbol_index};
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let relative_path = sample_path(language_id);
         let path = dir.join(
@@ -1263,6 +1301,9 @@ fn indexed_symbols_are_reused_across_rebuilds_for_every_language() {
     let dir = super::support::temporary_dir();
     let mut expected_files = 0;
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = sample_source(language_id);
         let file_name = path.file_name().expect("sample path must have a file name");
@@ -1299,6 +1340,9 @@ fn persisted_symbol_ids_remain_stable_across_unchanged_rebuilds_for_every_langua
     use crate::{read_symbol_from_index, rebuild_symbol_index};
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let path = dir.join(sample_path(language_id).file_name().unwrap());
         let source = sample_source(language_id);
@@ -1342,6 +1386,9 @@ fn incremental_refresh_reindexes_changed_source_for_every_language() {
     use crate::{read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file};
 
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let dir = super::support::temporary_dir();
         let path = dir.join(sample_path(language_id).file_name().unwrap());
         let source = sample_source(language_id);
@@ -1397,6 +1444,9 @@ fn symbol_extraction_respects_expired_deadlines_for_every_language() {
         timeout_ms: Some(1),
     };
     for language_id in registered_languages() {
+        if !advertises_capability(language_id, LanguageCapabilities::SYMBOL_INDEX) {
+            continue;
+        }
         let path = sample_path(language_id);
         let source = sample_source(language_id);
         let document = parse_document(&path, source)
