@@ -112,6 +112,16 @@ arborist-index-watch --workspace-root . --db-path .\symbols.db --check
 
 Use `--config .\watch.json` to watch multiple workspace/index pairs. See the [development guide](docs/development.md) for flags, health summaries, and CI behavior.
 
+## Tool Catalog
+
+The generated [tool catalog](docs/tool-catalog.json) lists every MCP tool. As of this revision, `tools/list` returns 58 tools:
+
+- Read tools: 29, including semantic skeletons, symbol reads, patch previews, and graph-backed read bundles.
+- Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.
+- VFS tools: 10, including open/change/close, virtual patching, and commit/discard.
+- Index tools: 9, covering register, list, inspect, migrate, rebuild, and symbol-index refresh.
+- Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
+
 ## Development
 
 For the normal local loop:
@@ -120,10 +130,33 @@ For the normal local loop:
 .\scripts\test.ps1 -Suite inner-loop
 ```
 
+Targeted Python and native gateway suites keep the full gate faster to iterate:
+
+```powershell
+.\scripts\test.ps1 -Suite python
+.\scripts\test.ps1 -Suite python-fast
+.\scripts\test.ps1 -Suite python-native
+.\scripts\test.ps1 -Suite rust,inner-loop -ShowPlan
+```
+
+Use `python scripts/python_suite_manifest.py` to inspect how those suite groups are built.
+
 For the full gate:
 
 ```powershell
 .\scripts\check.ps1
+```
+
+Focused check profiles:
+
+```powershell
+.\scripts\check.ps1 -Profile python-fast
+.\scripts\check.ps1 -Profile gateway-fast
+.\scripts\check.ps1 -Profile gateway-native
+.\scripts\check.ps1 -Profile python-discovery
+.\scripts\check.ps1 -Profile gateway-smoke
+.\scripts\check.ps1 -Profile python-native
+.\scripts\check.ps1 -Profile full,python-native -ShowPlan
 ```
 
 Useful direct commands:
