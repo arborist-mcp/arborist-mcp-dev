@@ -45,6 +45,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("JAVA", LanguageId::Java),
         ("KT", LanguageId::Kotlin),
         ("KTS", LanguageId::Kotlin),
+        ("LUA", LanguageId::Lua),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -109,6 +110,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "go",
             "java",
             "kotlin",
+            "lua",
         ]
     );
 }
@@ -127,6 +129,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Go, "go"),
         (LanguageId::Java, "java"),
         (LanguageId::Kotlin, "kotlin"),
+        (LanguageId::Lua, "lua"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -705,6 +708,53 @@ fn parse_document_rejects_oversized_source_overlays() {
         .err()
         .expect("oversized source overlays should be rejected");
     assert!(error.to_string().contains("source text too large"));
+}
+
+#[test]
+fn lua_adapter_exposes_tree_query_capabilities_only() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::Lua).unwrap();
+
+    assert_eq!(descriptor.display_name, "Lua");
+    assert_eq!(descriptor.extensions, &["lua"]);
+    assert_eq!(descriptor.analysis_revision, "lua-parse-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(
+            !descriptor.capabilities.contains(capability),
+            "Lua must not claim {capability:?} until a real adapter slice exists"
+        );
+    }
+}
+
+#[test]
+fn parse_document_uses_lua_grammar_and_recovers_from_invalid_source() {
+    let path = Path::new("sample.lua");
+    let source = "local function compute(value)
+    return value + 1
+end
+
+return compute(1)
+";
+    let document = parse_document(path, source).expect("Lua source should parse");
+    assert_eq!(document.language_id, LanguageId::Lua);
+    assert!(!document.tree.root_node().has_error());
+
+    let malformed =
+        parse_document(path, "local function compute(").expect("malformed Lua must not panic");
+    assert_eq!(malformed.language_id, LanguageId::Lua);
+    assert!(malformed.tree.root_node().has_error());
 }
 
 #[test]

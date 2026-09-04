@@ -21,6 +21,7 @@ const GO_EXTENSIONS: &[&str] = &["go"];
 const JAVA_EXTENSIONS: &[&str] = &["java"];
 const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 const CSHARP_EXTENSIONS: &[&str] = &["cs"];
+const LUA_EXTENSIONS: &[&str] = &["lua"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -231,7 +232,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 11] = [
+        let adapters: [&'static dyn LanguageAdapter; 12] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -243,6 +244,7 @@ impl LanguageRegistry {
             &JAVA_ADAPTER,
             &KOTLIN_ADAPTER,
             &CSHARP_ADAPTER,
+            &LUA_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -371,6 +373,7 @@ fn language_family_id(language_id: LanguageId) -> u8 {
         LanguageId::Java => 5,
         LanguageId::Kotlin => 6,
         LanguageId::CSharp => 7,
+        LanguageId::Lua => 8,
     }
 }
 
@@ -387,6 +390,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Go => "go",
         LanguageId::Java => "java",
         LanguageId::Kotlin => "kotlin",
+        LanguageId::Lua => "lua",
     }
 }
 
@@ -532,6 +536,14 @@ static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "csharp-file-dependencies-v36",
     grammar: csharp_grammar,
 };
+static LUA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Lua,
+    display_name: "Lua",
+    extensions: LUA_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "lua-parse-v1",
+    grammar: lua_grammar,
+};
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
@@ -569,6 +581,9 @@ static CSHARP_ADAPTER: CSharpAdapter = CSharpAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &CSHARP_DESCRIPTOR,
     },
+};
+static LUA_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &LUA_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -2629,6 +2644,10 @@ fn kotlin_grammar() -> Language {
 
 fn csharp_grammar() -> Language {
     tree_sitter_c_sharp::LANGUAGE.into()
+}
+
+fn lua_grammar() -> Language {
+    tree_sitter_lua::LANGUAGE.into()
 }
 
 #[cfg(test)]
