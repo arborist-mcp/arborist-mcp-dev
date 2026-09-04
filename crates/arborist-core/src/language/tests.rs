@@ -717,7 +717,7 @@ fn lua_adapter_exposes_supported_capabilities_only() {
 
     assert_eq!(descriptor.display_name, "Lua");
     assert_eq!(descriptor.extensions, &["lua"]);
-    assert_eq!(descriptor.analysis_revision, "lua-skeleton-v2");
+    assert_eq!(descriptor.analysis_revision, "lua-index-v3");
     assert!(
         descriptor
             .capabilities
@@ -728,8 +728,12 @@ fn lua_adapter_exposes_supported_capabilities_only() {
             .capabilities
             .contains(LanguageCapabilities::SEMANTIC_SKELETON)
     );
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::SYMBOL_INDEX)
+    );
     for capability in [
-        LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,

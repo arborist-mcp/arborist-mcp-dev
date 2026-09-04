@@ -400,7 +400,9 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
             "package demo; public final class Demo { public static int caller(int value) { return compute(value); } }\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun caller(value: Int): Int = compute(value)\n",
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "--[[ café ]] local function compute(value)\n    return value + 1\nend\n"
+        }
     }
 }
 
@@ -572,7 +574,9 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\n/* café */ fun compute(value: Int): Int = value + 1\n"
         }
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "--[[ café ]] local function compute(value)\n    return value + 1\nend\n"
+        }
     }
 }
 

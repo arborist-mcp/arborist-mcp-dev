@@ -541,9 +541,11 @@ static LUA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Lua",
     extensions: LUA_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "lua-skeleton-v2",
+    analysis_revision: "lua-index-v3",
     grammar: lua_grammar,
 };
 
@@ -1468,8 +1470,12 @@ impl LanguageAdapter for LuaAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::lua::index_lua_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 struct JavaAdapter {
