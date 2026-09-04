@@ -18,3 +18,5 @@ AGENTS.md
 
 .target-check/
 .tmp-check/
+/docs/project-improvement-plan.md
+/docs/multi-language-support-design.md

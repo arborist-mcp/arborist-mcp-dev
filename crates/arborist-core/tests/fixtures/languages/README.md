@@ -1,7 +1,7 @@
 # Language fixtures
 
 Small, targeted source fixtures used by the multi-language adapter contract
-suite (design doc §17.2). Each file stays small and exercises one concern so a
+suite. Each file stays small and exercises one concern so a
 contract test can consume it directly.
 
 ## Layout
