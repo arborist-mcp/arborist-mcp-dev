@@ -121,6 +121,14 @@ completed item can land in its own commit unless two changes are inseparable.
   replay-validation modules while retaining shared setup helpers and exact
   test behavior.
 
+- [x] Ignore local ad-hoc check build directories (`.target-check/`, `.tmp-check/`) so a
+  clean git status remain visible after alternative-target test runs.
+
+- [x] Use the guarded `read_source` helper for Java, Kotlin, and C# local dependency
+  candidate reads so oversized or invalid UTF-8 candidate files are rejected before
+  being loaded into memory.
+
+
 ### P2: Core Architecture Improvements
 
 - [x] Continue splitting large Rust surfaces along existing module boundaries:
