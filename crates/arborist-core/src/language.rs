@@ -5,6 +5,7 @@ mod io;
 mod java;
 mod javascript;
 mod kotlin;
+mod lua;
 mod parser;
 mod paths;
 mod positions;
@@ -57,6 +58,10 @@ pub(crate) use javascript::{
 };
 pub(crate) use kotlin::{
     kotlin_local_file_dependency_paths, kotlin_local_file_dependency_paths_with_deadline,
+};
+
+pub(crate) use lua::{
+    lua_local_file_dependency_paths, lua_local_file_dependency_paths_with_deadline,
 };
 pub use parser::{
     ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,

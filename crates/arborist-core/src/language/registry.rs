@@ -543,9 +543,10 @@ static LUA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0,
     ),
-    analysis_revision: "lua-index-v3",
+    analysis_revision: "lua-deps-v4",
     grammar: lua_grammar,
 };
 
@@ -1439,7 +1440,7 @@ impl LanguageAdapter for LuaAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1448,8 +1449,8 @@ impl LanguageAdapter for LuaAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::lua_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn collect_local_file_dependencies_with_deadline(
@@ -1459,8 +1460,8 @@ impl LanguageAdapter for LuaAdapter {
         source: &str,
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies_with_deadline(path, root, source, deadline)
+        crate::language::lua_local_file_dependency_paths_with_deadline(path, root, source, deadline)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

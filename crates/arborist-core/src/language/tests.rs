@@ -717,7 +717,7 @@ fn lua_adapter_exposes_supported_capabilities_only() {
 
     assert_eq!(descriptor.display_name, "Lua");
     assert_eq!(descriptor.extensions, &["lua"]);
-    assert_eq!(descriptor.analysis_revision, "lua-index-v3");
+    assert_eq!(descriptor.analysis_revision, "lua-deps-v4");
     assert!(
         descriptor
             .capabilities
@@ -733,8 +733,12 @@ fn lua_adapter_exposes_supported_capabilities_only() {
             .capabilities
             .contains(LanguageCapabilities::SYMBOL_INDEX)
     );
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::FILE_DEPENDENCIES)
+    );
     for capability in [
-        LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,

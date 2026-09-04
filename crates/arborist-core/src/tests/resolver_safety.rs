@@ -117,7 +117,7 @@ fn helper_only(language_id: LanguageId) -> &'static str {
             "package demo;\n\npublic final class Demo {\n    static int helper(int value) {\n        return value + 1;\n    }\n}\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun helper(value: Int): Int = value + 1\n",
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => "local function helper(value)\n    return value + 1\nend\n",
     }
 }
 
