@@ -150,6 +150,10 @@ public final class Broken {
     return
 "
         }
+        LanguageId::Php => {
+            "<?php\nfunction broken(
+"
+        }
     }
 }
 
@@ -184,8 +188,11 @@ fn oversized_sources_are_rejected_before_parsing() {
 fn parse_deadlines_are_enforced_for_every_language() {
     use crate::language::parse_document_with_timeout;
 
-    let source = "(".repeat(128 * 1024);
     for language_id in registered_languages() {
+        let source = match language_id {
+            LanguageId::Php => format!("<?php {}", "(".repeat(128 * 1024)),
+            _ => "(".repeat(128 * 1024),
+        };
         let path = sample_path(language_id);
         let error = match parse_document_with_timeout(&path, &source, 1) {
             Ok(_) => panic!(
@@ -221,6 +228,9 @@ fn sample_source(language_id: LanguageId) -> &'static str {
         }
         LanguageId::Java => {
             "package demo;\n\npublic final class Demo {\n    public static int compute(int value) {\n        return value + 1;\n    }\n}\n"
+        }
+        LanguageId::Php => {
+            "<?php\nfunction compute(int $value): int {\n    return $value + 1;\n}\n"
         }
         LanguageId::Kotlin => "package demo\n\nfun compute(value: Int): Int = value + 1\n",
         LanguageId::Lua => "local function compute(value)\n    return value + 1\nend\n",
@@ -258,6 +268,9 @@ fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
 end
 "
         }
+        LanguageId::Php => {
+            "<?php\nfunction compute(int $value): int {\n    return $value + 2;\n}\n"
+        }
     }
 }
 
@@ -281,6 +294,9 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
             "public static int compute(int value) {\n        return missing(value);\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = missing(value)\n",
+        LanguageId::Php => {
+            "<?php\nfunction compute(int $value) {\n    return missing($value);\n}\n"
+        }
         LanguageId::Lua => {
             "local function compute(value)
     return missing(value)
@@ -336,6 +352,9 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_direct_calls.kt"
         )),
+        LanguageId::Php => {
+            "<?php\nfunction compute(int $value) {\n    return $value + 1;\n}\n\nfunction orchestrate(int $value) {\n    return compute($value);\n}\n"
+        }
         LanguageId::Lua => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/lua/resolver_direct_calls.lua"
@@ -385,6 +404,9 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/java/resolver_unresolved_calls.java"
         )),
+        LanguageId::Php => {
+            "<?php\nfunction orchestrate(int $value) {\n    return missing_helper($value);\n}\n"
+        }
         LanguageId::Kotlin => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_unresolved_calls.kt"
@@ -410,6 +432,7 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
         LanguageId::Tsx => {
             "export function caller(value: number) { return <div>{compute(value)}</div>; }\n"
         }
+        LanguageId::Php => "<?php\nfunction caller(int $value) {\n    return compute($value);\n}\n",
         LanguageId::Rust => "pub fn caller(value: i32) -> i32 { compute(value) }\n",
         LanguageId::Go => "package demo\n\nfunc caller(value int) int { return compute(value) }\n",
         LanguageId::Java => {
@@ -583,6 +606,9 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Rust => "/* café */ pub fn compute(value: i32) -> i32 { value + 1 }\n",
         LanguageId::Go => {
             "package demo\n\n/* café */ func compute(value int) int { return value + 1 }\n"
+        }
+        LanguageId::Php => {
+            "<?php /* café */ function compute(int $value) {\n    return $value + 1;\n}\n"
         }
         LanguageId::Java => {
             "/* café */ package demo; public final class Demo { public static int compute(int value) { return value + 1; } }\n"

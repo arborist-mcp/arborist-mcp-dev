@@ -28,6 +28,7 @@ class GatewayRuntimeCatalogTestsMixin:
                 "java",
                 "kotlin",
                 "lua",
+                "php",
             ],
         )
 

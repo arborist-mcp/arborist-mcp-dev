@@ -46,6 +46,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("KT", LanguageId::Kotlin),
         ("KTS", LanguageId::Kotlin),
         ("LUA", LanguageId::Lua),
+        ("PHP", LanguageId::Php),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -111,6 +112,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "java",
             "kotlin",
             "lua",
+            "php",
         ]
     );
 }
@@ -130,6 +132,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Java, "java"),
         (LanguageId::Kotlin, "kotlin"),
         (LanguageId::Lua, "lua"),
+        (LanguageId::Php, "php"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),

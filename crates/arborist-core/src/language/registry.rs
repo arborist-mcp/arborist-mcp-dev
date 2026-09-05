@@ -22,6 +22,7 @@ const JAVA_EXTENSIONS: &[&str] = &["java"];
 const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 const CSHARP_EXTENSIONS: &[&str] = &["cs"];
 const LUA_EXTENSIONS: &[&str] = &["lua"];
+const PHP_EXTENSIONS: &[&str] = &["php"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -232,7 +233,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 12] = [
+        let adapters: [&'static dyn LanguageAdapter; 13] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -245,6 +246,7 @@ impl LanguageRegistry {
             &KOTLIN_ADAPTER,
             &CSHARP_ADAPTER,
             &LUA_ADAPTER,
+            &PHP_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -374,6 +376,7 @@ fn language_family_id(language_id: LanguageId) -> u8 {
         LanguageId::Kotlin => 6,
         LanguageId::CSharp => 7,
         LanguageId::Lua => 8,
+        LanguageId::Php => 9,
     }
 }
 
@@ -391,6 +394,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Java => "java",
         LanguageId::Kotlin => "kotlin",
         LanguageId::Lua => "lua",
+        LanguageId::Php => "php",
     }
 }
 
@@ -553,6 +557,15 @@ static LUA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     grammar: lua_grammar,
 };
 
+static PHP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Php,
+    display_name: "PHP",
+    extensions: PHP_EXTENSIONS,
+    capabilities: LanguageCapabilities(LanguageCapabilities::TREE_QUERY.0),
+    analysis_revision: "php-v1",
+    grammar: php_grammar,
+};
+
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
 static CPP_ADAPTER: CppAdapter = CppAdapter;
@@ -594,6 +607,10 @@ static LUA_ADAPTER: LuaAdapter = LuaAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &LUA_DESCRIPTOR,
     },
+};
+
+static PHP_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &PHP_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -2872,6 +2889,10 @@ fn csharp_grammar() -> Language {
 
 fn lua_grammar() -> Language {
     tree_sitter_lua::LANGUAGE.into()
+}
+
+fn php_grammar() -> Language {
+    tree_sitter_php::LANGUAGE_PHP.into()
 }
 
 #[cfg(test)]

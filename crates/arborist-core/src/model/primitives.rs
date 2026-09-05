@@ -27,6 +27,7 @@ pub enum LanguageId {
     Java,
     Kotlin,
     Lua,
+    Php,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
