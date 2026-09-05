@@ -28,6 +28,7 @@ fn expected_language_for_directory(name: &str) -> LanguageId {
         "csharp" => LanguageId::CSharp,
         "lua" => LanguageId::Lua,
         "php" => LanguageId::Php,
+        "swift" => LanguageId::Swift,
         other => panic!("unexpected language fixture directory {other:?}"),
     }
 }
@@ -49,6 +50,7 @@ fn language_fixture_tree_has_expected_directories() {
         "csharp",
         "lua",
         "php",
+        "swift",
     ] {
         let path = root.join(directory);
         assert!(
