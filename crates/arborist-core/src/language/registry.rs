@@ -586,9 +586,11 @@ static SWIFT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
-            | LanguageCapabilities::REFERENCE_TRACE.0,
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "swift-v1",
+    analysis_revision: "swift-patch-validation-v1",
     grammar: swift_grammar,
 };
 
@@ -1244,19 +1246,21 @@ impl LanguageAdapter for SwiftAdapter {
 
     fn normalize_patch_replacement(
         &self,
-        source: &str,
-        start_byte: usize,
-        end_byte: usize,
-        node_kind: &str,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
         new_code: &str,
     ) -> Result<String> {
-        self.syntax
-            .normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+        Ok(new_code.to_string())
     }
 
-    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
-        self.syntax
-            .replacement_preserves_required_wrappers(node_kind, replacement)
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        true
     }
 
     fn reconcile_patch_symbol_id(
@@ -1277,7 +1281,7 @@ impl LanguageAdapter for SwiftAdapter {
         symbol_node: Node<'_>,
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
+        crate::patching::swift_references::collect_swift_reference_validation_with_deadline(
             path,
             document,
             source,

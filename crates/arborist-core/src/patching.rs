@@ -17,6 +17,7 @@ mod python_visibility;
 mod reference_validation;
 mod result_builder;
 pub(crate) mod rust_references;
+pub(crate) mod swift_references;
 mod syntax_validation;
 mod target_resolution;
 
