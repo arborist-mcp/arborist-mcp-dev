@@ -24,6 +24,7 @@ tree-sitter-go.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-php.workspace = true
+tree-sitter-swift.workspace = true
 
 [dev-dependencies]
 proptest = "1.6"
