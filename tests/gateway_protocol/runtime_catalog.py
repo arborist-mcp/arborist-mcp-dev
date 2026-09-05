@@ -27,6 +27,7 @@ class GatewayRuntimeCatalogTestsMixin:
                 "go",
                 "java",
                 "kotlin",
+                "lua",
             ],
         )
 
