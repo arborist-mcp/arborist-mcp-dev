@@ -562,7 +562,9 @@ static PHP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "PHP",
     extensions: PHP_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
     analysis_revision: "php-v1",
     grammar: php_grammar,
@@ -1059,13 +1061,17 @@ impl LanguageAdapter for PhpAdapter {
 
     fn extract_symbols(
         &self,
-        _path: &Path,
-        _source: &str,
-        _document: &ParsedDocument,
-        _deadline: Option<&WorkspaceScanDeadline>,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(_path, _source, _document, _deadline)
+        crate::symbol_extractor::php::index_php_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 
     fn query_capture_owner(

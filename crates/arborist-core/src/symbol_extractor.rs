@@ -13,6 +13,7 @@ pub(crate) mod java;
 pub(crate) mod javascript;
 pub(crate) mod kotlin;
 pub(crate) mod lua;
+pub(crate) mod php;
 pub(crate) mod python;
 pub(crate) mod rust;
 
