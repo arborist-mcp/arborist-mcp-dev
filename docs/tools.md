@@ -182,7 +182,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   wildcard imports, and predeclared Java names are ignored, and unknown bare identifiers fail closed.
 - Lua: `.lua` — Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, conservative local-file dependency discovery for `require` and `dofile` string paths, conservative same-file bare direct-call tracing through file-level function declarations, structural patch targeting, and conservative same-file direct-call patch reference validation that skips `require`/`dofile` calls and shadowed parameters/local definitions; unknown and ambiguous same-file targets fail closed.
 - PHP: `.php` — Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, conservative local-file dependency discovery for `include`/`include_once`/`require`/`require_once` string paths, conservative same-file bare direct-call tracing through file-level function declarations, structural patch targeting,and conservative same-file direct-call patch reference validation; unknown and ambiguous same-file targets fail closed.
-- Swift: `.swift` — Tree-sitter parsing, raw query execution, and minimal semantic skeletons for top-level function declarations; no indexing, tracing, or patching yet.
+- Swift: `.swift` — Tree-sitter parsing, raw query execution, and minimal semantic skeletons and declaration indexing for top-level function declarations; no tracing or patching yet.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

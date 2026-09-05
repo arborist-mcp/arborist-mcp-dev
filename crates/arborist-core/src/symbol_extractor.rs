@@ -16,6 +16,7 @@ pub(crate) mod lua;
 pub(crate) mod php;
 pub(crate) mod python;
 pub(crate) mod rust;
+pub(crate) mod swift;
 
 pub(crate) fn index_symbols_from_document(
     path: &Path,

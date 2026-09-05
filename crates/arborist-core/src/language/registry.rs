@@ -583,7 +583,9 @@ static SWIFT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Swift",
     extensions: SWIFT_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
     analysis_revision: "swift-v1",
     grammar: swift_grammar,
@@ -1326,8 +1328,12 @@ impl LanguageAdapter for SwiftAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::swift::index_swift_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 struct RustAdapter {
