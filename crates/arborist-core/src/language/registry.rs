@@ -561,7 +561,9 @@ static PHP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Php,
     display_name: "PHP",
     extensions: PHP_EXTENSIONS,
-    capabilities: LanguageCapabilities(LanguageCapabilities::TREE_QUERY.0),
+    capabilities: LanguageCapabilities(
+        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+    ),
     analysis_revision: "php-v1",
     grammar: php_grammar,
 };
@@ -609,8 +611,10 @@ static LUA_ADAPTER: LuaAdapter = LuaAdapter {
     },
 };
 
-static PHP_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
-    descriptor: &PHP_DESCRIPTOR,
+static PHP_ADAPTER: PhpAdapter = PhpAdapter {
+    syntax: SyntaxOnlyAdapter {
+        descriptor: &PHP_DESCRIPTOR,
+    },
 };
 
 struct JavaScriptFamilyAdapter {
@@ -877,6 +881,203 @@ fn lua_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<Str
         current = candidate.parent();
     }
     Ok(None)
+}
+
+fn php_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if crate::semantic::php::is_php_symbol_node(candidate) {
+            return crate::semantic::php::php_symbol_path(candidate, source);
+        }
+        current = candidate.parent();
+    }
+    Ok(None)
+}
+
+struct PhpAdapter {
+    syntax: SyntaxOnlyAdapter,
+}
+
+impl LanguageAdapter for PhpAdapter {
+    fn descriptor(&self) -> &'static LanguageDescriptor {
+        self.syntax.descriptor()
+    }
+
+    fn build_semantic_skeleton(
+        &self,
+        path: &Path,
+        source: &str,
+        tree: &Tree,
+        depth_limit: usize,
+        expand_nodes: &[String],
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<SemanticSkeleton> {
+        crate::semantic::php::build_php_skeleton(
+            path,
+            source,
+            tree,
+            depth_limit,
+            expand_nodes,
+            deadline,
+        )
+    }
+
+    fn find_semantic_node<'tree>(
+        &self,
+        path: &Path,
+        tree: &'tree Tree,
+        source: &str,
+        target_path: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<Node<'tree>>> {
+        crate::semantic::php::find_php_semantic_node(path, tree, source, target_path, deadline)
+    }
+
+    fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            if crate::semantic::php::is_php_symbol_node(candidate) {
+                return Some(candidate);
+            }
+            current = candidate.parent();
+        }
+        None
+    }
+
+    fn position_symbol_identity(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        let semantic_path = php_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a PHP symbol with a stable semantic path")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        php_semantic_path_for_node(node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        php_semantic_path_for_node(node, source)
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        self.syntax
+            .requires_exact_symbol_id_for_ambiguous_semantic_paths()
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        self.syntax.query_owner_candidates(path, root, source)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        self.syntax.patch_replacement_node(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        Ok(new_code.to_string())
+    }
+
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        true
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        self.syntax
+            .reconcile_patch_symbol_id(semantic_target, resolved_path, resolved_symbol_id)
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        _path: &Path,
+        _document: &ParsedDocument,
+        _source: &str,
+        _symbol_node: Node<'_>,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        self.syntax.collect_patch_reference_validation(
+            _path,
+            _document,
+            _source,
+            _symbol_node,
+            _deadline,
+        )
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        self.syntax.supports_incremental_file_dependencies()
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        _path: &Path,
+        _root: Node<'_>,
+        _source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies(_path, _root, _source)
+    }
+
+    fn extract_symbols(
+        &self,
+        _path: &Path,
+        _source: &str,
+        _document: &ParsedDocument,
+        _deadline: Option<&WorkspaceScanDeadline>,
+    ) -> Result<Vec<IndexedSymbol>> {
+        self.syntax
+            .extract_symbols(_path, _source, _document, _deadline)
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        self.syntax
+            .query_capture_owner(path, source, node, candidates)
+    }
 }
 
 struct RustAdapter {

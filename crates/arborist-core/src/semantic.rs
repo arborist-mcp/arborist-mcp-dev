@@ -15,6 +15,7 @@ pub(crate) mod javascript;
 pub(crate) mod kotlin;
 pub(crate) mod lua;
 mod paths;
+pub(crate) mod php;
 pub(crate) mod python;
 mod python_identity;
 mod python_overloads;
