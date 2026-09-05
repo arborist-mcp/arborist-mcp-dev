@@ -564,7 +564,8 @@ static PHP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0,
     ),
     analysis_revision: "php-v1",
     grammar: php_grammar,
@@ -1046,17 +1047,28 @@ impl LanguageAdapter for PhpAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
         &self,
-        _path: &Path,
-        _root: Node<'_>,
-        _source: &str,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(_path, _root, _source)
+        crate::language::php_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
+    }
+
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        crate::language::php_local_file_dependency_paths_with_deadline(path, root, source, deadline)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(
