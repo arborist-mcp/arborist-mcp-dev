@@ -254,7 +254,7 @@ fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => "fun compute(value: Int): Int = value + 2\n",
         LanguageId::Lua => {
             "local function compute(value)
-    return value + 1
+    return value + 2
 end
 "
         }

@@ -717,7 +717,7 @@ fn lua_adapter_exposes_supported_capabilities_only() {
 
     assert_eq!(descriptor.display_name, "Lua");
     assert_eq!(descriptor.extensions, &["lua"]);
-    assert_eq!(descriptor.analysis_revision, "lua-trace-v5");
+    assert_eq!(descriptor.analysis_revision, "lua-patch-validation-v6");
     assert!(
         descriptor
             .capabilities
@@ -743,15 +743,16 @@ fn lua_adapter_exposes_supported_capabilities_only() {
             .capabilities
             .contains(LanguageCapabilities::REFERENCE_TRACE)
     );
-    for capability in [
-        LanguageCapabilities::PATCH_TARGETING,
-        LanguageCapabilities::PATCH_VALIDATION,
-    ] {
-        assert!(
-            !descriptor.capabilities.contains(capability),
-            "Lua must not claim {capability:?} until a real adapter slice exists"
-        );
-    }
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::PATCH_TARGETING)
+    );
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::PATCH_VALIDATION)
+    );
 }
 
 #[test]
