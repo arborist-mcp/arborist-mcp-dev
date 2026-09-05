@@ -8,7 +8,7 @@ This document is the execution-facing companion to [multi-language-support-desig
 3. **Phase B/C/D — add languages in batches.**
    - Batch B: PHP, Swift, Lua (minimal parse/skeleton/index/dependency(conservative)/trace(conservative)/targeting; validation only when real).
    - Batch C: Ruby, Shell, Bash (same MVP shape).
-   - Batch D: Zig, Haskell, Elixir (same MVP shape). 
+   - Batch D: Zig, Haskell, Elixir (same MVP shape).
    - Re-evaluate each grammar tree-sitter ABI/quality before each batch; defer a language if grammar is unavailable/incompatible.
 
 Each batch must deliver per language: `docs/tools.md` capability table row, `docs/language-gaps.md` row, fixtures under `crates/arborist-core/tests/fixtures/languages/<lang>/`, adapter/descriptor registration, and catalog/provenance sync. No batch may ship a claimed capability without tests.
