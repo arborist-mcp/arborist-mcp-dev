@@ -20,6 +20,7 @@ pub(crate) mod python;
 mod python_identity;
 mod python_overloads;
 pub(crate) mod rust;
+pub(crate) mod swift;
 
 pub(crate) use paths::{semantic_depth, semantic_parent_path, semantic_path};
 

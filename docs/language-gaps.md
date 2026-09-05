@@ -16,7 +16,7 @@ Arborist models language support through a `LanguageCapabilities` bitmask; every
 
 ## Current capability summary
 
-The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Python, C, C++, JavaScript/TypeScript/TSX, Rust, Go, Java, Kotlin, C#,and Lua/PHP. However, a green capability flag is not the same as deep behavioral coverage; many languages implement a conservative slice for a flag. This audit records the behavioral gaps that remain after the flag is set.
+The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Python, C, C++, JavaScript/TypeScript/TSX, Rust, Go, Java, Kotlin, C#,and Lua/PHP/Swift. However, a green capability flag is not the same as deep behavioral coverage; many languages implement a conservative slice for a flag. This audit records the behavioral gaps that remain after the flag is set.
 
 | Language | Known behavioral gaps | Suggested first work |
 | --- | --- | --- |
@@ -34,6 +34,7 @@ The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Pyt
 
 | Lua | No require/module multi-file function graph; only same-file bare direct function calls resolve; no overloads/scope qualification; patch validation remains conservative same-file direct-call only | Keep conservative slice; add fixtures for require/module/resolver extension flows when real |
 | PHP | No namespace/class/static method graph; only same-file bare top-level function calls resolve; no overloads/scope qualification; patch validation remains conservative same-file direct-call only | Keep conservative slice; add fixtures for namespace/class and resolver extension flows when real |
+| Swift | No class/type graph; only top-level `func` declarations produce semantic skeletons; no namespace/class/static/instance method graph, indexing, dependencies, tracing, or patch validation | Add fixtures for Swift top-level function skeletons;then extend with class/struct/extension scopes when real |
 ## What “Full” means here
 
 `FULL_CURRENT_SUPPORT` means the registry will dispatch all seven capability dimensions to the adapter. It does not claim:
