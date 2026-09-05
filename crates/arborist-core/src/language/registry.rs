@@ -545,9 +545,11 @@ static LUA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
             | LanguageCapabilities::FILE_DEPENDENCIES.0
-            | LanguageCapabilities::REFERENCE_TRACE.0,
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "lua-trace-v5",
+    analysis_revision: "lua-patch-validation-v6",
     grammar: lua_grammar,
 };
 
@@ -1383,14 +1385,13 @@ impl LanguageAdapter for LuaAdapter {
 
     fn normalize_patch_replacement(
         &self,
-        source: &str,
-        start_byte: usize,
-        end_byte: usize,
-        node_kind: &str,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
         new_code: &str,
     ) -> Result<String> {
-        self.syntax
-            .normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+        Ok(new_code.to_string())
     }
 
     fn replacement_preserves_required_wrappers(
@@ -1398,8 +1399,7 @@ impl LanguageAdapter for LuaAdapter {
         _node_kind: &str,
         _replacement: &str,
     ) -> bool {
-        self.syntax
-            .replacement_preserves_required_wrappers(_node_kind, _replacement)
+        true
     }
 
     fn reconcile_patch_symbol_id(
@@ -1420,7 +1420,7 @@ impl LanguageAdapter for LuaAdapter {
         symbol_node: Node<'_>,
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
+        crate::patching::lua_references::collect_lua_reference_validation_with_deadline(
             path,
             document,
             source,

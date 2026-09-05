@@ -6,6 +6,7 @@ pub(crate) mod go_references;
 pub(crate) mod java_references;
 pub(crate) mod javascript_references;
 pub(crate) mod kotlin_references;
+pub(crate) mod lua_references;
 mod python_bindings;
 mod python_imports;
 mod python_patterns;
