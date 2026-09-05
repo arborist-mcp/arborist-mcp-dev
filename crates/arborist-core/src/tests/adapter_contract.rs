@@ -353,7 +353,7 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             "/tests/fixtures/languages/kotlin/resolver_direct_calls.kt"
         )),
         LanguageId::Php => {
-            "<?php\nfunction compute(int $value) {\n    return $value + 1;\n}\n\nfunction orchestrate(int $value) {\n    return compute($value);\n}\n"
+            "<?php\nfunction compute(int $value) {\n    return $value + 1;\n}\n\nfunction caller(int $value) {\n    return compute($value);\n}\n"
         }
         LanguageId::Lua => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -405,7 +405,7 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             "/tests/fixtures/languages/java/resolver_unresolved_calls.java"
         )),
         LanguageId::Php => {
-            "<?php\nfunction orchestrate(int $value) {\n    return missing_helper($value);\n}\n"
+            "<?php\nfunction caller(int $value) {\n    return missing_helper($value);\n}\n"
         }
         LanguageId::Kotlin => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

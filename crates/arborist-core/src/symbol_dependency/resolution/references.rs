@@ -609,6 +609,24 @@ fn resolve_reference_path_with_deadline<'a>(
             .collect::<Vec<_>>();
         return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }
+    if language_id == Some(LanguageId::Php) {
+        if reference_name.is_empty() || reference_name.contains(['.', ':']) {
+            return Ok(None);
+        }
+        let candidates = name_index
+            .get(reference_name)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.file_path == source_symbol.file_path
+                    && candidate.node_kind == "function_definition"
+                    && candidate.semantic_path == reference_name
+            })
+            .collect::<Vec<_>>();
+        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+    }
     if language_id == Some(LanguageId::CSharp) {
         let Some(call_arity) = call_context.arity else {
             return Ok(None);
