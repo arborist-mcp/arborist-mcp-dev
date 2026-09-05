@@ -252,7 +252,12 @@ fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
             "public static int compute(int value) {\n        return value + 2;\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = value + 2\n",
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "local function compute(value)
+    return value + 1
+end
+"
+        }
     }
 }
 
@@ -276,7 +281,12 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
             "public static int compute(int value) {\n        return missing(value);\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = missing(value)\n",
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "local function compute(value)
+    return missing(value)
+end
+"
+        }
     }
 }
 
@@ -326,7 +336,10 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_direct_calls.kt"
         )),
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/lua/resolver_direct_calls.lua"
+        )),
     }
 }
 
@@ -376,7 +389,10 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_unresolved_calls.kt"
         )),
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/languages/lua/resolver_unresolved_calls.lua"
+        )),
     }
 }
 
@@ -401,7 +417,7 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
         }
         LanguageId::Kotlin => "package demo\n\nfun caller(value: Int): Int = compute(value)\n",
         LanguageId::Lua => {
-            "--[[ café ]] local function compute(value)\n    return value + 1\nend\n"
+            "--[[ café ]] local function caller(value)\n    return compute(value)\nend\n"
         }
     }
 }

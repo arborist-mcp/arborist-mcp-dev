@@ -63,7 +63,17 @@ fn caller_with_helper(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\nfun helper(value: Int): Int = value + 1\n\nfun orchestrate(value: Int): Int = helper(value)\n"
         }
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "local function helper(value)
+    return value + 1
+end
+
+
+function orchestrate(value)
+    return helper(value)
+end
+"
+        }
     }
 }
 
@@ -96,7 +106,12 @@ fn caller_with_unresolved_call(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => {
             "package demo\n\nfun orchestrate(value: Int): Int = missing_helper(value)\n"
         }
-        LanguageId::Lua => unreachable!("Lua does not advertise this capability"),
+        LanguageId::Lua => {
+            "function orchestrate(value)
+    return missing_helper(value)
+end
+"
+        }
     }
 }
 
