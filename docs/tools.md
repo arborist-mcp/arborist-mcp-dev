@@ -180,6 +180,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   declarations, or explicit single-name imports, while type annotations, field and method names,
   package-qualified type spellings, cast/instanceof/object-creation types, labels, annotation names,
   wildcard imports, and predeclared Java names are ignored, and unknown bare identifiers fail closed.
+- Lua: `.lua` — Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, conservative local-file dependency discovery for `require` and `dofile` string paths, conservative same-file bare direct-call tracing through file-level function declarations, structural patch targeting, and conservative same-file direct-call patch reference validation that skips `require`/`dofile` calls and shadowed parameters/local definitions; unknown and ambiguous same-file targets fail closed.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
