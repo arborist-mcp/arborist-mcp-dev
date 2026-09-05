@@ -30,6 +30,7 @@ class GatewayRuntimeCatalogTestsMixin:
                 "lua",
                 "php",
                 "swift",
+                "ruby",
             ],
         )
 

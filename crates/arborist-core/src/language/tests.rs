@@ -48,6 +48,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("LUA", LanguageId::Lua),
         ("PHP", LanguageId::Php),
         ("SWIFT", LanguageId::Swift),
+        ("RB", LanguageId::Ruby),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -115,6 +116,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "lua",
             "php",
             "swift",
+            "ruby",
         ]
     );
 }
@@ -136,6 +138,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Lua, "lua"),
         (LanguageId::Php, "php"),
         (LanguageId::Swift, "swift"),
+        (LanguageId::Ruby, "ruby"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -777,6 +780,19 @@ return compute(1)
     let malformed =
         parse_document(path, "local function compute(").expect("malformed Lua must not panic");
     assert_eq!(malformed.language_id, LanguageId::Lua);
+    assert!(malformed.tree.root_node().has_error());
+}
+
+#[test]
+fn parse_document_uses_ruby_grammar_and_recovers_from_invalid_source() {
+    let path = Path::new("sample.rb");
+    let source = "def compute(value)\n    value + 1\nend\n\ncompute(1)\n";
+    let document = parse_document(path, source).expect("Ruby source should parse");
+    assert_eq!(document.language_id, LanguageId::Ruby);
+    assert!(!document.tree.root_node().has_error());
+
+    let malformed = parse_document(path, "def broken(").expect("malformed Ruby must not panic");
+    assert_eq!(malformed.language_id, LanguageId::Ruby);
     assert!(malformed.tree.root_node().has_error());
 }
 
