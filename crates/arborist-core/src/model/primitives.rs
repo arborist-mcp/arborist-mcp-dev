@@ -28,6 +28,7 @@ pub enum LanguageId {
     Kotlin,
     Lua,
     Php,
+    Swift,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

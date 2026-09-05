@@ -77,6 +77,9 @@ end
         LanguageId::Php => {
             "<?php\nfunction helper(int $value) {\n    return $value + 1;\n}\n\nfunction orchestrate(int $value) {\n    return helper($value);\n}\n"
         }
+        LanguageId::Swift => {
+            "func helper(value: Int) -> Int {\n    return value + 1;\n}\n\nfunc orchestrate(value: Int) -> Int {\n    return helper(value);\n}\n"
+        }
     }
 }
 
@@ -118,6 +121,9 @@ end
         LanguageId::Php => {
             "<?php\nfunction orchestrate(int $value) {\n    return missing_helper($value);\n}\n"
         }
+        LanguageId::Swift => {
+            "func orchestrate(value: Int) -> Int {\n    return missing_helper(value);\n}\n"
+        }
     }
 }
 
@@ -135,6 +141,7 @@ fn helper_only(language_id: LanguageId) -> &'static str {
         LanguageId::Rust => "fn helper(value: i32) -> i32 {\n    value + 1\n}\n",
         LanguageId::Go => "package demo\n\nfunc helper(value int) int { return value + 1 }\n",
         LanguageId::Php => "<?php\nfunction helper(int $value) {\n    return $value + 1;\n}\n",
+        LanguageId::Swift => "func helper(value: Int) -> Int {\n    return value + 1;\n}\n",
         LanguageId::Java => {
             "package demo;\n\npublic final class Demo {\n    static int helper(int value) {\n        return value + 1;\n    }\n}\n"
         }
