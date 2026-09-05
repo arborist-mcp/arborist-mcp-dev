@@ -19,6 +19,9 @@ tests/fixtures/languages/
   kotlin/
   csharp/
   tsx/
+  lua/
+  php/
+  swift/
 ```
 
 ## Conventions
