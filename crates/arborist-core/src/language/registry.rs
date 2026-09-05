@@ -566,7 +566,9 @@ static PHP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
             | LanguageCapabilities::FILE_DEPENDENCIES.0
-            | LanguageCapabilities::REFERENCE_TRACE.0,
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
     analysis_revision: "php-v1",
     grammar: php_grammar,
@@ -1032,18 +1034,18 @@ impl LanguageAdapter for PhpAdapter {
 
     fn collect_patch_reference_validation(
         &self,
-        _path: &Path,
-        _document: &ParsedDocument,
-        _source: &str,
-        _symbol_node: Node<'_>,
-        _deadline: Option<&dyn DeadlineCheck>,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
-            _path,
-            _document,
-            _source,
-            _symbol_node,
-            _deadline,
+        crate::patching::php_references::collect_php_reference_validation_with_deadline(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
         )
     }
 

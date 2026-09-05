@@ -268,9 +268,7 @@ fn successful_patch_replacement(language_id: LanguageId) -> &'static str {
 end
 "
         }
-        LanguageId::Php => {
-            "<?php\nfunction compute(int $value): int {\n    return $value + 2;\n}\n"
-        }
+        LanguageId::Php => "function compute(int $value): int {\n    return $value + 2;\n}\n",
     }
 }
 
@@ -294,9 +292,7 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
             "public static int compute(int value) {\n        return missing(value);\n    }\n"
         }
         LanguageId::Kotlin => "fun compute(value: Int): Int = missing(value)\n",
-        LanguageId::Php => {
-            "<?php\nfunction compute(int $value) {\n    return missing($value);\n}\n"
-        }
+        LanguageId::Php => "function compute(int $value) {\n    return missing($value);\n}\n",
         LanguageId::Lua => {
             "local function compute(value)
     return missing(value)
