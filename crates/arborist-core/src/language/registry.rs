@@ -603,9 +603,11 @@ static RUBY_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Ruby",
     extensions: RUBY_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "ruby-semantic-v1",
+    analysis_revision: "ruby-symbol-index-v1",
     grammar: ruby_grammar,
 };
 
@@ -1554,8 +1556,12 @@ impl LanguageAdapter for RubyAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::ruby::index_ruby_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 

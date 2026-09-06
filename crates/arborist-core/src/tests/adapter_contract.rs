@@ -635,7 +635,9 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Swift => {
             "/* café */ func compute(value: Int) -> Int {\n    return value + 1;\n}\n"
         }
-        LanguageId::Ruby => "# caf?\ndef compute(value)\n      value + 1\nend\n",
+        LanguageId::Ruby => {
+            "# café\ndef compute(value)\n      \"café compute\"\n      value + 1\nend\n"
+        }
         LanguageId::Java => {
             "/* café */ package demo; public final class Demo { public static int compute(int value) { return value + 1; } }\n"
         }
