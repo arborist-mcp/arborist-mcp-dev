@@ -81,7 +81,7 @@ end
             "func helper(value: Int) -> Int {\n    return value + 1;\n}\n\nfunc orchestrate(value: Int) -> Int {\n    return helper(value);\n}\n"
         }
         LanguageId::Ruby => {
-            "def helper(value)\n      value +  ............ ......... 1\nend\n\ndef orchestrate(value)\n      helper(value)\nend\n"
+            "def helper(value)\n      value + 1\nend\n\ndef orchestrate(value)\n      helper(value)\nend\n"
         }
     }
 }
@@ -146,7 +146,7 @@ fn helper_only(language_id: LanguageId) -> &'static str {
         LanguageId::Go => "package demo\n\nfunc helper(value int) int { return value + 1 }\n",
         LanguageId::Php => "<?php\nfunction helper(int $value) {\n    return $value + 1;\n}\n",
         LanguageId::Swift => "func helper(value: Int) -> Int {\n    return value + 1;\n}\n",
-        LanguageId::Ruby => "def helper(value)\n      value +  ............ ......... 1\nend\n",
+        LanguageId::Ruby => "def helper(value)\n      value + 1\nend\n",
         LanguageId::Java => {
             "package demo;\n\npublic final class Demo {\n    static int helper(int value) {\n        return value + 1;\n    }\n}\n"
         }

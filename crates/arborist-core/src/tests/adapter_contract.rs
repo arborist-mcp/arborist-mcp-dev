@@ -243,7 +243,7 @@ fn sample_source(language_id: LanguageId) -> &'static str {
         LanguageId::Kotlin => "package demo\n\nfun compute(value: Int): Int = value + 1\n",
         LanguageId::Lua => "local function compute(value)\n    return value + 1\nend\n",
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return value + 1\n}\n",
-        LanguageId::Ruby => "def compute(value)\n      value +  ............ ......... 1\nend\n",
+        LanguageId::Ruby => "def compute(value)\n      value + 1\nend\n",
     }
 }
 
@@ -280,7 +280,7 @@ end
         }
         LanguageId::Php => "function compute(int $value): int {\n    return $value + 2;\n}\n",
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return value + 2;\n}\n",
-        LanguageId::Ruby => "def compute(value)\n      value +  ............ ......... 2\nend\n",
+        LanguageId::Ruby => "def compute(value)\n      value + 2\nend\n",
     }
 }
 
@@ -369,7 +369,7 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             "func compute(value: Int) -> Int {\n    return value + 1;\n}\n\nfunc caller(value: Int) -> Int {\n    return compute(value);\n}\n"
         }
         LanguageId::Ruby => {
-            "def compute(value)\n      value +  ............ ......... 1\nend\n\ndef caller(value)\n      compute(value)\nend\n"
+            "def compute(value)\n      value + 1\nend\n\ndef caller(value)\n      compute(value)\nend\n"
         }
         LanguageId::Lua => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -635,9 +635,7 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Swift => {
             "/* café */ func compute(value: Int) -> Int {\n    return value + 1;\n}\n"
         }
-        LanguageId::Ruby => {
-            "# caf?\ndef compute(value)\n      value +  ............ ......... 1\nend\n"
-        }
+        LanguageId::Ruby => "# caf?\ndef compute(value)\n      value + 1\nend\n",
         LanguageId::Java => {
             "/* café */ package demo; public final class Demo { public static int compute(int value) { return value + 1; } }\n"
         }

@@ -602,8 +602,10 @@ static RUBY_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Ruby,
     display_name: "Ruby",
     extensions: RUBY_EXTENSIONS,
-    capabilities: LanguageCapabilities(LanguageCapabilities::TREE_QUERY.0),
-    analysis_revision: "ruby-v1",
+    capabilities: LanguageCapabilities(
+        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+    ),
+    analysis_revision: "ruby-semantic-v1",
     grammar: ruby_grammar,
 };
 
@@ -662,8 +664,10 @@ static SWIFT_ADAPTER: SwiftAdapter = SwiftAdapter {
     },
 };
 
-static RUBY_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
-    descriptor: &RUBY_DESCRIPTOR,
+static RUBY_ADAPTER: RubyAdapter = RubyAdapter {
+    syntax: SyntaxOnlyAdapter {
+        descriptor: &RUBY_DESCRIPTOR,
+    },
 };
 
 struct JavaScriptFamilyAdapter {
@@ -1358,6 +1362,217 @@ impl LanguageAdapter for SwiftAdapter {
         )
     }
 }
+struct RubyAdapter {
+    syntax: SyntaxOnlyAdapter,
+}
+
+impl LanguageAdapter for RubyAdapter {
+    fn descriptor(&self) -> &'static LanguageDescriptor {
+        self.syntax.descriptor()
+    }
+
+    fn build_semantic_skeleton(
+        &self,
+        path: &Path,
+        source: &str,
+        tree: &Tree,
+        depth_limit: usize,
+        expand_nodes: &[String],
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<SemanticSkeleton> {
+        crate::semantic::ruby::build_ruby_skeleton(
+            path,
+            source,
+            tree,
+            depth_limit,
+            expand_nodes,
+            deadline,
+        )
+    }
+
+    fn find_semantic_node<'tree>(
+        &self,
+        path: &Path,
+        tree: &'tree Tree,
+        source: &str,
+        target_path: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<Node<'tree>>> {
+        crate::semantic::ruby::find_ruby_semantic_node(path, tree, source, target_path, deadline)
+    }
+
+    fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            if crate::semantic::ruby::is_ruby_symbol_node(candidate) {
+                return Some(candidate);
+            }
+            current = candidate.parent();
+        }
+        None
+    }
+
+    fn position_symbol_identity(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        let semantic_path = ruby_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a Ruby symbol with a stable semantic path")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        ruby_semantic_path_for_node(node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        ruby_semantic_path_for_node(node, source)
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        self.syntax
+            .requires_exact_symbol_id_for_ambiguous_semantic_paths()
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        self.syntax.query_owner_candidates(path, root, source)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        self.syntax.patch_replacement_node(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        Ok(new_code.to_string())
+    }
+
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        true
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        self.syntax
+            .reconcile_patch_symbol_id(semantic_target, resolved_path, resolved_symbol_id)
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        self.syntax.collect_patch_reference_validation(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
+        )
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        self.syntax
+            .query_capture_owner(path, source, node, candidates)
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        self.syntax.supports_incremental_file_dependencies()
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies(path, root, source)
+    }
+
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies_with_deadline(path, root, source, deadline)
+    }
+
+    fn extract_symbols(
+        &self,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
+    ) -> Result<Vec<IndexedSymbol>> {
+        self.syntax
+            .extract_symbols(path, source, document, deadline)
+    }
+}
+
+fn ruby_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if crate::semantic::ruby::is_ruby_symbol_node(candidate) {
+            return crate::semantic::ruby::ruby_symbol_name(candidate, source)?
+                .map(|name| crate::semantic::ruby::ruby_semantic_path(&name))
+                .transpose()
+                .map(Option::flatten);
+        }
+        current = candidate.parent();
+    }
+    Ok(None)
+}
+
 struct RustAdapter {
     syntax: SyntaxOnlyAdapter,
 }
