@@ -605,9 +605,10 @@ static RUBY_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "ruby-symbol-index-v1",
+    analysis_revision: "ruby-reference-trace-v1",
     grammar: ruby_grammar,
 };
 
