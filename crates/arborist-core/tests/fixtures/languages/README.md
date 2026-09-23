@@ -22,6 +22,7 @@ tests/fixtures/languages/
   lua/
   php/
   swift/
+  ruby/
 ```
 
 ## Conventions
