@@ -26,7 +26,7 @@ Arborist MCP is a semantic code analysis and editing toolkit exposed as a lightw
 
 ## Supported Languages
 
-Arborist routes source files by file extension. It currently supports Python, C, C++, JavaScript, TypeScript/TSX, Rust, Go, Java, C#, and Kotlin; capability depth varies by language. The exact extension lists, trace coverage, and patching behavior are documented in the [tool guide](docs/tools.md).
+Arborist routes source files by file extension. It currently supports Python, C, C++, JavaScript, TypeScript/TSX, Rust, Go, Java, C#, Kotlin, Lua, PHP, Swift, and Ruby; capability depth varies by language. The exact extension lists, trace coverage, and patching behavior are documented in the [tool guide](docs/tools.md).
 
 ## Quick Start
 
@@ -112,16 +112,6 @@ arborist-index-watch --workspace-root . --db-path .\symbols.db --check
 
 Use `--config .\watch.json` to watch multiple workspace/index pairs. See the [development guide](docs/development.md) for flags, health summaries, and CI behavior.
 
-## Tool Catalog
-
-The generated [tool catalog](docs/tool-catalog.json) lists every MCP tool. As of this revision, `tools/list` returns 58 tools:
-
-- Read tools: 29, including semantic skeletons, symbol reads, patch previews, and graph-backed read bundles.
-- Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.
-- VFS tools: 10, including open/change/close, virtual patching, and commit/discard.
-- Index tools: 9, covering register, list, inspect, migrate, rebuild, and symbol-index refresh.
-- Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
-
 ## Development
 
 For the normal local loop:
@@ -130,33 +120,10 @@ For the normal local loop:
 .\scripts\test.ps1 -Suite inner-loop
 ```
 
-Targeted Python and native gateway suites keep the full gate faster to iterate:
-
-```powershell
-.\scripts\test.ps1 -Suite python
-.\scripts\test.ps1 -Suite python-fast
-.\scripts\test.ps1 -Suite python-native
-.\scripts\test.ps1 -Suite rust,inner-loop -ShowPlan
-```
-
-Use `python scripts/python_suite_manifest.py` to inspect how those suite groups are built.
-
 For the full gate:
 
 ```powershell
 .\scripts\check.ps1
-```
-
-Focused check profiles:
-
-```powershell
-.\scripts\check.ps1 -Profile python-fast
-.\scripts\check.ps1 -Profile gateway-fast
-.\scripts\check.ps1 -Profile gateway-native
-.\scripts\check.ps1 -Profile python-discovery
-.\scripts\check.ps1 -Profile gateway-smoke
-.\scripts\check.ps1 -Profile python-native
-.\scripts\check.ps1 -Profile full,python-native -ShowPlan
 ```
 
 Useful direct commands:
@@ -177,5 +144,7 @@ See the [development guide](docs/development.md) for the full validation matrix,
 - [Development guide](docs/development.md) -- setup, validation, CI profiles, benchmarks, build artifacts, and common failures.
 - [Protocol guide](docs/protocol.md) -- MCP usage, tool catalog generation, request validation, and legacy JSON-RPC compatibility.
 - [Tool guide](docs/tools.md) -- tool families, source overlays, patch preview, symbol indexes, trace/context workflows, and per-language capability details.
+- [Language capability gaps](docs/language-gaps.md) -- living per-language behavioral-boundary audit.
+- [Language onboarding](docs/language-onboarding.md) -- checklist for adding a new tree-sitter language.
 - [Generated tool catalog](docs/tool-catalog.json) -- exact `tools/list` snapshot; schemas, defaults, and categories.
 - [AGENTS.md](AGENTS.md) -- repository guidance for AI coding agents working in this codebase.
