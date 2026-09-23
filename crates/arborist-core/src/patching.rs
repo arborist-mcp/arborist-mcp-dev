@@ -16,6 +16,7 @@ pub(crate) mod python_replacement;
 mod python_visibility;
 mod reference_validation;
 mod result_builder;
+pub(crate) mod ruby_references;
 pub(crate) mod rust_references;
 pub(crate) mod swift_references;
 mod syntax_validation;

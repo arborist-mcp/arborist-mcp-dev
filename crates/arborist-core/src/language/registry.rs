@@ -606,9 +606,11 @@ static RUBY_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
-            | LanguageCapabilities::REFERENCE_TRACE.0,
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "ruby-reference-trace-v1",
+    analysis_revision: "ruby-patch-validation-v1",
     grammar: ruby_grammar,
 };
 
@@ -1505,7 +1507,7 @@ impl LanguageAdapter for RubyAdapter {
         symbol_node: Node<'_>,
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.syntax.collect_patch_reference_validation(
+        crate::patching::ruby_references::collect_ruby_reference_validation_with_deadline(
             path,
             document,
             source,
