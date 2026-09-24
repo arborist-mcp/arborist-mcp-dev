@@ -31,6 +31,8 @@ class GatewayRuntimeCatalogTestsMixin:
                 "php",
                 "swift",
                 "ruby",
+                "shell",
+                "bash",
             ],
         )
 
