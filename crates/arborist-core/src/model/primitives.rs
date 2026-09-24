@@ -30,6 +30,8 @@ pub enum LanguageId {
     Php,
     Swift,
     Ruby,
+    Shell,
+    Bash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

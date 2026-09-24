@@ -25,6 +25,8 @@ const LUA_EXTENSIONS: &[&str] = &["lua"];
 const PHP_EXTENSIONS: &[&str] = &["php"];
 const SWIFT_EXTENSIONS: &[&str] = &["swift"];
 const RUBY_EXTENSIONS: &[&str] = &["rb"];
+const SHELL_EXTENSIONS: &[&str] = &["sh"];
+const BASH_EXTENSIONS: &[&str] = &["bash"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -235,7 +237,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 15] = [
+        let adapters: [&'static dyn LanguageAdapter; 17] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -251,6 +253,8 @@ impl LanguageRegistry {
             &PHP_ADAPTER,
             &SWIFT_ADAPTER,
             &RUBY_ADAPTER,
+            &SHELL_ADAPTER,
+            &BASH_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -383,6 +387,7 @@ fn language_family_id(language_id: LanguageId) -> u8 {
         LanguageId::Php => 9,
         LanguageId::Swift => 10,
         LanguageId::Ruby => 11,
+        LanguageId::Shell | LanguageId::Bash => 12,
     }
 }
 
@@ -403,6 +408,8 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Php => "php",
         LanguageId::Swift => "swift",
         LanguageId::Ruby => "ruby",
+        LanguageId::Shell => "shell",
+        LanguageId::Bash => "bash",
     }
 }
 
@@ -614,6 +621,38 @@ static RUBY_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     grammar: ruby_grammar,
 };
 
+static SHELL_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Shell,
+    display_name: "Shell",
+    extensions: SHELL_EXTENSIONS,
+    capabilities: LanguageCapabilities(
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
+    ),
+    analysis_revision: "shell-patch-validation-v1",
+    grammar: bash_grammar,
+};
+
+static BASH_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Bash,
+    display_name: "Bash",
+    extensions: BASH_EXTENSIONS,
+    capabilities: LanguageCapabilities(
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::REFERENCE_TRACE.0
+            | LanguageCapabilities::PATCH_TARGETING.0
+            | LanguageCapabilities::PATCH_VALIDATION.0,
+    ),
+    analysis_revision: "bash-patch-validation-v1",
+    grammar: bash_grammar,
+};
+
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
 static CPP_ADAPTER: CppAdapter = CppAdapter;
@@ -673,6 +712,20 @@ static RUBY_ADAPTER: RubyAdapter = RubyAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &RUBY_DESCRIPTOR,
     },
+};
+
+static SHELL_ADAPTER: ShellFamilyAdapter = ShellFamilyAdapter {
+    syntax: SyntaxOnlyAdapter {
+        descriptor: &SHELL_DESCRIPTOR,
+    },
+    descriptor: &SHELL_DESCRIPTOR,
+};
+
+static BASH_ADAPTER: ShellFamilyAdapter = ShellFamilyAdapter {
+    syntax: SyntaxOnlyAdapter {
+        descriptor: &BASH_DESCRIPTOR,
+    },
+    descriptor: &BASH_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -1574,6 +1627,222 @@ fn ruby_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<St
         if crate::semantic::ruby::is_ruby_symbol_node(candidate) {
             return crate::semantic::ruby::ruby_symbol_name(candidate, source)?
                 .map(|name| crate::semantic::ruby::ruby_semantic_path(&name))
+                .transpose()
+                .map(Option::flatten);
+        }
+        current = candidate.parent();
+    }
+    Ok(None)
+}
+
+struct ShellFamilyAdapter {
+    syntax: SyntaxOnlyAdapter,
+    descriptor: &'static LanguageDescriptor,
+}
+
+impl LanguageAdapter for ShellFamilyAdapter {
+    fn descriptor(&self) -> &'static LanguageDescriptor {
+        self.descriptor
+    }
+
+    fn build_semantic_skeleton(
+        &self,
+        path: &Path,
+        source: &str,
+        tree: &Tree,
+        depth_limit: usize,
+        expand_nodes: &[String],
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<SemanticSkeleton> {
+        crate::semantic::shell::build_shell_skeleton(
+            path,
+            source,
+            tree,
+            depth_limit,
+            expand_nodes,
+            deadline,
+        )
+    }
+
+    fn find_semantic_node<'tree>(
+        &self,
+        path: &Path,
+        tree: &'tree Tree,
+        source: &str,
+        target_path: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<Node<'tree>>> {
+        crate::semantic::shell::find_shell_semantic_node(path, tree, source, target_path, deadline)
+    }
+
+    fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            if crate::semantic::shell::is_shell_symbol_node(candidate) {
+                return Some(candidate);
+            }
+            current = candidate.parent();
+        }
+        None
+    }
+
+    fn position_symbol_identity(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        let semantic_path = shell_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a shell symbol with a stable semantic path")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        shell_semantic_path_for_node(node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        shell_semantic_path_for_node(node, source)
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        self.syntax
+            .requires_exact_symbol_id_for_ambiguous_semantic_paths()
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        self.syntax.query_owner_candidates(path, root, source)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        self.syntax.patch_replacement_node(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        Ok(new_code.to_string())
+    }
+
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        true
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        self.syntax
+            .reconcile_patch_symbol_id(semantic_target, resolved_path, resolved_symbol_id)
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        crate::patching::shell_references::collect_shell_reference_validation_with_deadline(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
+        )
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        self.syntax
+            .query_capture_owner(path, source, node, candidates)
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        self.syntax.supports_incremental_file_dependencies()
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies(path, root, source)
+    }
+
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies_with_deadline(path, root, source, deadline)
+    }
+
+    fn extract_symbols(
+        &self,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
+    ) -> Result<Vec<IndexedSymbol>> {
+        crate::symbol_extractor::shell::index_shell_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
+    }
+}
+
+fn shell_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if crate::semantic::shell::is_shell_symbol_node(candidate) {
+            return crate::semantic::shell::shell_symbol_name(candidate, source)?
+                .map(|name| crate::semantic::shell::shell_semantic_path(&name))
                 .transpose()
                 .map(Option::flatten);
         }
@@ -3604,6 +3873,10 @@ fn swift_grammar() -> Language {
 
 fn ruby_grammar() -> Language {
     tree_sitter_ruby::LANGUAGE.into()
+}
+
+fn bash_grammar() -> Language {
+    tree_sitter_bash::LANGUAGE.into()
 }
 
 #[cfg(test)]

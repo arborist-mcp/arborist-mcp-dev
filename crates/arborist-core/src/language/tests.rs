@@ -49,6 +49,8 @@ fn detect_language_accepts_uppercase_extensions() {
         ("PHP", LanguageId::Php),
         ("SWIFT", LanguageId::Swift),
         ("RB", LanguageId::Ruby),
+        ("SH", LanguageId::Shell),
+        ("BASH", LanguageId::Bash),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -117,6 +119,8 @@ fn supported_languages_reports_all_builtin_languages() {
             "php",
             "swift",
             "ruby",
+            "shell",
+            "bash",
         ]
     );
 }
@@ -139,6 +143,8 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Php, "php"),
         (LanguageId::Swift, "swift"),
         (LanguageId::Ruby, "ruby"),
+        (LanguageId::Shell, "shell"),
+        (LanguageId::Bash, "bash"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),

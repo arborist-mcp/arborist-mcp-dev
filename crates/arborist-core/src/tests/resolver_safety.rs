@@ -83,6 +83,9 @@ end
         LanguageId::Ruby => {
             "def helper(value)\n      value + 1\nend\n\ndef orchestrate(value)\n      helper(value)\nend\n"
         }
+        LanguageId::Shell | LanguageId::Bash => {
+            "helper() {\n    value=$((value + 1))\n}\n\norchestrate() {\n    helper\n}\n"
+        }
     }
 }
 
@@ -128,6 +131,7 @@ end
             "func orchestrate(value: Int) -> Int {\n    return missing_helper(value);\n}\n"
         }
         LanguageId::Ruby => "def orchestrate(value)\n      missing_helper(value)\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "orchestrate() {\n    missing_helper\n}\n",
     }
 }
 
@@ -152,6 +156,7 @@ fn helper_only(language_id: LanguageId) -> &'static str {
         }
         LanguageId::Kotlin => "package demo\n\nfun helper(value: Int): Int = value + 1\n",
         LanguageId::Lua => "local function helper(value)\n    return value + 1\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "helper() {\n    value=$((value + 1))\n}\n",
     }
 }
 

@@ -162,6 +162,10 @@ public final class Broken {
             "def broken(:
 "
         }
+        LanguageId::Shell | LanguageId::Bash => {
+            "broken() {
+"
+        }
     }
 }
 
@@ -244,6 +248,7 @@ fn sample_source(language_id: LanguageId) -> &'static str {
         LanguageId::Lua => "local function compute(value)\n    return value + 1\nend\n",
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return value + 1\n}\n",
         LanguageId::Ruby => "def compute(value)\n      value + 1\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "compute() {\n    value=$((value + 1))\n}\n",
     }
 }
 
@@ -281,6 +286,7 @@ end
         LanguageId::Php => "function compute(int $value): int {\n    return $value + 2;\n}\n",
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return value + 2;\n}\n",
         LanguageId::Ruby => "def compute(value)\n      value + 2\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "compute() {\n    value=2\n}\n",
     }
 }
 
@@ -307,6 +313,7 @@ fn unresolved_reference_patch_replacement(language_id: LanguageId) -> &'static s
         LanguageId::Php => "function compute(int $value) {\n    return missing($value);\n}\n",
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return missing(value);\n}\n",
         LanguageId::Ruby => "def compute(value)\n      missing(value)\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "compute() {\n    missing_helper\n}\n",
         LanguageId::Lua => {
             "local function compute(value)
     return missing(value)
@@ -371,6 +378,9 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
         LanguageId::Ruby => {
             "def compute(value)\n      value + 1\nend\n\ndef caller(value)\n      compute(value)\nend\n"
         }
+        LanguageId::Shell | LanguageId::Bash => {
+            "compute() {\n    value=$((1 + 1))\n}\n\ncaller() {\n    compute\n}\n"
+        }
         LanguageId::Lua => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/lua/resolver_direct_calls.lua"
@@ -427,6 +437,7 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             "func caller(value: Int) -> Int {\n    return missing_helper(value);\n}\n"
         }
         LanguageId::Ruby => "def caller(value)\n      missing_helper(value)\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "caller() {\n    missing_helper\n}\n",
         LanguageId::Kotlin => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/kotlin/resolver_unresolved_calls.kt"
@@ -455,6 +466,7 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
         LanguageId::Php => "<?php\nfunction caller(int $value) {\n    return compute($value);\n}\n",
         LanguageId::Swift => "func caller(value: Int) -> Int {\n    return compute(value);\n}\n",
         LanguageId::Ruby => "def caller(value)\n      compute(value)\nend\n",
+        LanguageId::Shell | LanguageId::Bash => "caller() {\n    compute\n}\n",
         LanguageId::Rust => "pub fn caller(value: i32) -> i32 { compute(value) }\n",
         LanguageId::Go => "package demo\n\nfunc caller(value int) int { return compute(value) }\n",
         LanguageId::Java => {
@@ -637,6 +649,9 @@ fn utf8_position_contract_source(language_id: LanguageId) -> &'static str {
         }
         LanguageId::Ruby => {
             "# café\ndef compute(value)\n      \"café compute\"\n      value + 1\nend\n"
+        }
+        LanguageId::Shell | LanguageId::Bash => {
+            "# café\ncompute() {\n    label=\"café compute\"\n    value=1\n}\n"
         }
         LanguageId::Java => {
             "/* café */ package demo; public final class Demo { public static int compute(int value) { return value + 1; } }\n"

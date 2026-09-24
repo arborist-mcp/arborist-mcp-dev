@@ -21,6 +21,7 @@ mod python_identity;
 mod python_overloads;
 pub(crate) mod ruby;
 pub(crate) mod rust;
+pub(crate) mod shell;
 pub(crate) mod swift;
 
 pub(crate) use paths::{semantic_depth, semantic_parent_path, semantic_path};

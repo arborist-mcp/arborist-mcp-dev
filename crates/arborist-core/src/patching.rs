@@ -18,6 +18,7 @@ mod reference_validation;
 mod result_builder;
 pub(crate) mod ruby_references;
 pub(crate) mod rust_references;
+pub(crate) mod shell_references;
 pub(crate) mod swift_references;
 mod syntax_validation;
 mod target_resolution;
