@@ -23,6 +23,8 @@ tests/fixtures/languages/
   php/
   swift/
   ruby/
+  shell/
+  bash/
 ```
 
 ## Conventions

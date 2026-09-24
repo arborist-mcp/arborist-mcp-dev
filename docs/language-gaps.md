@@ -16,7 +16,7 @@ Arborist models language support through a `LanguageCapabilities` bitmask; every
 
 ## Current capability summary
 
-The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Python, C, C++, JavaScript/TypeScript/TSX, Rust, Go, Java, Kotlin, C#,and Lua/PHP/Swift/Ruby. However, a green capability flag is not the same as deep behavioral coverage; many languages implement a conservative slice for a flag. This audit records the behavioral gaps that remain after the flag is set.
+The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Python, C, C++, JavaScript/TypeScript/TSX, Rust, Go, Java, Kotlin, C#,and Lua/PHP/Swift/Ruby/Shell/Bash. However, a green capability flag is not the same as deep behavioral coverage; many languages implement a conservative slice for a flag. This audit records the behavioral gaps that remain after the flag is set.
 
 | Language | Known behavioral gaps | Suggested first work |
 | --- | --- | --- |
@@ -36,6 +36,8 @@ The registry's `FULL_CURRENT_SUPPORT` currently names all builtin languages: Pyt
 | PHP | No namespace/class/static method graph; only same-file bare top-level function calls resolve; no overloads/scope qualification; patch validation remains conservative same-file direct-call only | Keep conservative slice; add fixtures for namespace/class and resolver extension flows when real |
 | Swift | No class/type graph; only top-level `func` declarations produce semantic skeletonsand declaration indexing; no namespace/class/static/instance method graph or dependencies; structural patch targeting,and conservative same-file direct-call tracing resolve only same-file top-level function calls; patch reference validation rejects unknown and ambiguous same-file targets | Add fixtures for Swift top-level function skeletonsand indexing;then extend with class/struct/extension scopes when real |
 | Ruby | No class/module/constant graph; only `def` method declarations produce semantic skeletons and declaration indexing (including nested definitions; `def self.` singleton methods are not indexed); no namespace/class/static/instance method graph or dependencies; structural patch targeting and conservative same-file direct-call tracing resolve only same-file method calls; patch reference validation rejects unknown and ambiguous same-file targets | Add fixtures for Ruby method skeletons and indexing; then extend with class/module scopes and singleton methods when real |
+| Shell | No sourced-file/command graph; only `function_definition` declarations produce semantic skeletons and declaration indexing; no variable/alias/source resolution or file dependencies; structural patch targeting and conservative same-file direct command tracing resolve only same-file function calls; patch reference validation rejects unknown and ambiguous same-file targets and ignores string/expansion/path command names | Keep conservative slice; add fixtures for sourced-file and variable-command resolution when real |
+| Bash | Same conservative slice as Shell, sharing the `tree-sitter-bash` adapter; no bash-specific builtin, alias, or exported-function graph | Keep parity with Shell |
 ## What “Full” means here
 
 `FULL_CURRENT_SUPPORT` means the registry will dispatch all seven capability dimensions to the adapter. It does not claim:

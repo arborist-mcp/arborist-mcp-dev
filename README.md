@@ -26,7 +26,7 @@ Arborist MCP is a semantic code analysis and editing toolkit exposed as a lightw
 
 ## Supported Languages
 
-Arborist routes source files by file extension. It currently supports Python, C, C++, JavaScript, TypeScript/TSX, Rust, Go, Java, C#, Kotlin, Lua, PHP, Swift, and Ruby; capability depth varies by language. The exact extension lists, trace coverage, and patching behavior are documented in the [tool guide](docs/tools.md).
+Arborist routes source files by file extension. It currently supports Python, C, C++, JavaScript, TypeScript/TSX, Rust, Go, Java, C#, Kotlin, Lua, PHP, Swift, Ruby, Shell, and Bash; capability depth varies by language. The exact extension lists, trace coverage, and patching behavior are documented in the [tool guide](docs/tools.md).
 
 ## Quick Start
 
