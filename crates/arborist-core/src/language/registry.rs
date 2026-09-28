@@ -629,11 +629,12 @@ static SHELL_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "shell-patch-validation-v1",
+    analysis_revision: "shell-file-dependencies-v1",
     grammar: bash_grammar,
 };
 
@@ -645,11 +646,12 @@ static BASH_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0
             | LanguageCapabilities::PATCH_TARGETING.0
             | LanguageCapabilities::PATCH_VALIDATION.0,
     ),
-    analysis_revision: "bash-patch-validation-v1",
+    analysis_revision: "bash-file-dependencies-v1",
     grammar: bash_grammar,
 };
 
@@ -1797,7 +1799,7 @@ impl LanguageAdapter for ShellFamilyAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1806,8 +1808,8 @@ impl LanguageAdapter for ShellFamilyAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::shell_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn collect_local_file_dependencies_with_deadline(
@@ -1817,8 +1819,10 @@ impl LanguageAdapter for ShellFamilyAdapter {
         source: &str,
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies_with_deadline(path, root, source, deadline)
+        crate::language::shell_local_file_dependency_paths_with_deadline(
+            path, root, source, deadline,
+        )
+        .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

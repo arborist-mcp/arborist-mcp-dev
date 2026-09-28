@@ -13,6 +13,7 @@ mod positions;
 mod python;
 mod registry;
 mod rust;
+mod shell;
 mod tree;
 
 pub use c::{
@@ -85,6 +86,9 @@ pub use registry::{
 pub(crate) use rust::{
     rust_direct_module_candidate_paths, rust_local_module_dependency_paths,
     rust_local_module_dependency_paths_with_deadline,
+};
+pub(crate) use shell::{
+    shell_local_file_dependency_paths, shell_local_file_dependency_paths_with_deadline,
 };
 pub use tree::*;
 
