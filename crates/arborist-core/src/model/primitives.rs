@@ -32,6 +32,7 @@ pub enum LanguageId {
     Ruby,
     Shell,
     Bash,
+    Elixir,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

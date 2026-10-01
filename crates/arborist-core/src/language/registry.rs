@@ -27,6 +27,7 @@ const SWIFT_EXTENSIONS: &[&str] = &["swift"];
 const RUBY_EXTENSIONS: &[&str] = &["rb"];
 const SHELL_EXTENSIONS: &[&str] = &["sh"];
 const BASH_EXTENSIONS: &[&str] = &["bash"];
+const ELIXIR_EXTENSIONS: &[&str] = &["ex", "exs"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -237,7 +238,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 17] = [
+        let adapters: [&'static dyn LanguageAdapter; 18] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -255,6 +256,7 @@ impl LanguageRegistry {
             &RUBY_ADAPTER,
             &SHELL_ADAPTER,
             &BASH_ADAPTER,
+            &ELIXIR_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -388,6 +390,7 @@ fn language_family_id(language_id: LanguageId) -> u8 {
         LanguageId::Swift => 10,
         LanguageId::Ruby => 11,
         LanguageId::Shell | LanguageId::Bash => 12,
+        LanguageId::Elixir => 13,
     }
 }
 
@@ -410,6 +413,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Ruby => "ruby",
         LanguageId::Shell => "shell",
         LanguageId::Bash => "bash",
+        LanguageId::Elixir => "elixir",
     }
 }
 
@@ -655,6 +659,15 @@ static BASH_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     grammar: bash_grammar,
 };
 
+static ELIXIR_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Elixir,
+    display_name: "Elixir",
+    extensions: ELIXIR_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "elixir-v1",
+    grammar: elixir_grammar,
+};
+
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
 static CPP_ADAPTER: CppAdapter = CppAdapter;
@@ -728,6 +741,9 @@ static BASH_ADAPTER: ShellFamilyAdapter = ShellFamilyAdapter {
         descriptor: &BASH_DESCRIPTOR,
     },
     descriptor: &BASH_DESCRIPTOR,
+};
+static ELIXIR_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &ELIXIR_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -3881,6 +3897,10 @@ fn ruby_grammar() -> Language {
 
 fn bash_grammar() -> Language {
     tree_sitter_bash::LANGUAGE.into()
+}
+
+fn elixir_grammar() -> Language {
+    tree_sitter_elixir::LANGUAGE.into()
 }
 
 #[cfg(test)]
