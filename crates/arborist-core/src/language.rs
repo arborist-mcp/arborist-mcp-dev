@@ -1,5 +1,6 @@
 mod c;
 mod csharp;
+mod elixir;
 mod go;
 mod io;
 mod java;
@@ -32,6 +33,9 @@ pub(crate) use csharp::{
     csharp_global_namespace_imports, csharp_global_static_type_imports,
     csharp_global_type_alias_imports, csharp_local_file_dependency_paths,
     csharp_local_file_dependency_paths_with_deadline,
+};
+pub(crate) use elixir::{
+    elixir_local_file_dependency_paths, elixir_local_file_dependency_paths_with_deadline,
 };
 pub(crate) use go::{
     go_local_import_binding_statuses, go_local_package_dependency_paths,

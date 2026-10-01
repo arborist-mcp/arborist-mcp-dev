@@ -667,9 +667,10 @@ static ELIXIR_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "elixir-reference-trace-v4",
+    analysis_revision: "elixir-file-dependencies-v1",
     grammar: elixir_grammar,
 };
 
@@ -3297,16 +3298,36 @@ impl LanguageAdapter for ElixirAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        false
+        true
     }
 
     fn collect_local_file_dependencies(
         &self,
-        _path: &Path,
-        _root: Node<'_>,
-        _source: &str,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax.unsupported("file dependency extraction")
+        Ok(
+            crate::language::elixir_local_file_dependency_paths(path, root, source)?
+                .into_iter()
+                .collect(),
+        )
+    }
+
+    fn collect_local_file_dependencies_with_deadline(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Vec<PathBuf>> {
+        Ok(
+            crate::language::elixir_local_file_dependency_paths_with_deadline(
+                path, root, source, deadline,
+            )?
+            .into_iter()
+            .collect(),
+        )
     }
 
     fn extract_symbols(

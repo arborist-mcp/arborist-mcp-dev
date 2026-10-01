@@ -189,8 +189,11 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - Elixir: `.ex`, `.exs` — Tree-sitter parsing, raw query execution, conservative semantic
   skeletons and declaration indexing for named `defmodule`, `def`, and `defp` declarations,
   plus same-file direct-call reference tracing for local calls whose targets are indexed in the
-  same module. File dependencies, patch targeting, and patch validation are not advertised;
-  duplicate paths, remote calls, macros, and unresolved calls fail closed.
+  same module. Local file dependencies are discovered only for existing relative `.ex`/`.exs`
+  paths passed as static string arguments to `Code.require_file`, `Code.compile_file`, or the
+  unqualified `require_file` call. Dynamic paths, remote module calls, unsupported extensions,
+  and unresolved files are ignored; patch targeting and patch validation are not advertised.
+  Duplicate paths, remote calls, macros, and unresolved calls fail closed.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
