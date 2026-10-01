@@ -275,23 +275,23 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn elixir_adapter_exposes_tree_query_and_skeleton_capabilities() {
+fn elixir_adapter_exposes_indexing_and_reference_trace_capabilities() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Elixir).unwrap();
 
     assert_eq!(descriptor.display_name, "Elixir");
     assert_eq!(descriptor.extensions, &["ex", "exs"]);
-    assert_eq!(descriptor.analysis_revision, "elixir-symbol-index-v3");
+    assert_eq!(descriptor.analysis_revision, "elixir-reference-trace-v4");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::REFERENCE_TRACE,
     ] {
         assert!(descriptor.capabilities.contains(capability));
     }
     for capability in [
         LanguageCapabilities::FILE_DEPENDENCIES,
-        LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {

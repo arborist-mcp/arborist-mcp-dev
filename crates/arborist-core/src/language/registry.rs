@@ -666,9 +666,10 @@ static ELIXIR_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "elixir-symbol-index-v3",
+    analysis_revision: "elixir-reference-trace-v4",
     grammar: elixir_grammar,
 };
 

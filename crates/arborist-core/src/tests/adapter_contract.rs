@@ -387,6 +387,9 @@ fn trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/lua/resolver_direct_calls.lua"
         )),
+        LanguageId::Elixir => {
+            "defmodule Demo do\n  def compute(value), do: value + 1\n  def caller(value), do: compute(value)\nend\n"
+        }
     }
 }
 
@@ -448,6 +451,9 @@ fn unresolved_trace_contract_source(language_id: LanguageId) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/languages/lua/resolver_unresolved_calls.lua"
         )),
+        LanguageId::Elixir => {
+            "defmodule Demo do\n  def caller(value), do: missing_helper(value)\nend\n"
+        }
     }
 }
 
@@ -478,6 +484,7 @@ fn cross_language_trace_contract_source(language_id: LanguageId) -> &'static str
         LanguageId::Lua => {
             "--[[ café ]] local function caller(value)\n    return compute(value)\nend\n"
         }
+        LanguageId::Elixir => "defmodule Demo do\n  def caller(value), do: compute(value)\nend\n",
     }
 }
 

@@ -378,6 +378,14 @@ fn resolve_reference_path_with_deadline<'a>(
     if let Some(deadline) = deadline {
         deadline.check("resolving reference candidates")?;
     }
+    if language_id == Some(LanguageId::Elixir) {
+        return resolve_elixir_same_file_reference(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+        );
+    }
     let call_arity = call_context.arity;
     if language_id == Some(LanguageId::Go) {
         if let Some(details) = go_reference_details {
@@ -2216,6 +2224,27 @@ fn resolve_reference_path_with_deadline<'a>(
         deadline.check("ranking reference candidates")?;
     }
     Ok(selected)
+}
+
+fn resolve_elixir_same_file_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Result<Option<String>> {
+    let Some(candidates) = semantic_path_index.get(reference_name) else {
+        return Ok(None);
+    };
+    let candidates = candidates
+        .iter()
+        .copied()
+        .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [index] => Ok(Some(raw_symbols[*index].symbol_id.clone())),
+        _ => Ok(None),
+    }
 }
 
 fn resolve_csharp_candidate(

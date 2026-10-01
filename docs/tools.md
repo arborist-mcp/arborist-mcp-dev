@@ -186,10 +186,11 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - Ruby: `.rb` — Tree-sitter parsing, raw query execution, semantic skeletons and declaration indexing for `def` method definitions (including nested definitions; `def self.` singleton methods are not yet indexed), conservative same-file bare direct-call tracing through file-level method declarations, structural patch targeting, and conservative same-file direct-call patch reference validation; unknown and ambiguous same-file targets fail closed.
 - Shell: `.sh` — Tree-sitter parsing, raw query execution, semantic skeletons and declaration indexing for `function_definition` declarations, conservative literal `source`/`.` local-file dependency discovery, conservative same-file direct command tracing through file-level function definitions, structural patch targeting, and conservative same-file direct command patch reference validation; dynamic source paths and commands named by strings, expansions, or paths are ignored, and unknown or ambiguous same-file targets fail closed.
 - Bash: `.bash` — the same conservative slice as Shell, sharing the `tree-sitter-bash` grammar and adapter.
-- Elixir: `.ex`, `.exs` — Tree-sitter parsing, raw query execution, a conservative semantic
-  skeleton, and declaration indexing for named `defmodule`, `def`, and `defp` declarations.
-  File dependencies, reference tracing, patch targeting, and patch validation are not yet
-  advertised; duplicate function paths fail closed during semantic target resolution.
+- Elixir: `.ex`, `.exs` — Tree-sitter parsing, raw query execution, conservative semantic
+  skeletons and declaration indexing for named `defmodule`, `def`, and `defp` declarations,
+  plus same-file direct-call reference tracing for local calls whose targets are indexed in the
+  same module. File dependencies, patch targeting, and patch validation are not advertised;
+  duplicate paths, remote calls, macros, and unresolved calls fail closed.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
