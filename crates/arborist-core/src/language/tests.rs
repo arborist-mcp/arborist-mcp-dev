@@ -275,20 +275,20 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn elixir_adapter_exposes_only_tree_query_capability() {
+fn elixir_adapter_exposes_tree_query_and_skeleton_capabilities() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Elixir).unwrap();
 
     assert_eq!(descriptor.display_name, "Elixir");
     assert_eq!(descriptor.extensions, &["ex", "exs"]);
-    assert_eq!(descriptor.analysis_revision, "elixir-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "elixir-semantic-skeleton-v2");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
