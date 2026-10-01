@@ -166,6 +166,7 @@ public final class Broken {
             "broken() {
 "
         }
+        LanguageId::Elixir => "defmodule Broken do\n  def broken(\nend\n",
     }
 }
 
@@ -249,6 +250,7 @@ fn sample_source(language_id: LanguageId) -> &'static str {
         LanguageId::Swift => "func compute(value: Int) -> Int {\n    return value + 1\n}\n",
         LanguageId::Ruby => "def compute(value)\n      value + 1\nend\n",
         LanguageId::Shell | LanguageId::Bash => "compute() {\n    value=$((value + 1))\n}\n",
+        LanguageId::Elixir => "defmodule Demo do\n  def compute(value), do: value + 1\nend\n",
     }
 }
 

@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::language::{detect_language, parse_document};
+use crate::language::{
+    LanguageCapabilities, builtin_language_registry, detect_language, parse_document,
+};
 use crate::model::{LanguageId, TraceDirection};
 use crate::symbol_index_model::symbol_base_name_ref;
 use crate::symbols::{rebuild_symbol_index, search_symbols, trace_symbol_graph};
@@ -32,6 +34,7 @@ fn expected_language_for_directory(name: &str) -> LanguageId {
         "ruby" => LanguageId::Ruby,
         "shell" => LanguageId::Shell,
         "bash" => LanguageId::Bash,
+        "elixir" => LanguageId::Elixir,
         other => panic!("unexpected language fixture directory {other:?}"),
     }
 }
@@ -57,6 +60,7 @@ fn language_fixture_tree_has_expected_directories() {
         "ruby",
         "shell",
         "bash",
+        "elixir",
     ] {
         let path = root.join(directory);
         assert!(
@@ -153,6 +157,15 @@ fn language_fixtures_direct_calls_are_indexable_and_traceable() {
             .to_str()
             .expect("directory name must be UTF-8")
             .to_owned();
+        let language_id = expected_language_for_directory(&directory_name);
+        if !builtin_language_registry()
+            .descriptor(language_id)
+            .expect("fixture language must have a descriptor")
+            .capabilities
+            .contains(LanguageCapabilities::SYMBOL_INDEX)
+        {
+            continue;
+        }
         let Some(direct_calls) = fixture_file(&directory_path, "direct_calls.") else {
             panic!("{directory_name:?} must contain a direct_calls fixture");
         };

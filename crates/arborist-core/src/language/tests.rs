@@ -51,6 +51,8 @@ fn detect_language_accepts_uppercase_extensions() {
         ("RB", LanguageId::Ruby),
         ("SH", LanguageId::Shell),
         ("BASH", LanguageId::Bash),
+        ("EX", LanguageId::Elixir),
+        ("EXS", LanguageId::Elixir),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -121,6 +123,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "ruby",
             "shell",
             "bash",
+            "elixir",
         ]
     );
 }
@@ -145,6 +148,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Ruby, "ruby"),
         (LanguageId::Shell, "shell"),
         (LanguageId::Bash, "bash"),
+        (LanguageId::Elixir, "elixir"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -267,6 +271,31 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
                 Some(language_id)
             );
         }
+    }
+}
+
+#[test]
+fn elixir_adapter_exposes_only_tree_query_capability() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::Elixir).unwrap();
+
+    assert_eq!(descriptor.display_name, "Elixir");
+    assert_eq!(descriptor.extensions, &["ex", "exs"]);
+    assert_eq!(descriptor.analysis_revision, "elixir-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(!descriptor.capabilities.contains(capability));
     }
 }
 
@@ -799,6 +828,25 @@ fn parse_document_uses_ruby_grammar_and_recovers_from_invalid_source() {
 
     let malformed = parse_document(path, "def broken(").expect("malformed Ruby must not panic");
     assert_eq!(malformed.language_id, LanguageId::Ruby);
+    assert!(malformed.tree.root_node().has_error());
+}
+
+#[test]
+fn parse_document_uses_elixir_grammar_and_recovers_from_invalid_source() {
+    let path = Path::new("sample.ex");
+    let source = "defmodule Sample do\n  def compute(value), do: value + 1\nend\n";
+    let document = parse_document(path, source).expect("Elixir source should parse");
+    assert_eq!(document.language_id, LanguageId::Elixir);
+    assert!(!document.tree.root_node().has_error());
+
+    let script = parse_document(Path::new("build.exs"), "Mix.install([])\n")
+        .expect("Elixir script should parse");
+    assert_eq!(script.language_id, LanguageId::Elixir);
+    assert!(!script.tree.root_node().has_error());
+
+    let malformed = parse_document(path, "defmodule Broken do\n  def compute(")
+        .expect("malformed Elixir must not panic");
+    assert_eq!(malformed.language_id, LanguageId::Elixir);
     assert!(malformed.tree.root_node().has_error());
 }
 

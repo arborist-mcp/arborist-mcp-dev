@@ -25,6 +25,7 @@ tests/fixtures/languages/
   ruby/
   shell/
   bash/
+  elixir/
 ```
 
 ## Conventions
