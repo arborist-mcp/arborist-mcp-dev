@@ -19,8 +19,7 @@ pub(crate) fn build_elixir_skeleton(
 ) -> Result<SemanticSkeleton> {
     let normalized_file_path = normalize_path(path);
     let mut expand_set = expand_nodes.iter().cloned().collect::<BTreeSet<_>>();
-    let mut declarations = Vec::new();
-    collect_declarations(tree.root_node(), source, &[], deadline, &mut declarations)?;
+    let declarations = collect_elixir_declarations(tree.root_node(), source, deadline)?;
 
     let mut by_path: BTreeMap<&str, usize> = BTreeMap::new();
     for (_, symbol) in &declarations {
@@ -105,8 +104,7 @@ pub(crate) fn find_elixir_semantic_node<'tree>(
     let local_target = target_path
         .strip_prefix(&format!("{normalized_file_path}::"))
         .unwrap_or(target_path);
-    let mut declarations = Vec::new();
-    collect_declarations(tree.root_node(), source, &[], deadline, &mut declarations)?;
+    let declarations = collect_elixir_declarations(tree.root_node(), source, deadline)?;
     let matches = declarations
         .into_iter()
         .filter(|(_, symbol)| symbol.semantic_path == local_target)
@@ -176,6 +174,16 @@ pub(crate) fn elixir_declaration_node_for_node<'tree>(
         current = candidate.parent();
     }
     None
+}
+
+pub(crate) fn collect_elixir_declarations<'tree>(
+    root: Node<'tree>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<(Node<'tree>, SemanticSkeletonSymbol)>> {
+    let mut declarations = Vec::new();
+    collect_declarations(root, source, &[], deadline, &mut declarations)?;
+    Ok(declarations)
 }
 
 fn collect_declarations<'tree>(

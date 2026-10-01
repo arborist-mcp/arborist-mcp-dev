@@ -664,9 +664,11 @@ static ELIXIR_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Elixir",
     extensions: ELIXIR_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "elixir-semantic-skeleton-v2",
+    analysis_revision: "elixir-symbol-index-v3",
     grammar: elixir_grammar,
 };
 
@@ -3308,12 +3310,17 @@ impl LanguageAdapter for ElixirAdapter {
 
     fn extract_symbols(
         &self,
-        _path: &Path,
-        _source: &str,
-        _document: &ParsedDocument,
-        _deadline: Option<&WorkspaceScanDeadline>,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax.unsupported("symbol indexing")
+        crate::symbol_extractor::elixir::index_elixir_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 

@@ -162,7 +162,7 @@ fn language_fixtures_direct_calls_are_indexable_and_traceable() {
             .descriptor(language_id)
             .expect("fixture language must have a descriptor")
             .capabilities
-            .contains(LanguageCapabilities::SYMBOL_INDEX)
+            .contains(LanguageCapabilities::SYMBOL_INDEX | LanguageCapabilities::REFERENCE_TRACE)
         {
             continue;
         }

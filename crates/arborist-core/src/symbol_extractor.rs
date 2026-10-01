@@ -8,6 +8,7 @@ use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) mod c;
 pub(crate) mod csharp;
+pub(crate) mod elixir;
 pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod javascript;
